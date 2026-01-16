@@ -1,0 +1,27 @@
+# Grid Trading Bot Dependencies
+
+# Exchange API
+ccxt>=4.0
+
+# Data Validation
+pydantic>=2.0
+
+# Database
+sqlalchemy>=2.0
+asyncpg
+
+# Cache
+redis
+
+# HTTP & WebSocket
+aiohttp
+websockets
+
+# Configuration
+pyyaml
+python-dotenv
+
+# Development
+pytest>=7.0
+pytest-asyncio
+ruff
