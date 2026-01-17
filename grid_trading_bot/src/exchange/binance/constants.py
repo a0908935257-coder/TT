@@ -17,6 +17,12 @@ SPOT_TESTNET_URL = "https://testnet.binance.vision"
 FUTURES_REST_URL = "https://fapi.binance.com"
 FUTURES_TESTNET_URL = "https://testnet.binancefuture.com"
 
+# WebSocket URLs
+SPOT_WS_URL = "wss://stream.binance.com:9443/ws"
+SPOT_WS_TESTNET_URL = "wss://testnet.binance.vision/ws"
+FUTURES_WS_URL = "wss://fstream.binance.com/ws"
+FUTURES_WS_TESTNET_URL = "wss://stream.binancefuture.com/ws"
+
 
 # =============================================================================
 # Endpoint Definition

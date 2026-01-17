@@ -2,6 +2,7 @@
 from .auth import BinanceAuth
 from .spot_api import BinanceSpotAPI
 from .futures_api import BinanceFuturesAPI
+from .websocket import BinanceWebSocket
 from .constants import (
     # Spot URLs
     SPOT_REST_URL,
@@ -9,6 +10,11 @@ from .constants import (
     # Futures URLs
     FUTURES_REST_URL,
     FUTURES_TESTNET_URL,
+    # WebSocket URLs
+    SPOT_WS_URL,
+    SPOT_WS_TESTNET_URL,
+    FUTURES_WS_URL,
+    FUTURES_WS_TESTNET_URL,
     # Spot endpoints
     PUBLIC_ENDPOINTS,
     PRIVATE_ENDPOINTS,
@@ -32,4 +38,10 @@ __all__ = [
     "FUTURES_TESTNET_URL",
     "FUTURES_PUBLIC_ENDPOINTS",
     "FUTURES_PRIVATE_ENDPOINTS",
+    # WebSocket
+    "BinanceWebSocket",
+    "SPOT_WS_URL",
+    "SPOT_WS_TESTNET_URL",
+    "FUTURES_WS_URL",
+    "FUTURES_WS_TESTNET_URL",
 ]
