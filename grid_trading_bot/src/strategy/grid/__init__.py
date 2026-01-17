@@ -1,5 +1,6 @@
 # Grid trading strategy module
 from .atr import ATRCalculator
+from .bot import GridBot, GridBotConfig
 from .calculator import (
     SmartGridCalculator,
     create_grid,
@@ -37,6 +38,9 @@ from .risk_manager import (
 )
 
 __all__ = [
+    # Bot
+    "GridBot",
+    "GridBotConfig",
     # Exceptions
     "GridError",
     "GridCalculationError",

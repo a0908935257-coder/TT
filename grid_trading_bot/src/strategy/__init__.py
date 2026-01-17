@@ -1,5 +1,8 @@
 # Strategy module - Trading strategies implementation
 from .grid import (
+    # Bot
+    GridBot,
+    GridBotConfig,
     # Exceptions
     GridCalculationError,
     GridConfigurationError,
@@ -39,6 +42,9 @@ from .grid import (
 )
 
 __all__ = [
+    # Bot
+    "GridBot",
+    "GridBotConfig",
     # Exceptions
     "GridError",
     "GridCalculationError",
