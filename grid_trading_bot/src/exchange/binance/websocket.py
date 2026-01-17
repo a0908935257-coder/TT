@@ -103,8 +103,12 @@ class BinanceWebSocket:
 
         # Heartbeat settings
         self._heartbeat_interval = 30  # seconds
-        self._heartbeat_timeout = 60  # seconds
+        self._heartbeat_timeout = 180  # seconds (increased for streams with infrequent updates)
         self._last_pong_time: Optional[datetime] = None
+
+        # Timeout tracking (reduce warning frequency)
+        self._consecutive_timeouts = 0
+        self._max_silent_timeouts = 3  # Only warn after this many consecutive timeouts
 
         # Background tasks
         self._message_task: Optional[asyncio.Task] = None
@@ -159,6 +163,7 @@ class BinanceWebSocket:
             self._reconnect_attempts = 0
             self._current_delay = self.reconnect_delay
             self._last_pong_time = datetime.now(timezone.utc)
+            self._consecutive_timeouts = 0  # Reset timeout counter on new connection
 
             # Start background tasks
             self._message_task = asyncio.create_task(self._message_loop())
@@ -469,10 +474,21 @@ class BinanceWebSocket:
                         self._ws.recv(),
                         timeout=self._heartbeat_timeout,
                     )
+                    # Reset timeout counter on successful message
+                    self._consecutive_timeouts = 0
                     await self._handle_message(message)
 
                 except asyncio.TimeoutError:
-                    logger.warning("Message timeout, checking connection")
+                    self._consecutive_timeouts += 1
+                    # Only warn after multiple consecutive timeouts
+                    if self._consecutive_timeouts > self._max_silent_timeouts:
+                        logger.warning(
+                            f"Message timeout ({self._consecutive_timeouts}x), checking connection"
+                        )
+                    else:
+                        logger.debug(
+                            f"Message timeout ({self._consecutive_timeouts}/{self._max_silent_timeouts})"
+                        )
                     if not await self._check_connection():
                         break
 
