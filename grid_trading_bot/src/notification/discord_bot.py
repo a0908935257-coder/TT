@@ -273,7 +273,8 @@ class TradingDiscordBot:
                 config = getattr(self._trading_bot, '_config', None)
                 setup = getattr(self._trading_bot, '_setup', None)
 
-                status = state.value if state else "未知"
+                # Handle both enum and string state values
+                status = state.value if hasattr(state, 'value') else str(state) if state else "未知"
                 embed.add_field(name="狀態", value=status, inline=True)
 
                 if config:
@@ -367,7 +368,9 @@ class TradingDiscordBot:
 
                         for order_id, order in orders.items():
                             order_str = f"`{float(order.quantity):.5f}` @ `${float(order.price):.2f}`"
-                            if order.side.value == "BUY":
+                            # Handle both enum and string side values
+                            side = order.side.value if hasattr(order.side, 'value') else str(order.side)
+                            if side.upper() == "BUY":
                                 buy_orders.append(order_str)
                             else:
                                 sell_orders.append(order_str)
