@@ -26,12 +26,14 @@ from .models import (
 )
 from .order_manager import FilledRecord, GridOrderManager
 from .risk_manager import (
+    BotState,
     BreakoutAction,
     BreakoutDirection,
     BreakoutEvent,
     GridRiskManager,
     RiskConfig,
     RiskState,
+    VALID_STATE_TRANSITIONS,
 )
 
 __all__ = [
@@ -63,9 +65,11 @@ __all__ = [
     "GridRiskManager",
     "RiskConfig",
     "RiskState",
+    "BotState",
     "BreakoutDirection",
     "BreakoutAction",
     "BreakoutEvent",
+    "VALID_STATE_TRANSITIONS",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",

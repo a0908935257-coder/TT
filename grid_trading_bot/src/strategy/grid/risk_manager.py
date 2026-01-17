@@ -1,17 +1,19 @@
 """
 Grid Risk Manager.
 
-Handles price breakout detection, risk actions, and grid recovery.
+Handles price breakout detection, risk actions, grid recovery,
+continuous monitoring, and bot state management.
 """
 
+import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from core import get_logger
-from core.models import MarketType, OrderSide
+from core.models import Kline, MarketType, OrderSide
 from notification import NotificationManager
 
 from .order_manager import GridOrderManager
@@ -47,6 +49,28 @@ class RiskState(str, Enum):
     STOPPED = "stopped"         # Bot stopped (stop loss triggered)
 
 
+class BotState(str, Enum):
+    """Bot operational state."""
+
+    INITIALIZING = "initializing"  # Bot is initializing
+    RUNNING = "running"            # Bot is running normally
+    PAUSED = "paused"              # Bot is paused (can resume)
+    STOPPING = "stopping"          # Bot is stopping
+    STOPPED = "stopped"            # Bot is stopped
+    ERROR = "error"                # Bot encountered error
+
+
+# Valid state transitions
+VALID_STATE_TRANSITIONS: dict[BotState, set[BotState]] = {
+    BotState.INITIALIZING: {BotState.RUNNING, BotState.ERROR, BotState.STOPPED},
+    BotState.RUNNING: {BotState.PAUSED, BotState.STOPPING, BotState.ERROR},
+    BotState.PAUSED: {BotState.RUNNING, BotState.STOPPING, BotState.STOPPED},
+    BotState.STOPPING: {BotState.STOPPED},
+    BotState.STOPPED: set(),  # Terminal state
+    BotState.ERROR: {BotState.STOPPED, BotState.PAUSED},
+}
+
+
 @dataclass
 class RiskConfig:
     """
@@ -57,6 +81,7 @@ class RiskConfig:
         ...     upper_breakout_action=BreakoutAction.PAUSE,
         ...     lower_breakout_action=BreakoutAction.STOP_LOSS,
         ...     stop_loss_percent=Decimal("15"),
+        ...     daily_loss_limit=Decimal("5"),
         ... )
     """
 
@@ -77,6 +102,14 @@ class RiskConfig:
     # Expand grid settings
     expand_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("1.5"))
 
+    # Monitoring settings (Prompt 22)
+    daily_loss_limit: Decimal = field(default_factory=lambda: Decimal("5"))  # Daily loss limit %
+    max_consecutive_losses: int = 5  # Max consecutive losing trades
+    volatility_threshold: Decimal = field(default_factory=lambda: Decimal("10"))  # Single candle volatility %
+    order_failure_threshold: int = 3  # Order failures before pause
+    health_check_interval: int = 30  # Health check interval seconds
+    monitoring_interval: int = 5  # Price monitoring interval seconds
+
     def __post_init__(self):
         """Ensure Decimal types."""
         if not isinstance(self.stop_loss_percent, Decimal):
@@ -85,6 +118,10 @@ class RiskConfig:
             self.breakout_buffer = Decimal(str(self.breakout_buffer))
         if not isinstance(self.expand_atr_multiplier, Decimal):
             self.expand_atr_multiplier = Decimal(str(self.expand_atr_multiplier))
+        if not isinstance(self.daily_loss_limit, Decimal):
+            self.daily_loss_limit = Decimal(str(self.daily_loss_limit))
+        if not isinstance(self.volatility_threshold, Decimal):
+            self.volatility_threshold = Decimal(str(self.volatility_threshold))
 
 
 @dataclass
@@ -148,6 +185,34 @@ class GridRiskManager:
         self._entry_prices: dict[int, Decimal] = {}  # level_index -> entry_price
         self._position_quantities: dict[int, Decimal] = {}  # level_index -> quantity
 
+        # Bot state management (Prompt 22)
+        self._bot_state: BotState = BotState.INITIALIZING
+        self._pause_reason: str = ""
+
+        # Daily statistics (Prompt 22)
+        self._daily_pnl: Decimal = Decimal("0")
+        self._daily_start_time: datetime = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        # Consecutive loss tracking
+        self._consecutive_losses: int = 0
+        self._last_trade_profitable: bool = True
+
+        # Order failure tracking
+        self._order_failures: int = 0
+
+        # Health check tracking
+        self._last_health_check: Optional[datetime] = None
+        self._consecutive_health_failures: int = 0
+
+        # Monitoring task
+        self._monitoring_task: Optional[asyncio.Task] = None
+        self._running: bool = False
+
+        # State change callbacks
+        self._state_change_callbacks: list[Callable[[BotState, BotState, str], Any]] = []
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -176,6 +241,31 @@ class GridRiskManager:
     def last_breakout(self) -> Optional[BreakoutEvent]:
         """Get last breakout event."""
         return self._last_breakout
+
+    @property
+    def bot_state(self) -> BotState:
+        """Get current bot state."""
+        return self._bot_state
+
+    @property
+    def pause_reason(self) -> str:
+        """Get pause reason if paused."""
+        return self._pause_reason
+
+    @property
+    def daily_pnl(self) -> Decimal:
+        """Get daily P&L."""
+        return self._daily_pnl
+
+    @property
+    def consecutive_losses(self) -> int:
+        """Get consecutive loss count."""
+        return self._consecutive_losses
+
+    @property
+    def is_monitoring(self) -> bool:
+        """Check if monitoring is active."""
+        return self._running and self._monitoring_task is not None
 
     # =========================================================================
     # Breakout Detection
@@ -739,3 +829,635 @@ class GridRiskManager:
             )
         except Exception as e:
             logger.warning(f"Failed to send return notification: {e}")
+
+    # =========================================================================
+    # Monitoring Loop (Prompt 22)
+    # =========================================================================
+
+    async def start_monitoring(self) -> bool:
+        """
+        Start the monitoring loop.
+
+        Continuously monitors:
+        - Price breakout
+        - Stop loss
+        - Daily loss limit
+        - Health checks
+
+        Returns:
+            True if started successfully
+        """
+        if self._running:
+            logger.warning("Monitoring already running")
+            return False
+
+        self._running = True
+        self._monitoring_task = asyncio.create_task(self._monitoring_loop())
+
+        # Update bot state
+        await self.change_state(BotState.RUNNING, "Monitoring started")
+
+        logger.info("Monitoring started")
+        return True
+
+    async def stop_monitoring(self) -> None:
+        """Stop the monitoring loop."""
+        self._running = False
+
+        if self._monitoring_task:
+            self._monitoring_task.cancel()
+            try:
+                await self._monitoring_task
+            except asyncio.CancelledError:
+                pass
+            self._monitoring_task = None
+
+        logger.info("Monitoring stopped")
+
+    async def _monitoring_loop(self) -> None:
+        """Main monitoring loop."""
+        logger.info("Monitoring loop started")
+
+        while self._running:
+            try:
+                # Skip if not in running state
+                if self._bot_state != BotState.RUNNING:
+                    await asyncio.sleep(1)
+                    continue
+
+                # Get current price
+                current_price = await self._order_manager._data_manager.get_price(
+                    self._order_manager.symbol,
+                    self._order_manager._market_type,
+                )
+
+                if current_price:
+                    # Check breakout
+                    direction = self.check_breakout(current_price)
+                    if direction != BreakoutDirection.NONE:
+                        await self.handle_breakout(direction, current_price)
+                        continue
+
+                    # Check stop loss
+                    if self.check_stop_loss(current_price):
+                        await self._action_stop_loss(BreakoutDirection.LOWER, current_price)
+                        continue
+
+                    # Check daily loss
+                    if self.check_daily_loss():
+                        await self.pause("Daily loss limit exceeded")
+                        continue
+
+                    # Check price return if paused
+                    if self._state == RiskState.PAUSED:
+                        await self.on_price_return(current_price)
+
+                # Run health check if interval passed
+                await self._maybe_run_health_check()
+
+                # Check for daily reset
+                await self._maybe_reset_daily_stats()
+
+                await asyncio.sleep(self._config.monitoring_interval)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Monitoring loop error: {e}")
+                await asyncio.sleep(5)
+
+        logger.info("Monitoring loop ended")
+
+    async def _maybe_run_health_check(self) -> None:
+        """Run health check if interval has passed."""
+        now = datetime.now(timezone.utc)
+
+        if self._last_health_check is None:
+            self._last_health_check = now
+            return
+
+        elapsed = (now - self._last_health_check).total_seconds()
+        if elapsed >= self._config.health_check_interval:
+            await self.run_health_check()
+            self._last_health_check = now
+
+    async def _maybe_reset_daily_stats(self) -> None:
+        """Reset daily stats if new day (UTC)."""
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if today_start > self._daily_start_time:
+            await self.reset_daily_stats()
+
+    # =========================================================================
+    # Health Check (Prompt 22)
+    # =========================================================================
+
+    async def run_health_check(self) -> dict[str, bool]:
+        """
+        Run health check on all components.
+
+        Returns:
+            Dict with health status of each component
+        """
+        status = {
+            "exchange_connected": False,
+            "data_manager_connected": False,
+            "order_sync": False,
+            "overall": False,
+        }
+
+        try:
+            # Check exchange connection
+            if self._order_manager._exchange.is_connected:
+                status["exchange_connected"] = True
+
+            # Check data manager
+            if self._order_manager._data_manager.is_connected:
+                status["data_manager_connected"] = True
+
+            # Check order sync by comparing local vs exchange
+            sync_stats = await self._order_manager.sync_orders()
+            status["order_sync"] = sync_stats.get("external", 0) == 0
+
+            # Overall health
+            status["overall"] = all([
+                status["exchange_connected"],
+                status["data_manager_connected"],
+            ])
+
+            if status["overall"]:
+                self._consecutive_health_failures = 0
+            else:
+                self._consecutive_health_failures += 1
+
+                # Pause if consecutive failures
+                if self._consecutive_health_failures >= 3:
+                    await self.pause("Health check failed 3 times")
+                    await self._notify_health_failure(status)
+
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            self._consecutive_health_failures += 1
+
+        return status
+
+    # =========================================================================
+    # Additional Risk Checks (Prompt 22)
+    # =========================================================================
+
+    def check_daily_loss(self) -> bool:
+        """
+        Check if daily loss limit is exceeded.
+
+        Returns:
+            True if daily loss exceeds limit
+        """
+        setup = self._order_manager.setup
+        if setup is None:
+            return False
+
+        total_investment = setup.config.total_investment
+        if total_investment == 0:
+            return False
+
+        daily_loss_percent = (self._daily_pnl / total_investment) * Decimal("100")
+
+        # Check if loss exceeds limit (negative value comparison)
+        if daily_loss_percent <= -self._config.daily_loss_limit:
+            logger.warning(
+                f"Daily loss limit triggered: {daily_loss_percent:.2f}% <= -{self._config.daily_loss_limit}%"
+            )
+            return True
+
+        return False
+
+    def check_consecutive_losses(self) -> bool:
+        """
+        Check if consecutive losses exceed threshold.
+
+        Returns:
+            True if consecutive losses exceed limit
+        """
+        if self._consecutive_losses >= self._config.max_consecutive_losses:
+            logger.warning(
+                f"Consecutive loss limit: {self._consecutive_losses} >= {self._config.max_consecutive_losses}"
+            )
+            return True
+        return False
+
+    def check_volatility(self, kline: Kline) -> bool:
+        """
+        Check if kline shows abnormal volatility.
+
+        Args:
+            kline: Kline to check
+
+        Returns:
+            True if volatility exceeds threshold
+        """
+        if kline.open == 0:
+            return False
+
+        # Calculate kline range as percentage
+        range_percent = (kline.range / kline.open) * Decimal("100")
+
+        if range_percent >= self._config.volatility_threshold:
+            logger.warning(
+                f"Abnormal volatility detected: {range_percent:.2f}% >= {self._config.volatility_threshold}%"
+            )
+            return True
+
+        return False
+
+    def on_order_failure(self) -> bool:
+        """
+        Record an order failure.
+
+        Returns:
+            True if failure threshold exceeded
+        """
+        self._order_failures += 1
+        logger.warning(f"Order failure #{self._order_failures}")
+
+        if self._order_failures >= self._config.order_failure_threshold:
+            logger.warning(f"Order failure threshold exceeded: {self._order_failures}")
+            return True
+
+        return False
+
+    def on_trade_completed(self, profit: Decimal) -> None:
+        """
+        Record a completed trade (buy->sell round trip).
+
+        Args:
+            profit: Trade profit (positive or negative)
+        """
+        # Update daily P&L
+        self._daily_pnl += profit
+
+        # Track consecutive losses
+        if profit < 0:
+            if not self._last_trade_profitable:
+                self._consecutive_losses += 1
+            else:
+                self._consecutive_losses = 1
+            self._last_trade_profitable = False
+        else:
+            self._consecutive_losses = 0
+            self._last_trade_profitable = True
+
+        logger.debug(
+            f"Trade completed: profit={profit}, daily_pnl={self._daily_pnl}, "
+            f"consecutive_losses={self._consecutive_losses}"
+        )
+
+        # Check consecutive loss trigger
+        if self.check_consecutive_losses():
+            asyncio.create_task(self.pause("Consecutive loss limit exceeded"))
+
+    async def reset_daily_stats(self) -> None:
+        """Reset daily statistics (called at 00:00 UTC)."""
+        # Save yesterday's stats (could save to database here)
+        yesterday_pnl = self._daily_pnl
+
+        # Reset counters
+        self._daily_pnl = Decimal("0")
+        self._consecutive_losses = 0
+        self._order_failures = 0
+        self._daily_start_time = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        logger.info(f"Daily stats reset. Yesterday P&L: {yesterday_pnl}")
+
+        # Optionally send daily report
+        await self._notify_daily_reset(yesterday_pnl)
+
+    # =========================================================================
+    # Bot State Management (Prompt 22)
+    # =========================================================================
+
+    async def change_state(
+        self,
+        new_state: BotState,
+        reason: str = "",
+    ) -> bool:
+        """
+        Change bot state with validation.
+
+        Args:
+            new_state: Target state
+            reason: Reason for state change
+
+        Returns:
+            True if state changed successfully
+        """
+        old_state = self._bot_state
+
+        # Validate transition
+        valid_transitions = VALID_STATE_TRANSITIONS.get(old_state, set())
+        if new_state not in valid_transitions and new_state != old_state:
+            logger.warning(
+                f"Invalid state transition: {old_state.value} -> {new_state.value}"
+            )
+            return False
+
+        # Execute exit action for old state
+        await self._on_state_exit(old_state)
+
+        # Update state
+        self._bot_state = new_state
+
+        # Execute entry action for new state
+        await self._on_state_enter(new_state, reason)
+
+        # Notify callbacks
+        for callback in self._state_change_callbacks:
+            try:
+                result = callback(old_state, new_state, reason)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                logger.error(f"State change callback error: {e}")
+
+        logger.info(f"Bot state changed: {old_state.value} -> {new_state.value} ({reason})")
+
+        return True
+
+    async def _on_state_exit(self, state: BotState) -> None:
+        """Execute actions when exiting a state."""
+        if state == BotState.RUNNING:
+            # Could save state snapshot here
+            pass
+
+    async def _on_state_enter(self, state: BotState, reason: str) -> None:
+        """Execute actions when entering a state."""
+        if state == BotState.PAUSED:
+            self._pause_reason = reason
+        elif state == BotState.RUNNING:
+            self._pause_reason = ""
+
+        # Send notification
+        await self._notify_state_change(state, reason)
+
+    def add_state_change_callback(
+        self,
+        callback: Callable[[BotState, BotState, str], Any],
+    ) -> None:
+        """Add callback for state changes."""
+        self._state_change_callbacks.append(callback)
+
+    # =========================================================================
+    # Manual Control Interface (Prompt 22)
+    # =========================================================================
+
+    async def pause(self, reason: str = "Manual pause") -> bool:
+        """
+        Pause the bot.
+
+        Cancels all pending orders but keeps positions.
+
+        Args:
+            reason: Pause reason
+
+        Returns:
+            True if paused successfully
+        """
+        if self._bot_state not in (BotState.RUNNING, BotState.ERROR):
+            logger.warning(f"Cannot pause from state: {self._bot_state.value}")
+            return False
+
+        # Cancel all orders
+        cancelled = await self._order_manager.cancel_all_orders()
+
+        # Update states
+        self._state = RiskState.PAUSED
+        await self.change_state(BotState.PAUSED, reason)
+
+        logger.info(f"Bot paused: {reason}. Cancelled {cancelled} orders.")
+
+        return True
+
+    async def resume(self) -> bool:
+        """
+        Resume the bot from paused state.
+
+        Returns:
+            True if resumed successfully
+        """
+        if self._bot_state != BotState.PAUSED:
+            logger.warning(f"Cannot resume from state: {self._bot_state.value}")
+            return False
+
+        # Check if risk conditions cleared
+        setup = self._order_manager.setup
+        if setup:
+            current_price = await self._order_manager._data_manager.get_price(
+                self._order_manager.symbol,
+                self._order_manager._market_type,
+            )
+
+            if current_price:
+                # Check if we're still in breakout
+                direction = self.check_breakout(current_price)
+                if direction != BreakoutDirection.NONE:
+                    logger.warning(f"Cannot resume: still in {direction.value} breakout")
+                    return False
+
+        # Update states
+        self._state = RiskState.NORMAL
+        await self.change_state(BotState.RUNNING, "Resumed")
+
+        # Re-place orders
+        placed = await self._order_manager.place_initial_orders()
+
+        logger.info(f"Bot resumed. Placed {placed} orders.")
+
+        return True
+
+    async def stop(self, clear_position: bool = False) -> bool:
+        """
+        Stop the bot gracefully.
+
+        Args:
+            clear_position: If True, market sell all positions
+
+        Returns:
+            True if stopped successfully
+        """
+        if self._bot_state in (BotState.STOPPED, BotState.STOPPING):
+            logger.warning(f"Already stopping/stopped: {self._bot_state.value}")
+            return False
+
+        # Set stopping state
+        await self.change_state(BotState.STOPPING, "Stop requested")
+
+        # Stop monitoring
+        await self.stop_monitoring()
+
+        # Cancel all orders
+        await self._order_manager.cancel_all_orders()
+
+        # Clear positions if requested
+        if clear_position:
+            total_qty = self._calculate_total_position()
+            if total_qty > 0:
+                try:
+                    await self._order_manager._exchange.market_sell(
+                        self._order_manager.symbol,
+                        total_qty,
+                        self._order_manager._market_type,
+                    )
+                    logger.info(f"Cleared position: sold {total_qty}")
+                except Exception as e:
+                    logger.error(f"Failed to clear position: {e}")
+
+        # Get final stats
+        stats = self._order_manager.get_statistics()
+
+        # Set stopped state
+        self._state = RiskState.STOPPED
+        await self.change_state(BotState.STOPPED, "Stopped")
+
+        # Send final notification
+        await self._notify_bot_stopped(stats, clear_position)
+
+        logger.info("Bot stopped")
+
+        return True
+
+    async def force_stop(self) -> bool:
+        """
+        Force stop the bot immediately with market close.
+
+        Returns:
+            True if stopped
+        """
+        logger.warning("Force stop requested")
+
+        # Force state
+        self._running = False
+        self._bot_state = BotState.STOPPING
+
+        # Cancel all orders
+        try:
+            await self._order_manager.cancel_all_orders()
+        except Exception as e:
+            logger.error(f"Cancel orders failed: {e}")
+
+        # Market sell all positions
+        total_qty = self._calculate_total_position()
+        if total_qty > 0:
+            try:
+                await self._order_manager._exchange.market_sell(
+                    self._order_manager.symbol,
+                    total_qty,
+                    self._order_manager._market_type,
+                )
+            except Exception as e:
+                logger.error(f"Market sell failed: {e}")
+
+        self._state = RiskState.STOPPED
+        self._bot_state = BotState.STOPPED
+
+        await self._notify_bot_stopped({}, True)
+
+        logger.warning("Bot force stopped")
+
+        return True
+
+    # =========================================================================
+    # Additional Notifications (Prompt 22)
+    # =========================================================================
+
+    async def _notify_health_failure(self, status: dict[str, bool]) -> None:
+        """Send health check failure notification."""
+        try:
+            symbol = self._order_manager.symbol
+            failed = [k for k, v in status.items() if not v and k != "overall"]
+
+            message = (
+                f"{symbol} Health Check Failed\n"
+                f"Failed: {', '.join(failed)}\n"
+                f"Trading paused"
+            )
+
+            await self._notifier.send_warning(
+                title="Health Check Alert",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send health notification: {e}")
+
+    async def _notify_daily_reset(self, yesterday_pnl: Decimal) -> None:
+        """Send daily reset notification."""
+        try:
+            symbol = self._order_manager.symbol
+            stats = self._order_manager.get_statistics()
+
+            message = (
+                f"{symbol} Daily Reset\n"
+                f"Yesterday P&L: {yesterday_pnl:.4f}\n"
+                f"Total Trades: {stats.get('trade_count', 0)}\n"
+                f"Total Profit: {stats.get('total_profit', 0):.4f}"
+            )
+
+            await self._notifier.send_info(
+                title="Daily Summary",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send daily reset notification: {e}")
+
+    async def _notify_state_change(self, new_state: BotState, reason: str) -> None:
+        """Send state change notification."""
+        try:
+            symbol = self._order_manager.symbol
+
+            message = (
+                f"{symbol} State: {new_state.value}\n"
+                f"Reason: {reason}"
+            )
+
+            # Choose notification level based on state
+            if new_state in (BotState.ERROR, BotState.STOPPED):
+                await self._notifier.send_warning(
+                    title="Bot State Change",
+                    message=message,
+                )
+            elif new_state == BotState.PAUSED:
+                await self._notifier.send_warning(
+                    title="Bot Paused",
+                    message=message,
+                )
+            else:
+                await self._notifier.send_info(
+                    title="Bot State Change",
+                    message=message,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send state change notification: {e}")
+
+    async def _notify_bot_stopped(
+        self,
+        stats: dict,
+        cleared_position: bool,
+    ) -> None:
+        """Send bot stopped notification with final stats."""
+        try:
+            symbol = self._order_manager.symbol
+
+            message = (
+                f"{symbol} Bot Stopped\n"
+                f"Total Profit: {stats.get('total_profit', 0):.4f}\n"
+                f"Trade Count: {stats.get('trade_count', 0)}\n"
+                f"Position Cleared: {'Yes' if cleared_position else 'No'}"
+            )
+
+            await self._notifier.send_info(
+                title="Bot Stopped",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send stopped notification: {e}")
