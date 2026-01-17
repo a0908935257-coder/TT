@@ -202,8 +202,10 @@ class TradingDiscordBot:
 
     async def _handle_balance(self, interaction: discord.Interaction) -> None:
         """Handle /balance command."""
-        embed = self._create_balance_embed()
-        await interaction.response.send_message(embed=embed)
+        # Defer the response since fetching balance may take time
+        await interaction.response.defer()
+        embed = await self._create_balance_embed_async()
+        await interaction.followup.send(embed=embed)
 
     async def _handle_help(self, interaction: discord.Interaction) -> None:
         """Handle /help command."""
@@ -397,8 +399,8 @@ class TradingDiscordBot:
 
         return embed
 
-    def _create_balance_embed(self) -> discord.Embed:
-        """Create balance embed."""
+    async def _create_balance_embed_async(self) -> discord.Embed:
+        """Create balance embed with actual exchange data."""
         embed = discord.Embed(
             title="💰 帳戶餘額",
             color=discord.Color.gold(),
@@ -407,17 +409,71 @@ class TradingDiscordBot:
 
         if self._trading_bot:
             try:
-                # This would need async call, simplified version
-                embed.add_field(
-                    name="提示",
-                    value="餘額查詢需要連接交易所\n請使用 /stats 查看績效",
-                    inline=False
-                )
+                exchange = getattr(self._trading_bot, '_exchange', None)
+                config = getattr(self._trading_bot, '_config', None)
+
+                if exchange and config:
+                    # Get symbol info to determine base/quote assets
+                    symbol = config.symbol  # e.g., "BTCUSDT"
+                    # Common quote currencies
+                    quote_asset = "USDT"
+                    base_asset = symbol.replace("USDT", "").replace("BUSD", "")
+
+                    # Fetch balances
+                    usdt_balance = await exchange.get_balance("USDT")
+                    base_balance = await exchange.get_balance(base_asset)
+
+                    # Display USDT balance
+                    if usdt_balance:
+                        embed.add_field(
+                            name="💵 USDT",
+                            value=f"可用: `{float(usdt_balance.free):.2f}`\n"
+                                  f"鎖定: `{float(usdt_balance.locked):.2f}`\n"
+                                  f"總計: `{float(usdt_balance.total):.2f}`",
+                            inline=True
+                        )
+                    else:
+                        embed.add_field(name="💵 USDT", value="無資料", inline=True)
+
+                    # Display base asset balance
+                    if base_balance:
+                        embed.add_field(
+                            name=f"🪙 {base_asset}",
+                            value=f"可用: `{float(base_balance.free):.8f}`\n"
+                                  f"鎖定: `{float(base_balance.locked):.8f}`\n"
+                                  f"總計: `{float(base_balance.total):.8f}`",
+                            inline=True
+                        )
+                    else:
+                        embed.add_field(name=f"🪙 {base_asset}", value="無資料", inline=True)
+
+                    embed.set_footer(text=f"交易對: {symbol}")
+                else:
+                    embed.add_field(
+                        name="狀態",
+                        value="無法連接交易所",
+                        inline=False
+                    )
             except Exception as e:
+                logger.error(f"Error fetching balance: {e}")
                 embed.add_field(name="錯誤", value=str(e), inline=False)
         else:
             embed.add_field(name="狀態", value="未連接到交易機器人", inline=False)
 
+        return embed
+
+    def _create_balance_embed(self) -> discord.Embed:
+        """Create balance embed (sync fallback)."""
+        embed = discord.Embed(
+            title="💰 帳戶餘額",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(
+            name="提示",
+            value="請使用 /balance 指令查詢餘額",
+            inline=False
+        )
         return embed
 
     def _create_help_embed(self) -> discord.Embed:
