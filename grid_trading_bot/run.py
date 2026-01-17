@@ -167,6 +167,9 @@ async def main() -> None:
     # 讀取配置
     config = get_config_from_env()
 
+    # 檢查是否要自動啟動交易
+    auto_start = os.getenv('AUTO_START_TRADING', 'true').lower() == 'true'
+
     print(f"\n配置資訊：")
     print(f"  交易對: {config.symbol}")
     print(f"  投資金額: {config.total_investment} USDT")
@@ -176,6 +179,7 @@ async def main() -> None:
     print(f"  時間框架: {config.kline_timeframe}")
     print(f"  止損: {config.risk_config.stop_loss_percent}%")
     print(f"  日虧損限制: {config.risk_config.daily_loss_limit}%")
+    print(f"  自動啟動交易: {'是' if auto_start else '否（使用 /start 啟動）'}")
     print()
 
     try:
@@ -189,7 +193,7 @@ async def main() -> None:
         print("正在設定通知...")
         notifier = create_notifier()
 
-        # 建立機器人
+        # 建立機器人（但不啟動）
         print("正在初始化機器人...")
         _bot = GridBot(
             bot_id=f"grid_{config.symbol.lower()}",
@@ -207,41 +211,48 @@ async def main() -> None:
                 lambda s=sig: asyncio.create_task(shutdown(s))
             )
 
-        # 啟動機器人
-        print("\n正在啟動機器人...")
-        success = await _bot.start()
+        # 先啟動 Discord Bot（這樣可以用 /start 指令）
+        discord_token = os.getenv('DISCORD_BOT_TOKEN', '')
+        if discord_token:
+            print("\n正在啟動 Discord Bot...")
+            _discord_bot = TradingDiscordBot(discord_token)
+            _discord_bot.set_trading_bot(_bot)
 
-        if success:
-            status = _bot.get_status()
-            print("\n" + "=" * 60)
-            print("機器人啟動成功！")
-            print("=" * 60)
-            print(f"  網格範圍: {status.get('lower_price')} - {status.get('upper_price')}")
-            print(f"  網格數量: {status.get('grid_count')} 格")
-            print(f"  網格間距: {status.get('grid_spacing')}")
-            print(f"  買單數量: {status.get('pending_buy_orders')}")
-            print(f"  賣單數量: {status.get('pending_sell_orders')}")
+            # 在背景執行 Discord Bot
+            asyncio.create_task(_discord_bot.start())
+            print("Discord Bot 啟動中... (指令同步需要幾秒鐘)")
 
-            # 啟動 Discord Bot
-            discord_token = os.getenv('DISCORD_BOT_TOKEN', '')
-            if discord_token:
-                print("\n正在啟動 Discord Bot...")
-                _discord_bot = TradingDiscordBot(discord_token)
-                _discord_bot.set_trading_bot(_bot)
+        # 根據設定決定是否自動啟動交易
+        if auto_start:
+            print("\n正在啟動交易機器人...")
+            success = await _bot.start()
 
-                # 在背景執行 Discord Bot
-                asyncio.create_task(_discord_bot.start())
-                print("Discord Bot 啟動中... (指令同步需要幾秒鐘)")
-
-            print("\n按 Ctrl+C 停止機器人")
-            print("=" * 60)
-
-            # 保持運行
-            while _bot.is_running:
-                await asyncio.sleep(1)
+            if success:
+                status = _bot.get_status()
+                print("\n" + "=" * 60)
+                print("機器人啟動成功！")
+                print("=" * 60)
+                print(f"  網格範圍: {status.get('lower_price')} - {status.get('upper_price')}")
+                print(f"  網格數量: {status.get('grid_count')} 格")
+                print(f"  網格間距: {status.get('grid_spacing')}")
+                print(f"  買單數量: {status.get('pending_buy_orders')}")
+                print(f"  賣單數量: {status.get('pending_sell_orders')}")
+            else:
+                print("\n交易機器人啟動失敗！請檢查日誌。")
+                print("您仍可使用 Discord /start 指令重試")
         else:
-            print("\n機器人啟動失敗！請檢查日誌。")
-            sys.exit(1)
+            print("\n" + "=" * 60)
+            print("Discord Bot 已就緒！")
+            print("=" * 60)
+            print("交易機器人尚未啟動")
+            print("請在 Discord 使用 /start 指令啟動交易")
+
+        print("\n按 Ctrl+C 停止程式")
+        print("=" * 60)
+
+        # 保持運行（即使交易機器人未啟動，Discord Bot 仍可運行）
+        while True:
+            await asyncio.sleep(1)
 
     except KeyboardInterrupt:
         print("\n收到中斷信號...")
