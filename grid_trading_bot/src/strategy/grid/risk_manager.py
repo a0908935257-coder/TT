@@ -968,6 +968,12 @@ class GridRiskManager:
         }
 
         try:
+            # Re-sync time with server before health check
+            try:
+                await self._order_manager._exchange.spot.sync_time()
+            except Exception as e:
+                logger.warning(f"Time sync failed: {e}")
+
             # Check exchange connection
             if self._order_manager._exchange.is_connected:
                 status["exchange_connected"] = True
