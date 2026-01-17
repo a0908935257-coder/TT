@@ -1,5 +1,18 @@
 # Grid trading strategy module
 from .atr import ATRCalculator
+from .calculator import (
+    SmartGridCalculator,
+    create_grid,
+    create_grid_with_manual_range,
+)
+from .exceptions import (
+    GridCalculationError,
+    GridConfigurationError,
+    GridError,
+    InsufficientDataError,
+    InsufficientFundError,
+    InvalidPriceRangeError,
+)
 from .models import (
     ATRData,
     GridConfig,
@@ -13,6 +26,13 @@ from .models import (
 )
 
 __all__ = [
+    # Exceptions
+    "GridError",
+    "GridCalculationError",
+    "GridConfigurationError",
+    "InsufficientDataError",
+    "InsufficientFundError",
+    "InvalidPriceRangeError",
     # Enums
     "GridType",
     "GridMode",
@@ -26,4 +46,8 @@ __all__ = [
     "GridSetup",
     # Calculator
     "ATRCalculator",
+    "SmartGridCalculator",
+    # Convenience functions
+    "create_grid",
+    "create_grid_with_manual_range",
 ]
