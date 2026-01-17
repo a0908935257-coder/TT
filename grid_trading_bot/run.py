@@ -21,6 +21,7 @@ from core.models import MarketType
 from data import MarketDataManager
 from exchange import ExchangeClient
 from notification import NotificationManager
+from notification.discord_bot import TradingDiscordBot
 from strategy.grid.bot import GridBot, GridBotConfig
 from strategy.grid.models import GridType, RiskLevel
 from strategy.grid.risk_manager import RiskConfig, BreakoutAction
@@ -32,6 +33,7 @@ logger = get_logger(__name__)
 
 # Global bot reference for signal handling
 _bot: GridBot | None = None
+_discord_bot: TradingDiscordBot | None = None
 
 
 def get_config_from_env() -> GridBotConfig:
@@ -128,11 +130,25 @@ def create_notifier() -> NotificationManager:
     return NotificationManager.from_env()
 
 
+async def start_discord_bot() -> TradingDiscordBot | None:
+    """啟動 Discord Bot"""
+    token = os.getenv('DISCORD_BOT_TOKEN', '')
+    if not token:
+        logger.info("未設定 DISCORD_BOT_TOKEN，跳過 Discord Bot")
+        return None
+
+    discord_bot = TradingDiscordBot(token)
+    return discord_bot
+
+
 async def shutdown(sig: signal.Signals) -> None:
     """優雅關閉"""
-    global _bot
+    global _bot, _discord_bot
 
     logger.info(f"收到信號 {sig.name}，正在關閉...")
+
+    if _discord_bot:
+        await _discord_bot.stop()
 
     if _bot:
         await _bot.stop(clear_position=False)
@@ -142,7 +158,7 @@ async def shutdown(sig: signal.Signals) -> None:
 
 async def main() -> None:
     """主程式"""
-    global _bot
+    global _bot, _discord_bot
 
     print("=" * 60)
     print("         Grid Trading Bot - 網格交易機器人")
@@ -205,6 +221,18 @@ async def main() -> None:
             print(f"  網格間距: {status.get('grid_spacing')}")
             print(f"  買單數量: {status.get('pending_buy_orders')}")
             print(f"  賣單數量: {status.get('pending_sell_orders')}")
+
+            # 啟動 Discord Bot
+            discord_token = os.getenv('DISCORD_BOT_TOKEN', '')
+            if discord_token:
+                print("\n正在啟動 Discord Bot...")
+                _discord_bot = TradingDiscordBot(discord_token)
+                _discord_bot.set_trading_bot(_bot)
+
+                # 在背景執行 Discord Bot
+                asyncio.create_task(_discord_bot.start())
+                print("Discord Bot 啟動中... (指令同步需要幾秒鐘)")
+
             print("\n按 Ctrl+C 停止機器人")
             print("=" * 60)
 
@@ -217,11 +245,15 @@ async def main() -> None:
 
     except KeyboardInterrupt:
         print("\n收到中斷信號...")
+        if _discord_bot:
+            await _discord_bot.stop()
         if _bot:
             await _bot.stop(clear_position=False)
     except Exception as e:
         logger.error(f"錯誤: {e}")
         print(f"\n發生錯誤: {e}")
+        if _discord_bot:
+            await _discord_bot.stop()
         if _bot:
             await _bot.stop(clear_position=False)
         sys.exit(1)
