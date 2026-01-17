@@ -578,17 +578,17 @@ class GridBot:
     async def _save_state(self) -> None:
         """Save bot state to database."""
         try:
-            # Create state snapshot
+            # Create config dict
+            config = {
+                "symbol": self._config.symbol,
+                "market_type": self._config.market_type.value,
+                "total_investment": str(self._config.total_investment),
+                "risk_level": self._config.risk_level.value,
+                "grid_type": self._config.grid_type.value,
+            }
+
+            # Create state data dict
             state_data = {
-                "bot_id": self._bot_id,
-                "state": self._state.value,
-                "config": {
-                    "symbol": self._config.symbol,
-                    "market_type": self._config.market_type.value,
-                    "total_investment": str(self._config.total_investment),
-                    "risk_level": self._config.risk_level.value,
-                    "grid_type": self._config.grid_type.value,
-                },
                 "start_time": self._start_time.isoformat() if self._start_time else None,
                 "statistics": self.get_statistics(),
                 "saved_at": datetime.now(timezone.utc).isoformat(),
@@ -602,7 +602,13 @@ class GridBot:
                 }
 
             # Save to data manager
-            await self._data_manager.save_bot_state(self._bot_id, state_data)
+            await self._data_manager.save_bot_state(
+                bot_id=self._bot_id,
+                bot_type="grid",
+                status=self._state.value,
+                config=config,
+                state_data=state_data,
+            )
 
             logger.debug(f"Bot state saved: {self._bot_id}")
 
