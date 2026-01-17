@@ -24,6 +24,13 @@ from .grid import (
     # Order Manager
     FilledRecord,
     GridOrderManager,
+    # Risk Manager
+    BreakoutAction,
+    BreakoutDirection,
+    BreakoutEvent,
+    GridRiskManager,
+    RiskConfig,
+    RiskState,
     # Convenience functions
     create_grid,
     create_grid_with_manual_range,
@@ -54,6 +61,13 @@ __all__ = [
     # Order Manager
     "FilledRecord",
     "GridOrderManager",
+    # Risk Manager
+    "GridRiskManager",
+    "RiskConfig",
+    "RiskState",
+    "BreakoutDirection",
+    "BreakoutAction",
+    "BreakoutEvent",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",

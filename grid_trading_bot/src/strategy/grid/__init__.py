@@ -25,6 +25,14 @@ from .models import (
     RiskLevel,
 )
 from .order_manager import FilledRecord, GridOrderManager
+from .risk_manager import (
+    BreakoutAction,
+    BreakoutDirection,
+    BreakoutEvent,
+    GridRiskManager,
+    RiskConfig,
+    RiskState,
+)
 
 __all__ = [
     # Exceptions
@@ -51,6 +59,13 @@ __all__ = [
     # Order Manager
     "GridOrderManager",
     "FilledRecord",
+    # Risk Manager
+    "GridRiskManager",
+    "RiskConfig",
+    "RiskState",
+    "BreakoutDirection",
+    "BreakoutAction",
+    "BreakoutEvent",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",
