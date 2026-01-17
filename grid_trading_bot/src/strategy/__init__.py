@@ -21,6 +21,8 @@ from .grid import (
     # Calculators
     ATRCalculator,
     SmartGridCalculator,
+    # Order Manager
+    GridOrderManager,
     # Convenience functions
     create_grid,
     create_grid_with_manual_range,
@@ -48,6 +50,8 @@ __all__ = [
     # Calculators
     "ATRCalculator",
     "SmartGridCalculator",
+    # Order Manager
+    "GridOrderManager",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",

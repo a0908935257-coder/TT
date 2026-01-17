@@ -24,6 +24,7 @@ from .models import (
     LevelState,
     RiskLevel,
 )
+from .order_manager import GridOrderManager
 
 __all__ = [
     # Exceptions
@@ -47,6 +48,8 @@ __all__ = [
     # Calculator
     "ATRCalculator",
     "SmartGridCalculator",
+    # Order Manager
+    "GridOrderManager",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",
