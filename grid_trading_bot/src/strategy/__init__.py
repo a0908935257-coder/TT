@@ -22,6 +22,7 @@ from .grid import (
     ATRCalculator,
     SmartGridCalculator,
     # Order Manager
+    FilledRecord,
     GridOrderManager,
     # Convenience functions
     create_grid,
@@ -51,6 +52,7 @@ __all__ = [
     "ATRCalculator",
     "SmartGridCalculator",
     # Order Manager
+    "FilledRecord",
     "GridOrderManager",
     # Convenience functions
     "create_grid",

@@ -24,7 +24,7 @@ from .models import (
     LevelState,
     RiskLevel,
 )
-from .order_manager import GridOrderManager
+from .order_manager import FilledRecord, GridOrderManager
 
 __all__ = [
     # Exceptions
@@ -50,6 +50,7 @@ __all__ = [
     "SmartGridCalculator",
     # Order Manager
     "GridOrderManager",
+    "FilledRecord",
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",

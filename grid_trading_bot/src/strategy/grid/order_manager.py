@@ -2,10 +2,12 @@
 Grid Order Manager.
 
 Manages grid orders including initial placement, level-order mapping,
-and synchronization with the exchange.
+fill handling, reverse order placement, and profit tracking.
 """
 
 import asyncio
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -20,6 +22,50 @@ from .models import GridLevel, GridSetup, LevelSide, LevelState
 logger = get_logger(__name__)
 
 
+@dataclass
+class FilledRecord:
+    """
+    Record of a filled order.
+
+    Tracks fill details for profit calculation and history.
+
+    Example:
+        >>> record = FilledRecord(
+        ...     level_index=5,
+        ...     side=OrderSide.BUY,
+        ...     price=Decimal("50000"),
+        ...     quantity=Decimal("0.1"),
+        ...     fee=Decimal("5"),
+        ...     timestamp=datetime.now(timezone.utc),
+        ...     order_id="12345",
+        ... )
+    """
+
+    level_index: int
+    side: OrderSide
+    price: Decimal
+    quantity: Decimal
+    fee: Decimal
+    timestamp: datetime
+    order_id: str
+
+    # Optional: linked record for profit calculation
+    paired_record: Optional["FilledRecord"] = field(default=None, repr=False)
+
+    @property
+    def value(self) -> Decimal:
+        """Total value of the fill (price * quantity)."""
+        return self.price * self.quantity
+
+    @property
+    def net_value(self) -> Decimal:
+        """Net value after fees."""
+        if self.side == OrderSide.BUY:
+            return self.value + self.fee  # Cost to buy
+        else:
+            return self.value - self.fee  # Revenue from sell
+
+
 class GridOrderManager:
     """
     Grid Order Manager.
@@ -29,6 +75,8 @@ class GridOrderManager:
     - Level-to-order and order-to-level mappings
     - Order cancellation at specific levels
     - Synchronization with exchange order state
+    - Fill handling and reverse order placement
+    - Profit tracking and statistics
 
     Example:
         >>> manager = GridOrderManager(
@@ -41,6 +89,10 @@ class GridOrderManager:
         >>> manager.initialize(grid_setup)
         >>> placed = await manager.place_initial_orders()
         >>> print(f"Placed {placed} orders")
+        >>>
+        >>> # Handle order fill event
+        >>> await manager.on_order_filled(filled_order)
+        >>> stats = manager.get_statistics()
     """
 
     # Default tolerance for price comparison (0.1%)
@@ -48,6 +100,9 @@ class GridOrderManager:
 
     # Default interval between batch orders (100ms)
     DEFAULT_ORDER_INTERVAL = 0.1
+
+    # Default fee rate (0.1%)
+    DEFAULT_FEE_RATE = Decimal("0.001")
 
     def __init__(
         self,
@@ -85,6 +140,15 @@ class GridOrderManager:
 
         # Order cache: order_id -> Order
         self._orders: dict[str, Order] = {}
+
+        # Fill tracking (Prompt 20)
+        self._filled_history: list[FilledRecord] = []
+        self._total_profit: Decimal = Decimal("0")
+        self._trade_count: int = 0
+
+        # Track pending buy fills waiting for sell (for profit calculation)
+        # Key: level_index, Value: FilledRecord
+        self._pending_buy_fills: dict[int, FilledRecord] = {}
 
     # =========================================================================
     # Properties
@@ -127,6 +191,12 @@ class GridOrderManager:
         self._level_order_map.clear()
         self._order_level_map.clear()
         self._orders.clear()
+
+        # Clear fill tracking
+        self._filled_history.clear()
+        self._total_profit = Decimal("0")
+        self._trade_count = 0
+        self._pending_buy_fills.clear()
 
         logger.info(
             f"GridOrderManager initialized: {self._symbol}, "
@@ -683,3 +753,388 @@ class GridOrderManager:
             )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
+
+    # =========================================================================
+    # Fill Handling (Prompt 20)
+    # =========================================================================
+
+    async def on_order_filled(self, order: Order) -> Optional[Order]:
+        """
+        Handle order fill event.
+
+        When an order is filled:
+        1. Record the fill in history
+        2. Update level state
+        3. Place reverse order at appropriate level
+        4. Calculate profit if completing a round trip
+        5. Send notification
+        6. Save to database
+
+        Args:
+            order: The filled Order
+
+        Returns:
+            The reverse order if placed, None otherwise
+        """
+        if self._setup is None:
+            logger.warning("Cannot handle fill - not initialized")
+            return None
+
+        # Find level index for this order
+        level_index = self.get_level_by_order_id(order.order_id)
+        if level_index is None:
+            logger.warning(f"Order {order.order_id} not found in level mappings")
+            return None
+
+        level = self._setup.levels[level_index]
+
+        # Determine fill price and quantity
+        fill_price = order.avg_price if order.avg_price else order.price
+        fill_qty = order.filled_qty
+        fee = order.fee if order.fee else fill_price * fill_qty * self.DEFAULT_FEE_RATE
+
+        # Create fill record
+        fill_record = FilledRecord(
+            level_index=level_index,
+            side=OrderSide(order.side) if isinstance(order.side, str) else order.side,
+            price=fill_price,
+            quantity=fill_qty,
+            fee=fee,
+            timestamp=datetime.now(timezone.utc),
+            order_id=order.order_id,
+        )
+
+        # Add to history
+        self._filled_history.append(fill_record)
+
+        # Update level state
+        level.state = LevelState.FILLED
+        level.filled_quantity = fill_qty
+        level.filled_price = fill_price
+
+        # Remove from active mappings
+        if level_index in self._level_order_map:
+            del self._level_order_map[level_index]
+        if order.order_id in self._order_level_map:
+            del self._order_level_map[order.order_id]
+
+        # Update order cache
+        self._orders[order.order_id] = order
+
+        # Calculate profit if completing a round trip
+        profit = Decimal("0")
+        filled_side = OrderSide(order.side) if isinstance(order.side, str) else order.side
+
+        if filled_side == OrderSide.BUY:
+            # Store buy fill for later profit calculation
+            self._pending_buy_fills[level_index] = fill_record
+        elif filled_side == OrderSide.SELL:
+            # Check if we have a matching buy fill to calculate profit
+            # Look for buy fills at lower levels
+            matching_buy = self._find_matching_buy_fill(level_index)
+            if matching_buy:
+                profit = self.calculate_profit(matching_buy, fill_record)
+                self._total_profit += profit
+                self._trade_count += 1
+
+                # Link records
+                fill_record.paired_record = matching_buy
+                matching_buy.paired_record = fill_record
+
+                logger.info(
+                    f"Trade completed: profit={profit:.4f}, "
+                    f"total_profit={self._total_profit:.4f}, "
+                    f"trade_count={self._trade_count}"
+                )
+
+        # Update order in database
+        await self._data_manager.update_order(order, bot_id=self._bot_id)
+
+        # Place reverse order
+        reverse_order = await self.place_reverse_order(level_index, filled_side)
+
+        # Send notification
+        await self._notify_order_filled(fill_record, profit, reverse_order)
+
+        logger.info(
+            f"Order filled at level {level_index}: "
+            f"{filled_side.value} {fill_qty} @ {fill_price}"
+        )
+
+        return reverse_order
+
+    async def place_reverse_order(
+        self,
+        level_index: int,
+        filled_side: OrderSide | str,
+    ) -> Optional[Order]:
+        """
+        Place reverse order after a fill.
+
+        BUY filled -> Place SELL at level_index + 1 (upper level)
+        SELL filled -> Place BUY at level_index - 1 (lower level)
+
+        Args:
+            level_index: Index of the filled level
+            filled_side: Side of the filled order
+
+        Returns:
+            The reverse Order if placed, None otherwise
+        """
+        if self._setup is None:
+            return None
+
+        # Convert side to enum if string
+        if isinstance(filled_side, str):
+            filled_side = OrderSide(filled_side.upper())
+
+        # Determine target level and side for reverse order
+        if filled_side == OrderSide.BUY:
+            # BUY filled -> place SELL at upper level
+            target_level_index = level_index + 1
+            reverse_side = OrderSide.SELL
+
+            # Check boundary
+            if target_level_index >= len(self._setup.levels):
+                logger.info(
+                    f"Level {level_index} is highest level - no reverse order placed"
+                )
+                return None
+
+        else:  # SELL filled
+            # SELL filled -> place BUY at lower level
+            target_level_index = level_index - 1
+            reverse_side = OrderSide.BUY
+
+            # Check boundary
+            if target_level_index < 0:
+                logger.info(
+                    f"Level {level_index} is lowest level - no reverse order placed"
+                )
+                return None
+
+        # Place the reverse order
+        logger.info(
+            f"Placing reverse order: {reverse_side.value} at level {target_level_index}"
+        )
+        return await self.place_order_at_level(target_level_index, reverse_side)
+
+    def calculate_profit(
+        self,
+        buy_record: FilledRecord,
+        sell_record: FilledRecord,
+    ) -> Decimal:
+        """
+        Calculate profit from a buy-sell round trip.
+
+        Profit = (sell_price - buy_price) × quantity - fees
+
+        Args:
+            buy_record: The buy fill record
+            sell_record: The sell fill record
+
+        Returns:
+            Net profit after fees
+        """
+        # Use the smaller quantity (in case of partial fills)
+        quantity = min(buy_record.quantity, sell_record.quantity)
+
+        # Gross profit
+        gross_profit = (sell_record.price - buy_record.price) * quantity
+
+        # Total fees (proportional to quantity used)
+        buy_fee = buy_record.fee * (quantity / buy_record.quantity) if buy_record.quantity > 0 else Decimal("0")
+        sell_fee = sell_record.fee * (quantity / sell_record.quantity) if sell_record.quantity > 0 else Decimal("0")
+        total_fees = buy_fee + sell_fee
+
+        # Net profit
+        net_profit = gross_profit - total_fees
+
+        logger.debug(
+            f"Profit calculation: ({sell_record.price} - {buy_record.price}) × {quantity} "
+            f"- {total_fees} = {net_profit}"
+        )
+
+        return net_profit
+
+    def get_statistics(self) -> dict:
+        """
+        Get grid trading statistics.
+
+        Returns:
+            Dict with:
+                - total_profit: Cumulative profit
+                - trade_count: Completed round trips
+                - buy_filled_count: Total buy fills
+                - sell_filled_count: Total sell fills
+                - pending_buy_count: Active buy orders
+                - pending_sell_count: Active sell orders
+                - avg_profit_per_trade: Average profit per trade
+                - total_fees: Total fees paid
+        """
+        # Count fills by side
+        buy_filled_count = sum(
+            1 for r in self._filled_history if r.side == OrderSide.BUY
+        )
+        sell_filled_count = sum(
+            1 for r in self._filled_history if r.side == OrderSide.SELL
+        )
+
+        # Count pending orders by side
+        pending_buy_count = 0
+        pending_sell_count = 0
+        if self._setup:
+            for level in self._setup.levels:
+                if level.state == LevelState.PENDING_BUY:
+                    pending_buy_count += 1
+                elif level.state == LevelState.PENDING_SELL:
+                    pending_sell_count += 1
+
+        # Calculate total fees
+        total_fees = sum(r.fee for r in self._filled_history)
+
+        # Average profit per trade
+        avg_profit = (
+            self._total_profit / Decimal(self._trade_count)
+            if self._trade_count > 0
+            else Decimal("0")
+        )
+
+        return {
+            "total_profit": self._total_profit,
+            "trade_count": self._trade_count,
+            "buy_filled_count": buy_filled_count,
+            "sell_filled_count": sell_filled_count,
+            "pending_buy_count": pending_buy_count,
+            "pending_sell_count": pending_sell_count,
+            "avg_profit_per_trade": avg_profit,
+            "total_fees": total_fees,
+        }
+
+    # =========================================================================
+    # WebSocket Event Handlers (Prompt 20)
+    # =========================================================================
+
+    async def handle_order_update(self, order: Order) -> None:
+        """
+        Handle WebSocket order update event.
+
+        This should be registered as a callback for user data stream.
+
+        Args:
+            order: Updated Order from WebSocket
+        """
+        # Only process orders we're tracking
+        if order.order_id not in self._orders:
+            return
+
+        # Update cached order
+        self._orders[order.order_id] = order
+
+        # Handle based on status
+        if order.status == OrderStatus.FILLED:
+            await self.on_order_filled(order)
+        elif order.status == OrderStatus.CANCELED:
+            await self._handle_order_canceled(order)
+        elif order.status == OrderStatus.PARTIALLY_FILLED:
+            logger.debug(f"Order {order.order_id} partially filled: {order.filled_qty}")
+
+    async def _handle_order_canceled(self, order: Order) -> None:
+        """
+        Handle order cancellation event.
+
+        Args:
+            order: Cancelled Order
+        """
+        level_index = self.get_level_by_order_id(order.order_id)
+        if level_index is None:
+            return
+
+        # Update level state
+        if self._setup:
+            level = self._setup.levels[level_index]
+            level.state = LevelState.EMPTY
+            level.order_id = None
+
+        # Remove from mappings
+        if level_index in self._level_order_map:
+            del self._level_order_map[level_index]
+        if order.order_id in self._order_level_map:
+            del self._order_level_map[order.order_id]
+
+        # Update in database
+        await self._data_manager.update_order(order, bot_id=self._bot_id)
+
+        logger.info(f"Order cancelled at level {level_index}: {order.order_id}")
+
+    # =========================================================================
+    # Fill Handling Helpers
+    # =========================================================================
+
+    def _find_matching_buy_fill(self, sell_level_index: int) -> Optional[FilledRecord]:
+        """
+        Find a matching buy fill for profit calculation.
+
+        When a SELL is filled at level N, look for a BUY fill at level N-1
+        (the level below, where buy should have been placed).
+
+        Args:
+            sell_level_index: Level index where sell was filled
+
+        Returns:
+            Matching buy FilledRecord if found, None otherwise
+        """
+        # Look for pending buy fill at the level below
+        buy_level_index = sell_level_index - 1
+        if buy_level_index in self._pending_buy_fills:
+            buy_record = self._pending_buy_fills.pop(buy_level_index)
+            return buy_record
+
+        # Fallback: find any unpaired buy fill at a lower price
+        for record in reversed(self._filled_history):
+            if (
+                record.side == OrderSide.BUY
+                and record.paired_record is None
+                and record.level_index < sell_level_index
+            ):
+                return record
+
+        return None
+
+    async def _notify_order_filled(
+        self,
+        fill_record: FilledRecord,
+        profit: Decimal,
+        reverse_order: Optional[Order],
+    ) -> None:
+        """
+        Send notification for order fill.
+
+        Args:
+            fill_record: The fill record
+            profit: Profit from this trade (0 if not completing round trip)
+            reverse_order: The reverse order placed (if any)
+        """
+        try:
+            side_str = "BUY" if fill_record.side == OrderSide.BUY else "SELL"
+            message = (
+                f"{self._symbol} {side_str} filled\n"
+                f"Price: {fill_record.price}\n"
+                f"Qty: {fill_record.quantity}\n"
+                f"Level: {fill_record.level_index}"
+            )
+
+            if profit != 0:
+                message += f"\nProfit: {profit:.4f}"
+                message += f"\nTotal: {self._total_profit:.4f}"
+
+            if reverse_order:
+                reverse_side = "SELL" if fill_record.side == OrderSide.BUY else "BUY"
+                message += f"\nReverse {reverse_side} order placed"
+
+            await self._notifier.send_success(
+                title="Order Filled",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send fill notification: {e}")
