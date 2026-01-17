@@ -473,3 +473,210 @@ class TestBotPriceEvents:
             assert direction == BreakoutDirection.NONE
 
         await grid_bot.stop()
+
+
+class TestBotOrderPersistence:
+    """Tests for bot order persistence and reconnection."""
+
+    @pytest.mark.asyncio
+    async def test_order_mapping_saved_in_state(
+        self,
+        grid_bot,
+        mock_data_manager,
+    ):
+        """Test that order mapping is saved when state is saved."""
+        await grid_bot.start()
+
+        # Get order count
+        order_count = grid_bot.order_manager.active_order_count
+        assert order_count > 0
+
+        # Save state
+        await grid_bot._save_state()
+
+        # Check saved state contains order mapping
+        saved_states = mock_data_manager.get_stored_bot_states()
+        assert grid_bot.bot_id in saved_states
+
+        saved = saved_states[grid_bot.bot_id]
+        assert "order_mapping" in saved
+        assert len(saved["order_mapping"]) == order_count
+
+        await grid_bot.stop()
+
+    @pytest.mark.asyncio
+    async def test_bot_restores_orders_on_start(
+        self,
+        manual_bot_config,
+        mock_exchange,
+        mock_data_manager,
+        mock_notifier,
+        sample_klines,
+    ):
+        """Test that bot restores order mapping when starting."""
+        # Set up mocks
+        mock_data_manager.set_price("BTCUSDT", Decimal("50000"))
+        mock_data_manager.set_klines("BTCUSDT", sample_klines)
+        mock_exchange.set_price(Decimal("50000"))
+
+        # Create bot 1 and start it
+        bot1 = GridBot(
+            bot_id="persistence_test_bot",
+            config=manual_bot_config,
+            exchange=mock_exchange,
+            data_manager=mock_data_manager,
+            notifier=mock_notifier,
+        )
+        await bot1.start()
+
+        # Get order info before stopping
+        original_order_count = bot1.order_manager.active_order_count
+        original_mapping = bot1.order_manager.get_order_mapping()
+        assert original_order_count > 0
+
+        # Save state and stop
+        await bot1._save_state()
+        await bot1.stop()
+
+        # Create new bot instance (simulating restart)
+        bot2 = GridBot(
+            bot_id="persistence_test_bot",
+            config=manual_bot_config,
+            exchange=mock_exchange,
+            data_manager=mock_data_manager,
+            notifier=mock_notifier,
+        )
+
+        # Start the new bot - it should restore orders
+        await bot2.start()
+
+        # Verify orders were restored
+        restored_mapping = bot2.order_manager.get_order_mapping()
+
+        # The restored mapping should contain the original orders
+        # (sync_orders will verify they still exist on exchange)
+        assert bot2.order_manager.active_order_count > 0
+
+        await bot2.stop()
+
+    @pytest.mark.asyncio
+    async def test_bot_handles_missing_saved_state(
+        self,
+        manual_bot_config,
+        mock_exchange,
+        mock_data_manager,
+        mock_notifier,
+        sample_klines,
+    ):
+        """Test that bot handles case with no saved state gracefully."""
+        # Set up mocks
+        mock_data_manager.set_price("BTCUSDT", Decimal("50000"))
+        mock_data_manager.set_klines("BTCUSDT", sample_klines)
+        mock_exchange.set_price(Decimal("50000"))
+
+        # Create bot without any prior saved state
+        bot = GridBot(
+            bot_id="new_bot_no_state",
+            config=manual_bot_config,
+            exchange=mock_exchange,
+            data_manager=mock_data_manager,
+            notifier=mock_notifier,
+        )
+
+        # Should start successfully
+        started = await bot.start()
+        assert started is True
+
+        # Should have placed new orders
+        assert bot.order_manager.active_order_count > 0
+
+        await bot.stop()
+
+    @pytest.mark.asyncio
+    async def test_bot_handles_empty_order_mapping(
+        self,
+        manual_bot_config,
+        mock_exchange,
+        mock_data_manager,
+        mock_notifier,
+        sample_klines,
+    ):
+        """Test that bot handles saved state with empty order mapping."""
+        # Set up mocks
+        mock_data_manager.set_price("BTCUSDT", Decimal("50000"))
+        mock_data_manager.set_klines("BTCUSDT", sample_klines)
+        mock_exchange.set_price(Decimal("50000"))
+
+        # Pre-save a state with empty order mapping
+        await mock_data_manager.save_bot_state(
+            bot_id="empty_mapping_bot",
+            state_data={"order_mapping": {}},
+            bot_type="grid",
+            status="stopped",
+        )
+
+        # Create bot
+        bot = GridBot(
+            bot_id="empty_mapping_bot",
+            config=manual_bot_config,
+            exchange=mock_exchange,
+            data_manager=mock_data_manager,
+            notifier=mock_notifier,
+        )
+
+        # Should start successfully and place new orders
+        started = await bot.start()
+        assert started is True
+        assert bot.order_manager.active_order_count > 0
+
+        await bot.stop()
+
+    @pytest.mark.asyncio
+    async def test_order_mapping_updated_after_fill(
+        self,
+        grid_bot,
+        mock_data_manager,
+    ):
+        """Test that order mapping is updated correctly after order fills."""
+        await grid_bot.start()
+
+        # Get a buy order
+        buy_levels = [
+            l for l in grid_bot.setup.levels
+            if l.index in grid_bot.order_manager._level_order_map
+        ]
+
+        if buy_levels:
+            level = buy_levels[0]
+            order_id = grid_bot.order_manager._level_order_map[level.index]
+            order = grid_bot.order_manager._orders[order_id]
+
+            if order.side == OrderSide.BUY:
+                # Simulate fill
+                filled_order = Order(
+                    order_id=order_id,
+                    symbol="BTCUSDT",
+                    side=OrderSide.BUY,
+                    order_type=order.order_type,
+                    status=OrderStatus.FILLED,
+                    price=order.price,
+                    quantity=order.quantity,
+                    filled_qty=order.quantity,
+                    avg_price=order.price,
+                    fee=Decimal("5"),
+                    created_at=datetime.now(timezone.utc),
+                )
+
+                await grid_bot.on_order_filled(filled_order)
+
+                # Save state
+                await grid_bot._save_state()
+
+                # Verify mapping updated
+                saved = mock_data_manager.get_stored_bot_states()[grid_bot.bot_id]
+                mapping = saved.get("order_mapping", {})
+
+                # Original order should be removed from mapping
+                assert order_id not in mapping
+
+        await grid_bot.stop()

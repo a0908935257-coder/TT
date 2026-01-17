@@ -440,3 +440,120 @@ class TestStatistics:
 
         assert stats["buy_filled_count"] == 1
         assert stats["sell_filled_count"] == 0
+
+
+class TestOrderMappingPersistence:
+    """Tests for order mapping persistence (reconnection support)."""
+
+    @pytest.mark.asyncio
+    async def test_get_order_mapping_empty(self, order_manager):
+        """Test get_order_mapping with no orders."""
+        mapping = order_manager.get_order_mapping()
+
+        assert isinstance(mapping, dict)
+        assert len(mapping) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_order_mapping_with_orders(self, initialized_manager):
+        """Test get_order_mapping returns correct mapping after placing orders."""
+        await initialized_manager.place_initial_orders()
+
+        mapping = initialized_manager.get_order_mapping()
+
+        assert isinstance(mapping, dict)
+        assert len(mapping) > 0
+
+        # Verify mapping structure: order_id -> level_index
+        for order_id, level_index in mapping.items():
+            assert isinstance(order_id, str)
+            assert isinstance(level_index, int)
+            # Verify the order exists
+            assert order_id in initialized_manager._orders
+
+    @pytest.mark.asyncio
+    async def test_restore_order_mapping_empty(self, order_manager):
+        """Test restore_order_mapping with empty mapping."""
+        restored = order_manager.restore_order_mapping({})
+
+        assert restored == 0
+        assert len(order_manager._order_level_map) == 0
+
+    @pytest.mark.asyncio
+    async def test_restore_order_mapping_success(self, initialized_manager):
+        """Test successful order mapping restoration."""
+        # Place orders and get mapping
+        await initialized_manager.place_initial_orders()
+        original_mapping = initialized_manager.get_order_mapping()
+
+        # Clear the internal maps to simulate restart
+        initialized_manager._order_level_map.clear()
+        initialized_manager._level_order_map.clear()
+
+        # Restore the mapping
+        restored = initialized_manager.restore_order_mapping(original_mapping)
+
+        assert restored == len(original_mapping)
+        assert len(initialized_manager._order_level_map) == len(original_mapping)
+
+        # Verify bidirectional mapping is restored
+        for order_id, level_index in original_mapping.items():
+            assert initialized_manager._order_level_map.get(order_id) == level_index
+            assert initialized_manager._level_order_map.get(level_index) == order_id
+
+    @pytest.mark.asyncio
+    async def test_restore_order_mapping_invalid_level(self, order_manager):
+        """Test restore_order_mapping skips invalid level indices."""
+        # Try to restore with invalid level indices
+        invalid_mapping = {
+            "order_123": 999,  # Level doesn't exist
+            "order_456": 1000,
+        }
+
+        restored = order_manager.restore_order_mapping(invalid_mapping)
+
+        # Should not restore any because levels don't exist
+        assert restored == 0
+
+    @pytest.mark.asyncio
+    async def test_order_mapping_round_trip(self, initialized_manager, mock_exchange):
+        """Test complete round trip: place -> save -> restore -> sync."""
+        # Place initial orders
+        await initialized_manager.place_initial_orders()
+        initial_count = initialized_manager.active_order_count
+
+        # Get the mapping
+        mapping = initialized_manager.get_order_mapping()
+        assert len(mapping) == initial_count
+
+        # Simulate restart by clearing internal state
+        initialized_manager._order_level_map.clear()
+        initialized_manager._level_order_map.clear()
+        assert initialized_manager.active_order_count == 0
+
+        # Restore mapping
+        restored = initialized_manager.restore_order_mapping(mapping)
+        assert restored == initial_count
+
+        # Sync with exchange to verify orders still exist
+        sync_result = await initialized_manager.sync_orders()
+        assert "synced" in sync_result
+
+    @pytest.mark.asyncio
+    async def test_get_level_by_order_id_after_restore(self, initialized_manager):
+        """Test get_level_by_order_id works correctly after restoration."""
+        # Place orders
+        await initialized_manager.place_initial_orders()
+        mapping = initialized_manager.get_order_mapping()
+
+        # Get expected level for first order
+        first_order_id = list(mapping.keys())[0]
+        expected_level = mapping[first_order_id]
+
+        # Clear and restore
+        initialized_manager._order_level_map.clear()
+        initialized_manager._level_order_map.clear()
+        initialized_manager.restore_order_mapping(mapping)
+
+        # Verify lookup works
+        level = initialized_manager.get_level_by_order_id(first_order_id)
+        assert level == expected_level
