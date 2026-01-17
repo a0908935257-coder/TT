@@ -99,6 +99,17 @@ class BinanceSpotAPI:
             self._session = aiohttp.ClientSession(timeout=self._timeout)
             logger.debug(f"Connected to {self._base_url}")
 
+    async def sync_time(self) -> None:
+        """Synchronize local time with Binance server time."""
+        try:
+            data = await self._request("GET", "/api/v3/time")
+            server_time_ms = data["serverTime"]
+            if self._auth:
+                self._auth.set_time_offset(server_time_ms)
+                logger.info(f"Time synced, offset: {self._auth.time_offset}ms")
+        except Exception as e:
+            logger.warning(f"Failed to sync time: {e}")
+
     async def close(self) -> None:
         """Close HTTP session."""
         if self._session and not self._session.closed:
@@ -460,16 +471,22 @@ class BinanceSpotAPI:
         side_str = side.value if isinstance(side, OrderSide) else side
         type_str = order_type.value if isinstance(order_type, OrderType) else order_type
 
+        # Format decimal values without scientific notation
+        def format_decimal(value: Decimal | str) -> str:
+            d = Decimal(str(value))
+            # Use fixed-point notation, remove trailing zeros
+            return f"{d:f}".rstrip('0').rstrip('.')
+
         params = {
             "symbol": symbol,
             "side": side_str,
             "type": type_str,
-            "quantity": str(quantity),
+            "quantity": format_decimal(quantity),
         }
 
         # Add price for limit orders
         if price is not None:
-            params["price"] = str(price)
+            params["price"] = format_decimal(price)
 
         # Add timeInForce for limit orders
         if type_str in ("LIMIT", "STOP_LIMIT"):
@@ -477,7 +494,7 @@ class BinanceSpotAPI:
 
         # Add stop price
         if stop_price is not None:
-            params["stopPrice"] = str(stop_price)
+            params["stopPrice"] = format_decimal(stop_price)
 
         # Add client order ID
         if client_order_id:

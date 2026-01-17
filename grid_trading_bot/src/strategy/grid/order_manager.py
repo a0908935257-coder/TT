@@ -226,6 +226,9 @@ class GridOrderManager:
         if self._setup is None:
             raise RuntimeError("GridOrderManager not initialized. Call initialize() first.")
 
+        # Load symbol info for proper precision
+        await self._exchange.get_symbol_info(self._symbol, self._market_type)
+
         # Get current price
         current_price = await self._data_manager.get_price(
             self._symbol,
@@ -239,8 +242,24 @@ class GridOrderManager:
 
         logger.info(f"Placing initial orders at current price: {current_price}")
 
+        # Get symbol info for validation
+        symbol_info = await self._exchange.get_symbol_info(self._symbol, self._market_type)
+        min_notional = symbol_info.min_notional
+        min_quantity = symbol_info.min_quantity
+
+        # Check base asset balance for SELL orders (SPOT market only)
+        base_asset_balance = Decimal("0")
+        if self._market_type == MarketType.SPOT:
+            base_asset = symbol_info.base_asset
+            balance = await self._exchange.get_balance(base_asset, self._market_type)
+            if balance:
+                base_asset_balance = balance.free
+            logger.info(f"Base asset ({base_asset}) balance: {base_asset_balance}")
+
         # Prepare orders to place
         orders_to_place: list[dict] = []
+        skipped_sell_no_balance = 0
+        skipped_low_notional = 0
 
         for level in self._setup.levels:
             # Skip if level already has order
@@ -261,6 +280,40 @@ class GridOrderManager:
             # Calculate quantity from allocated amount
             quantity = level.allocated_amount / level.price
 
+            # Round quantity for validation
+            rounded_quantity = self._exchange.round_quantity(
+                self._symbol, quantity, self._market_type
+            )
+
+            # Validate minimum quantity
+            if rounded_quantity < min_quantity:
+                logger.warning(
+                    f"Skipping level {level.index} - quantity {rounded_quantity} "
+                    f"below minimum {min_quantity}"
+                )
+                skipped_low_notional += 1
+                continue
+
+            # Validate minimum notional value
+            notional = rounded_quantity * level.price
+            if notional < min_notional:
+                logger.warning(
+                    f"Skipping level {level.index} - notional {notional:.4f} USDT "
+                    f"below minimum {min_notional}"
+                )
+                skipped_low_notional += 1
+                continue
+
+            # For SELL orders in SPOT, check if we have enough base asset
+            if side == OrderSide.SELL and self._market_type == MarketType.SPOT:
+                if base_asset_balance < rounded_quantity:
+                    logger.debug(
+                        f"Skipping SELL at level {level.index} - "
+                        f"insufficient {symbol_info.base_asset} balance"
+                    )
+                    skipped_sell_no_balance += 1
+                    continue
+
             orders_to_place.append({
                 "level_index": level.index,
                 "side": side,
@@ -278,10 +331,21 @@ class GridOrderManager:
         # Send notification
         await self._notify_initial_orders_placed(buy_count, sell_count, success_count)
 
+        # Log results
         logger.info(
             f"Initial orders placed: {success_count} total "
             f"({buy_count} BUY, {sell_count} SELL)"
         )
+        if skipped_sell_no_balance > 0:
+            logger.info(
+                f"Skipped {skipped_sell_no_balance} SELL orders "
+                f"(insufficient base asset balance)"
+            )
+        if skipped_low_notional > 0:
+            logger.info(
+                f"Skipped {skipped_low_notional} orders "
+                f"(below minimum notional {min_notional} USDT)"
+            )
 
         return success_count
 

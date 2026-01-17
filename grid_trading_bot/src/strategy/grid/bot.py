@@ -712,9 +712,8 @@ class GridBot:
         """Fetch kline data for ATR calculation."""
         klines = await self._data_manager.get_klines(
             symbol=self._config.symbol,
-            timeframe=self._config.kline_timeframe,
+            interval=self._config.kline_timeframe,
             limit=self._config.kline_limit,
-            market_type=self._config.market_type,
         )
 
         if not klines:
@@ -846,17 +845,17 @@ class GridBot:
     async def _notify_bot_started(self) -> None:
         """Send bot started notification."""
         try:
-            message = (
-                f"GridBot {self._bot_id} Started\n"
-                f"Symbol: {self._config.symbol}\n"
-                f"Investment: {self._config.total_investment}\n"
-                f"Grid Count: {self._setup.grid_count if self._setup else 0}\n"
-                f"Range: {self._setup.lower_price}-{self._setup.upper_price if self._setup else 'N/A'}"
-            )
-
-            await self._notifier.send_success(
-                title="Grid Bot Started",
-                message=message,
+            config_summary = {
+                "symbol": self._config.symbol,
+                "investment": str(self._config.total_investment),
+                "grid_count": self._setup.grid_count if self._setup else 0,
+                "price_range": f"{self._setup.lower_price}-{self._setup.upper_price}" if self._setup else "N/A",
+                "risk_level": self._config.risk_level.value,
+            }
+            await self._notifier.notify_bot_started(
+                bot_name=self._bot_id,
+                bot_type="Grid Trading",
+                config_summary=config_summary,
             )
         except Exception as e:
             logger.warning(f"Failed to send start notification: {e}")
@@ -868,19 +867,20 @@ class GridBot:
     ) -> None:
         """Send bot stopped notification with stats."""
         try:
-            duration = self._get_running_duration()
+            # Calculate runtime in seconds
+            runtime = 0
+            if self._start_time:
+                delta = datetime.now(timezone.utc) - self._start_time
+                runtime = delta.total_seconds()
 
-            message = (
-                f"GridBot {self._bot_id} Stopped\n"
-                f"Duration: {duration}\n"
-                f"Total Profit: {stats.get('total_profit', 0):.4f}\n"
-                f"Total Trades: {stats.get('trade_count', 0)}\n"
-                f"Position Cleared: {'Yes' if cleared_position else 'No'}"
-            )
+            reason = "Position cleared" if cleared_position else "Normal stop"
+            total_pnl = stats.get('total_profit', Decimal("0"))
 
-            await self._notifier.send_info(
-                title="Grid Bot Stopped",
-                message=message,
+            await self._notifier.notify_bot_stopped(
+                bot_name=self._bot_id,
+                reason=reason,
+                runtime=runtime,
+                total_pnl=total_pnl,
             )
         except Exception as e:
             logger.warning(f"Failed to send stop notification: {e}")
@@ -888,14 +888,10 @@ class GridBot:
     async def _notify_error(self, error: str) -> None:
         """Send error notification."""
         try:
-            message = (
-                f"GridBot {self._bot_id} Error\n"
-                f"Error: {error}"
-            )
-
-            await self._notifier.send_error(
-                title="Grid Bot Error",
-                message=message,
+            await self._notifier.notify_error(
+                bot_name=self._bot_id,
+                error_type="Runtime Error",
+                error_message=error,
             )
         except Exception as e:
             logger.warning(f"Failed to send error notification: {e}")

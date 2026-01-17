@@ -127,6 +127,9 @@ class ExchangeClient:
             await self._spot.connect()
             await self._futures.connect()
 
+            # Sync time with server
+            await self._spot.sync_time()
+
             # Initialize WebSocket clients
             self._spot_ws = BinanceWebSocket(
                 market_type=MarketType.SPOT,

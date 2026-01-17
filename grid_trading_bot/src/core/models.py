@@ -573,6 +573,31 @@ class SymbolInfo(TradingBaseModel):
     tick_size: Decimal
     step_size: Decimal
 
+    @staticmethod
+    def _precision_from_step(step: str) -> int:
+        """
+        Calculate decimal precision from step size.
+
+        Examples:
+            "0.01" -> 2
+            "0.00001" -> 5
+            "1" -> 0
+            "10" -> 0
+
+        Args:
+            step: Step size string (e.g., "0.01", "0.00001")
+
+        Returns:
+            Number of decimal places
+        """
+        step_decimal = Decimal(str(step))
+        # Normalize to remove trailing zeros
+        step_normalized = step_decimal.normalize()
+        # Get the exponent (negative value = decimal places)
+        _, _, exponent = step_normalized.as_tuple()
+        # Exponent is negative for decimals, return absolute value
+        return max(0, -exponent)
+
     @classmethod
     def from_binance(cls, data: dict) -> "SymbolInfo":
         """
@@ -591,14 +616,22 @@ class SymbolInfo(TradingBaseModel):
         price_filter = filters.get("PRICE_FILTER", {})
         notional = filters.get("NOTIONAL", filters.get("MIN_NOTIONAL", {}))
 
+        # Get step sizes
+        tick_size = price_filter.get("tickSize", "0.00000001")
+        step_size = lot_size.get("stepSize", "0.00000001")
+
+        # Calculate precision from step sizes (more accurate than precision fields)
+        price_precision = cls._precision_from_step(tick_size)
+        quantity_precision = cls._precision_from_step(step_size)
+
         return cls(
             symbol=data["symbol"],
             base_asset=data["baseAsset"],
             quote_asset=data["quoteAsset"],
-            price_precision=data.get("pricePrecision", data.get("quotePrecision", 8)),
-            quantity_precision=data.get("quantityPrecision", data.get("baseAssetPrecision", 8)),
+            price_precision=price_precision,
+            quantity_precision=quantity_precision,
             min_quantity=Decimal(str(lot_size.get("minQty", "0.00000001"))),
             min_notional=Decimal(str(notional.get("minNotional", "0"))),
-            tick_size=Decimal(str(price_filter.get("tickSize", "0.00000001"))),
-            step_size=Decimal(str(lot_size.get("stepSize", "0.00000001"))),
+            tick_size=Decimal(str(tick_size)),
+            step_size=Decimal(str(step_size)),
         )

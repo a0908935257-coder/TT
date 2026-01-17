@@ -777,6 +777,30 @@ class NotificationManager:
         return await self._send_embed(embed, NotificationLevel.INFO)
 
     # =========================================================================
+    # Generic Send Methods (for compatibility)
+    # =========================================================================
+
+    async def send_info(self, title: str, message: str) -> bool:
+        """Send an info notification."""
+        embed = {"title": title, "description": message, "color": 0x3498DB}
+        return await self._send_embed(embed, NotificationLevel.INFO)
+
+    async def send_success(self, title: str, message: str) -> bool:
+        """Send a success notification."""
+        embed = {"title": title, "description": message, "color": 0x2ECC71}
+        return await self._send_embed(embed, NotificationLevel.SUCCESS)
+
+    async def send_warning(self, title: str, message: str) -> bool:
+        """Send a warning notification."""
+        embed = {"title": title, "description": message, "color": 0xF39C12}
+        return await self._send_embed(embed, NotificationLevel.WARNING)
+
+    async def send_error(self, title: str, message: str) -> bool:
+        """Send an error notification."""
+        embed = {"title": title, "description": message, "color": 0xE74C3C}
+        return await self._send_embed(embed, NotificationLevel.ERROR)
+
+    # =========================================================================
     # Lifecycle
     # =========================================================================
 

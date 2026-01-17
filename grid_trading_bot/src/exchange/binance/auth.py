@@ -4,6 +4,7 @@ Binance API authentication and signature handling.
 
 import hashlib
 import hmac
+import time
 from urllib.parse import urlencode
 
 from core.utils import now_timestamp
@@ -32,6 +33,22 @@ class BinanceAuth:
         """
         self.api_key = api_key
         self.api_secret = api_secret
+        self._time_offset: int = 0  # Offset in milliseconds
+
+    def set_time_offset(self, server_time: int) -> None:
+        """
+        Calculate and set time offset from server time.
+
+        Args:
+            server_time: Server timestamp in milliseconds
+        """
+        local_time = int(time.time() * 1000)
+        self._time_offset = server_time - local_time
+
+    @property
+    def time_offset(self) -> int:
+        """Get current time offset in milliseconds."""
+        return self._time_offset
 
     def sign_params(self, params: dict | None = None) -> dict:
         """
@@ -61,12 +78,12 @@ class BinanceAuth:
             # Create a copy to avoid modifying original
             params = params.copy()
 
-        # Add timestamp
-        params["timestamp"] = now_timestamp(unit="ms")
+        # Add timestamp with offset correction and recvWindow
+        params["timestamp"] = int(time.time() * 1000) + self._time_offset
+        params["recvWindow"] = 60000
 
-        # Sort by key and create query string
-        sorted_params = sorted(params.items())
-        query_string = urlencode(sorted_params)
+        # Create query string (preserve order, don't sort)
+        query_string = urlencode(params)
 
         # Calculate HMAC-SHA256 signature
         signature = hmac.new(
