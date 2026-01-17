@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
 
-from core.models import Kline, MarketType, Order, OrderSide, OrderStatus, OrderType
+from core.models import Balance, Kline, MarketType, Order, OrderSide, OrderStatus, OrderType, SymbolInfo
 
 
 @dataclass
@@ -457,18 +457,28 @@ class MockExchangeClient:
         """
         self._balances[asset] = Decimal(str(amount))
 
-    async def get_balance(self, asset: str) -> Decimal:
+    async def get_balance(
+        self,
+        asset: str,
+        market_type: MarketType = MarketType.SPOT,
+    ) -> Balance:
         """
         Get balance for an asset.
 
         Args:
             asset: Asset symbol
+            market_type: Market type (ignored in mock)
 
         Returns:
-            Balance amount
+            Balance object
         """
         await asyncio.sleep(self._latency)
-        return self._balances.get(asset, Decimal("0"))
+        amount = self._balances.get(asset, Decimal("0"))
+        return Balance(
+            asset=asset,
+            free=amount,
+            locked=Decimal("0"),
+        )
 
     async def get_balances(self) -> dict[str, Decimal]:
         """
@@ -561,6 +571,44 @@ class MockExchangeClient:
         """
         self._price_precision[symbol] = price_precision
         self._quantity_precision[symbol] = quantity_precision
+
+    async def get_symbol_info(
+        self,
+        symbol: str,
+        market_type: MarketType = MarketType.SPOT,
+    ) -> SymbolInfo:
+        """
+        Get symbol trading info.
+
+        Args:
+            symbol: Trading pair symbol
+            market_type: Market type
+
+        Returns:
+            SymbolInfo with trading constraints
+        """
+        await asyncio.sleep(self._latency)
+
+        price_precision = self._price_precision.get(symbol, 2)
+        quantity_precision = self._quantity_precision.get(symbol, 6)
+
+        tick_size = Decimal(10) ** -price_precision
+        step_size = Decimal(10) ** -quantity_precision
+
+        base_asset = self._get_base_asset(symbol)
+        quote_asset = self._get_quote_asset(symbol)
+
+        return SymbolInfo(
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            price_precision=price_precision,
+            quantity_precision=quantity_precision,
+            min_quantity=Decimal("0.00001"),
+            min_notional=Decimal("10"),
+            tick_size=tick_size,
+            step_size=step_size,
+        )
 
     def round_price(
         self,

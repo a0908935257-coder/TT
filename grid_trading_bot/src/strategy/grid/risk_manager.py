@@ -408,6 +408,40 @@ class GridRiskManager:
             f"action={action.value}"
         )
 
+    def record_breakout(
+        self,
+        direction: BreakoutDirection,
+        current_price: Decimal,
+    ) -> None:
+        """
+        Record a breakout event without taking action.
+
+        Used when dynamic adjustment handles the breakout instead
+        of traditional breakout handling.
+
+        Args:
+            direction: Breakout direction (UPPER or LOWER)
+            current_price: Price at breakout
+        """
+        setup = self._order_manager.setup
+        if setup is None:
+            return
+
+        event = BreakoutEvent(
+            direction=direction,
+            price=current_price,
+            timestamp=datetime.now(timezone.utc),
+            action_taken=BreakoutAction.HOLD,  # No action, grid was rebuilt
+            upper_price=setup.upper_price,
+            lower_price=setup.lower_price,
+        )
+        self._last_breakout = event
+        self._breakout_history.append(event)
+
+        logger.info(
+            f"Breakout recorded (grid rebuilt): {direction.value} at {current_price}"
+        )
+
     async def execute_action(
         self,
         action: BreakoutAction,

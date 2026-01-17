@@ -450,14 +450,19 @@ class GridBot:
         if not self._risk_manager:
             return
 
-        # Check dynamic adjustment first (higher priority)
+        # Check breakout first (for tracking/notification)
+        direction = self._risk_manager.check_breakout(price)
+
+        # Check dynamic adjustment (may rebuild grid)
         if self._config.dynamic_adjust.enabled:
             adjusted = await self._risk_manager.check_and_execute_dynamic_adjust(price)
             if adjusted:
-                return  # Grid was rebuilt, skip other checks
+                # Record breakout event even though grid was rebuilt
+                if direction.value != "none":
+                    self._risk_manager.record_breakout(direction, price)
+                return  # Grid was rebuilt, skip breakout handling
 
-        # Check breakout
-        direction = self._risk_manager.check_breakout(price)
+        # Handle breakout if detected
         if direction.value != "none":
             await self._risk_manager.handle_breakout(direction, price)
 

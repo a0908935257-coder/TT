@@ -121,7 +121,7 @@ class MockDataManager:
     async def get_klines(
         self,
         symbol: str,
-        timeframe: str = "4h",
+        interval: str = "4h",
         limit: int = 100,
         market_type: MarketType = MarketType.SPOT,
     ) -> list[Kline]:
@@ -245,7 +245,10 @@ class MockDataManager:
     async def save_bot_state(
         self,
         bot_id: str,
-        state_data: dict[str, Any],
+        state_data: dict[str, Any] = None,
+        bot_type: str = "grid",
+        status: str = "",
+        **kwargs: Any,
     ) -> bool:
         """
         Save bot state to storage.
@@ -253,15 +256,23 @@ class MockDataManager:
         Args:
             bot_id: Bot identifier
             state_data: State data to save
+            bot_type: Bot type identifier
+            status: Bot status/state
+            **kwargs: Additional parameters
 
         Returns:
             True if saved successfully
         """
         await asyncio.sleep(self._latency)
 
+        state_data = state_data or {}
         self._bot_states[bot_id] = {
+            "bot_id": bot_id,
+            "state": status,  # Map status to state for test compatibility
             **state_data,
+            "bot_type": bot_type,
             "saved_at": datetime.now(timezone.utc).isoformat(),
+            **kwargs,
         }
         return True
 
@@ -408,6 +419,48 @@ class MockNotifier:
     ) -> bool:
         """Send error level notification."""
         return await self.send(title, message, level="error", **kwargs)
+
+    async def notify_error(
+        self,
+        title: str,
+        message: str,
+        **kwargs: Any,
+    ) -> bool:
+        """Alias for send_error for compatibility."""
+        return await self.send_error(title, message, **kwargs)
+
+    async def notify_bot_started(
+        self,
+        bot_id: str = "",
+        symbol: str = "",
+        **kwargs: Any,
+    ) -> bool:
+        """Notify bot started."""
+        return await self.send(
+            "Bot Started",
+            f"Bot {bot_id} started trading {symbol}",
+            level="success",
+            bot_id=bot_id,
+            symbol=symbol,
+            **kwargs,
+        )
+
+    async def notify_bot_stopped(
+        self,
+        bot_id: str = "",
+        symbol: str = "",
+        reason: str = "",
+        **kwargs: Any,
+    ) -> bool:
+        """Notify bot stopped."""
+        return await self.send(
+            "Bot Stopped",
+            f"Bot {bot_id} stopped trading {symbol}. {reason}",
+            level="info",
+            bot_id=bot_id,
+            symbol=symbol,
+            **kwargs,
+        )
 
     def get_last_message(self) -> Optional[dict[str, Any]]:
         """
