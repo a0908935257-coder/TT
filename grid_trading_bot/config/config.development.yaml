@@ -1,0 +1,20 @@
+# Development Environment Configuration Overrides
+# These values override config.yaml when env="development"
+
+environment: development
+debug: true
+log_level: DEBUG
+
+exchange:
+  testnet: true
+
+database:
+  echo: true
+  pool_size: 5
+
+notification:
+  min_level: debug
+
+risk:
+  max_leverage: 5
+  circuit_breaker_cooldown: 300

@@ -1,0 +1,25 @@
+# Production Environment Configuration Overrides
+# These values override config.yaml when env="production"
+
+environment: production
+debug: false
+log_level: INFO
+
+exchange:
+  testnet: false
+
+database:
+  pool_size: 20
+  max_overflow: 40
+  echo: false
+
+redis:
+  max_connections: 20
+
+notification:
+  min_level: info
+
+risk:
+  max_leverage: 10
+  circuit_breaker_enabled: true
+  circuit_breaker_cooldown: 3600

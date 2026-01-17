@@ -1,0 +1,69 @@
+# Grid Trading Bot Configuration
+# Environment variables use ${VAR} or ${VAR:default} syntax
+
+# Application settings
+app_name: Grid Trading Bot
+environment: ${ENVIRONMENT:development}
+debug: ${DEBUG:false}
+log_level: ${LOG_LEVEL:INFO}
+
+# Exchange configuration
+exchange:
+  name: binance
+  testnet: ${BINANCE_TESTNET:true}
+  api_key: ${BINANCE_API_KEY:}
+  api_secret: ${BINANCE_API_SECRET:}
+  leverage: ${DEFAULT_LEVERAGE:1}
+  margin_type: isolated
+  recv_window: 5000
+  rate_limit: 1200
+
+# Database configuration
+database:
+  host: ${DB_HOST:localhost}
+  port: ${DB_PORT:5432}
+  name: ${DB_NAME:trading_bot}
+  user: ${DB_USER:postgres}
+  password: ${DB_PASSWORD:}
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  echo: false
+
+# Redis configuration
+redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  db: ${REDIS_DB:0}
+  password: ${REDIS_PASSWORD:}
+  key_prefix: "trading:"
+  socket_timeout: 5.0
+  socket_connect_timeout: 5.0
+  max_connections: 10
+
+# Notification configuration
+notification:
+  enabled: true
+  discord_webhook_url: ${DISCORD_WEBHOOK_URL:}
+  discord_username: Trading Bot
+  min_level: info
+  rate_limit: 25
+  notify_on_order: true
+  notify_on_trade: true
+  notify_on_position: true
+  notify_on_error: true
+  notify_on_risk: true
+
+# Risk management configuration
+risk:
+  max_drawdown: 20
+  daily_loss_limit: 5
+  weekly_loss_limit: 15
+  position_limit: 5
+  max_position_size: 10
+  max_leverage: 10
+  liquidation_warning: 80
+  margin_warning: 50
+  min_order_interval: 1
+  circuit_breaker_enabled: true
+  circuit_breaker_cooldown: 3600
