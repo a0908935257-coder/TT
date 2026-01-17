@@ -11,6 +11,7 @@ from .database import (
     TradeModel,
 )
 from .kline import KlineManager, TechnicalIndicators
+from .manager import MarketDataManager
 from .repositories import (
     BalanceRepository,
     BaseRepository,
@@ -21,6 +22,8 @@ from .repositories import (
 )
 
 __all__ = [
+    # Unified Data Manager
+    "MarketDataManager",
     # Database Connection Manager
     "DatabaseManager",
     # SQLAlchemy Base
