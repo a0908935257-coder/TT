@@ -46,6 +46,12 @@ class TradingDiscordBot:
         self._get_orders: Optional[Callable[[], list]] = None
         self._get_balance: Optional[Callable[[], dict]] = None
 
+        # Callbacks for bot control
+        self._start_bot: Optional[Callable[[], Any]] = None
+        self._stop_bot: Optional[Callable[[bool], Any]] = None
+        self._pause_bot: Optional[Callable[[str], Any]] = None
+        self._resume_bot: Optional[Callable[[], Any]] = None
+
         # Bot reference
         self._trading_bot: Any = None
 
@@ -77,6 +83,31 @@ class TradingDiscordBot:
             self._get_orders = get_orders
         if get_balance:
             self._get_balance = get_balance
+
+    def set_control_callbacks(
+        self,
+        start_bot: Optional[Callable[[], Any]] = None,
+        stop_bot: Optional[Callable[[bool], Any]] = None,
+        pause_bot: Optional[Callable[[str], Any]] = None,
+        resume_bot: Optional[Callable[[], Any]] = None,
+    ) -> None:
+        """
+        Set callback functions for bot control.
+
+        Args:
+            start_bot: Async function to start the bot
+            stop_bot: Async function to stop the bot (takes clear_position bool)
+            pause_bot: Async function to pause the bot (takes reason string)
+            resume_bot: Async function to resume the bot
+        """
+        if start_bot:
+            self._start_bot = start_bot
+        if stop_bot:
+            self._stop_bot = stop_bot
+        if pause_bot:
+            self._pause_bot = pause_bot
+        if resume_bot:
+            self._resume_bot = resume_bot
 
     async def start(self) -> None:
         """Start the Discord bot."""
@@ -142,6 +173,39 @@ class TradingDiscordBot:
                 await self._handle_help(interaction)
             except Exception as e:
                 logger.error(f"Error in /help command: {e}")
+                await self._send_error_response(interaction, str(e))
+
+        # Bot control commands
+        @self._bot.tree.command(name="start", description="啟動交易機器人")
+        async def start_command(interaction: discord.Interaction):
+            try:
+                await self._handle_start(interaction)
+            except Exception as e:
+                logger.error(f"Error in /start command: {e}")
+                await self._send_error_response(interaction, str(e))
+
+        @self._bot.tree.command(name="stop", description="停止交易機器人")
+        async def stop_command(interaction: discord.Interaction):
+            try:
+                await self._handle_stop(interaction)
+            except Exception as e:
+                logger.error(f"Error in /stop command: {e}")
+                await self._send_error_response(interaction, str(e))
+
+        @self._bot.tree.command(name="pause", description="暫停交易機器人")
+        async def pause_command(interaction: discord.Interaction):
+            try:
+                await self._handle_pause(interaction)
+            except Exception as e:
+                logger.error(f"Error in /pause command: {e}")
+                await self._send_error_response(interaction, str(e))
+
+        @self._bot.tree.command(name="resume", description="恢復交易機器人")
+        async def resume_command(interaction: discord.Interaction):
+            try:
+                await self._handle_resume(interaction)
+            except Exception as e:
+                logger.error(f"Error in /resume command: {e}")
                 await self._send_error_response(interaction, str(e))
 
         # Also support ! prefix commands
@@ -210,6 +274,152 @@ class TradingDiscordBot:
     async def _handle_help(self, interaction: discord.Interaction) -> None:
         """Handle /help command."""
         embed = self._create_help_embed()
+        await interaction.response.send_message(embed=embed)
+
+    async def _handle_start(self, interaction: discord.Interaction) -> None:
+        """Handle /start command."""
+        await interaction.response.defer()
+
+        embed = discord.Embed(timestamp=datetime.now(timezone.utc))
+
+        if not self._trading_bot:
+            embed.title = "❌ 啟動失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="原因", value="交易機器人未初始化", inline=False)
+            await interaction.followup.send(embed=embed)
+            return
+
+        # Check if already running
+        state = getattr(self._trading_bot, '_state', None)
+        if state:
+            state_value = state.value if hasattr(state, 'value') else str(state)
+            if state_value.lower() == 'running':
+                embed.title = "⚠️ 機器人已在運行中"
+                embed.color = discord.Color.yellow()
+                embed.add_field(name="狀態", value="機器人已經在運行，無需重複啟動", inline=False)
+                await interaction.followup.send(embed=embed)
+                return
+
+        try:
+            # Start the bot
+            result = await self._trading_bot.start()
+
+            if result:
+                embed.title = "✅ 機器人啟動成功"
+                embed.color = discord.Color.green()
+                config = getattr(self._trading_bot, '_config', None)
+                if config:
+                    embed.add_field(name="交易對", value=config.symbol, inline=True)
+                    embed.add_field(name="投資金額", value=f"{config.total_investment} USDT", inline=True)
+            else:
+                embed.title = "❌ 啟動失敗"
+                embed.color = discord.Color.red()
+                embed.add_field(name="原因", value="啟動過程中發生錯誤", inline=False)
+
+        except Exception as e:
+            logger.error(f"Error starting bot: {e}")
+            embed.title = "❌ 啟動失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="錯誤", value=str(e), inline=False)
+
+        await interaction.followup.send(embed=embed)
+
+    async def _handle_stop(self, interaction: discord.Interaction) -> None:
+        """Handle /stop command."""
+        await interaction.response.defer()
+
+        embed = discord.Embed(timestamp=datetime.now(timezone.utc))
+
+        if not self._trading_bot:
+            embed.title = "❌ 停止失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="原因", value="交易機器人未初始化", inline=False)
+            await interaction.followup.send(embed=embed)
+            return
+
+        try:
+            # Stop the bot (don't clear position by default)
+            result = await self._trading_bot.stop(clear_position=False)
+
+            if result:
+                embed.title = "🛑 機器人已停止"
+                embed.color = discord.Color.orange()
+                embed.add_field(name="狀態", value="所有掛單已取消，持倉保留", inline=False)
+                embed.add_field(name="提示", value="使用 /start 重新啟動", inline=False)
+            else:
+                embed.title = "⚠️ 停止操作未完成"
+                embed.color = discord.Color.yellow()
+                embed.add_field(name="原因", value="機器人可能已經停止", inline=False)
+
+        except Exception as e:
+            logger.error(f"Error stopping bot: {e}")
+            embed.title = "❌ 停止失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="錯誤", value=str(e), inline=False)
+
+        await interaction.followup.send(embed=embed)
+
+    async def _handle_pause(self, interaction: discord.Interaction) -> None:
+        """Handle /pause command."""
+        embed = discord.Embed(timestamp=datetime.now(timezone.utc))
+
+        if not self._trading_bot:
+            embed.title = "❌ 暫停失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="原因", value="交易機器人未初始化", inline=False)
+            await interaction.response.send_message(embed=embed)
+            return
+
+        try:
+            result = await self._trading_bot.pause(reason="Discord command")
+
+            if result:
+                embed.title = "⏸️ 機器人已暫停"
+                embed.color = discord.Color.blue()
+                embed.add_field(name="狀態", value="暫停下單，現有掛單保留", inline=False)
+                embed.add_field(name="提示", value="使用 /resume 恢復運行", inline=False)
+            else:
+                embed.title = "⚠️ 暫停失敗"
+                embed.color = discord.Color.yellow()
+                embed.add_field(name="原因", value="機器人可能不在運行狀態", inline=False)
+
+        except Exception as e:
+            logger.error(f"Error pausing bot: {e}")
+            embed.title = "❌ 暫停失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="錯誤", value=str(e), inline=False)
+
+        await interaction.response.send_message(embed=embed)
+
+    async def _handle_resume(self, interaction: discord.Interaction) -> None:
+        """Handle /resume command."""
+        embed = discord.Embed(timestamp=datetime.now(timezone.utc))
+
+        if not self._trading_bot:
+            embed.title = "❌ 恢復失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="原因", value="交易機器人未初始化", inline=False)
+            await interaction.response.send_message(embed=embed)
+            return
+
+        try:
+            result = await self._trading_bot.resume()
+
+            if result:
+                embed.title = "▶️ 機器人已恢復運行"
+                embed.color = discord.Color.green()
+                embed.add_field(name="狀態", value="繼續正常交易", inline=False)
+            else:
+                embed.title = "⚠️ 恢復失敗"
+                embed.color = discord.Color.yellow()
+                embed.add_field(name="原因", value="機器人可能不在暫停狀態", inline=False)
+
+        except Exception as e:
+            logger.error(f"Error resuming bot: {e}")
+            embed.title = "❌ 恢復失敗"
+            embed.color = discord.Color.red()
+            embed.add_field(name="錯誤", value=str(e), inline=False)
+
         await interaction.response.send_message(embed=embed)
 
     async def _send_error_response(self, interaction: discord.Interaction, error: str) -> None:
@@ -484,16 +694,31 @@ class TradingDiscordBot:
             color=discord.Color.purple(),
         )
 
-        commands_info = [
+        # Info commands
+        embed.add_field(name="📊 資訊指令", value="─" * 20, inline=False)
+        info_commands = [
             ("/status", "查看機器人狀態"),
             ("/stats", "查看績效統計"),
             ("/orders", "查看目前掛單"),
             ("/balance", "查看帳戶餘額"),
-            ("/help", "顯示此說明"),
         ]
+        for cmd, desc in info_commands:
+            embed.add_field(name=cmd, value=desc, inline=True)
 
-        for cmd, desc in commands_info:
-            embed.add_field(name=cmd, value=desc, inline=False)
+        # Control commands
+        embed.add_field(name="🎮 控制指令", value="─" * 20, inline=False)
+        control_commands = [
+            ("/start", "啟動機器人"),
+            ("/stop", "停止機器人"),
+            ("/pause", "暫停交易"),
+            ("/resume", "恢復交易"),
+        ]
+        for cmd, desc in control_commands:
+            embed.add_field(name=cmd, value=desc, inline=True)
+
+        # Help
+        embed.add_field(name="❓ 幫助", value="─" * 20, inline=False)
+        embed.add_field(name="/help", value="顯示此說明", inline=True)
 
         embed.set_footer(text="也可以使用 ! 前綴，例如 !status")
 
