@@ -1,4 +1,4 @@
-# Core module - logging, exceptions, utilities
+# Core module - logging, exceptions, utilities, models
 from .logger import setup_logger, get_logger
 from .exceptions import (
     TradingBotError,
@@ -26,6 +26,25 @@ from .utils import (
     generate_client_order_id,
     mask_secret,
     retry,
+)
+from .models import (
+    # Enums
+    OrderSide,
+    OrderType,
+    OrderStatus,
+    PositionSide,
+    MarketType,
+    KlineInterval,
+    # Models
+    TradingBaseModel,
+    Kline,
+    Ticker,
+    Order,
+    Position,
+    Balance,
+    AccountInfo,
+    Trade,
+    SymbolInfo,
 )
 
 __all__ = [
@@ -57,4 +76,21 @@ __all__ = [
     "generate_client_order_id",
     "mask_secret",
     "retry",
+    # Enums
+    "OrderSide",
+    "OrderType",
+    "OrderStatus",
+    "PositionSide",
+    "MarketType",
+    "KlineInterval",
+    # Models
+    "TradingBaseModel",
+    "Kline",
+    "Ticker",
+    "Order",
+    "Position",
+    "Balance",
+    "AccountInfo",
+    "Trade",
+    "SymbolInfo",
 ]
