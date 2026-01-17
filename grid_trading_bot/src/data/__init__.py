@@ -10,6 +10,7 @@ from .database import (
     PositionModel,
     TradeModel,
 )
+from .kline import KlineManager, TechnicalIndicators
 
 __all__ = [
     # Database Connection Manager
@@ -28,4 +29,7 @@ __all__ = [
     # Cache Classes
     "MarketCache",
     "AccountCache",
+    # Kline Management
+    "KlineManager",
+    "TechnicalIndicators",
 ]
