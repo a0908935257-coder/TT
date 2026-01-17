@@ -276,9 +276,15 @@ class GridBot:
             # Register order manager callback for fills
             # (This would require extending order_manager to support callbacks)
 
-            # Step 7: Place initial orders
-            placed = await self._order_manager.place_initial_orders()
-            logger.info(f"Placed {placed} initial orders")
+            # Step 7: Try to restore previous order mapping
+            restored_orders = await self._try_restore_orders()
+
+            # Step 8: Place initial orders (only if no orders restored)
+            if restored_orders == 0:
+                placed = await self._order_manager.place_initial_orders()
+                logger.info(f"Placed {placed} initial orders")
+            else:
+                logger.info(f"Restored {restored_orders} orders from previous session")
 
             # Step 8: Subscribe to user data stream
             await self._subscribe_user_data()
@@ -655,6 +661,47 @@ class GridBot:
     # Persistence
     # =========================================================================
 
+    async def _try_restore_orders(self) -> int:
+        """
+        Try to restore order mapping from saved state.
+
+        This allows the bot to recognize its own orders after restart,
+        instead of treating them as external orders.
+
+        Returns:
+            Number of orders successfully restored
+        """
+        try:
+            # Load saved state
+            saved_state = await self._data_manager.load_bot_state(self._bot_id)
+            if not saved_state:
+                logger.debug("No saved state found, starting fresh")
+                return 0
+
+            # Check for order mapping
+            order_mapping = saved_state.get("order_mapping") or saved_state.get("state_data", {}).get("order_mapping")
+            if not order_mapping:
+                logger.debug("No order mapping in saved state")
+                return 0
+
+            # Restore the mapping
+            restored = self._order_manager.restore_order_mapping(order_mapping)
+
+            # Sync with exchange to verify orders still exist
+            if restored > 0:
+                sync_result = await self._order_manager.sync_orders()
+                active = sync_result.get("synced", 0)
+                logger.info(
+                    f"Order restoration: {restored} mapped, {active} still active on exchange"
+                )
+                return active
+
+            return 0
+
+        except Exception as e:
+            logger.warning(f"Failed to restore orders: {e}")
+            return 0
+
     def _convert_decimals(self, obj: Any) -> Any:
         """Recursively convert Decimal values to strings for JSON serialization."""
         if isinstance(obj, Decimal):
@@ -691,6 +738,10 @@ class GridBot:
                     "lower_price": str(self._setup.lower_price),
                     "grid_count": self._setup.grid_count,
                 }
+
+            # Save order mapping for restoration after restart
+            if self._order_manager:
+                state_data["order_mapping"] = self._order_manager.get_order_mapping()
 
             # Save to data manager
             await self._data_manager.save_bot_state(

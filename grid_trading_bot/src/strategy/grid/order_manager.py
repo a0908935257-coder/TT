@@ -557,6 +557,38 @@ class GridOrderManager:
             return self._orders.get(order_id)
         return None
 
+    def get_order_mapping(self) -> dict[str, int]:
+        """
+        Get current order-to-level mapping for persistence.
+
+        Returns:
+            Dict of order_id -> level_index
+        """
+        return self._order_level_map.copy()
+
+    def restore_order_mapping(self, mapping: dict[str, int]) -> int:
+        """
+        Restore order-to-level mapping from saved state.
+
+        This allows the bot to recognize its own orders after restart.
+
+        Args:
+            mapping: Dict of order_id -> level_index
+
+        Returns:
+            Number of orders restored
+        """
+        restored = 0
+        for order_id, level_index in mapping.items():
+            if level_index < len(self._setup.levels) if self._setup else False:
+                self._order_level_map[order_id] = level_index
+                self._level_order_map[level_index] = order_id
+                restored += 1
+                logger.debug(f"Restored order mapping: {order_id[:8]}... -> level {level_index}")
+
+        logger.info(f"Restored {restored} order mappings from saved state")
+        return restored
+
     def get_level(self, level_index: int) -> Optional[GridLevel]:
         """
         Get grid level by index.
