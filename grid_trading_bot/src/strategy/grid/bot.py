@@ -575,6 +575,16 @@ class GridBot:
     # Persistence
     # =========================================================================
 
+    def _convert_decimals(self, obj: Any) -> Any:
+        """Recursively convert Decimal values to strings for JSON serialization."""
+        if isinstance(obj, Decimal):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: self._convert_decimals(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_decimals(item) for item in obj]
+        return obj
+
     async def _save_state(self) -> None:
         """Save bot state to database."""
         try:
@@ -587,10 +597,11 @@ class GridBot:
                 "grid_type": self._config.grid_type.value,
             }
 
-            # Create state data dict
+            # Create state data dict (convert Decimals to strings for JSON)
+            statistics = self._convert_decimals(self.get_statistics())
             state_data = {
                 "start_time": self._start_time.isoformat() if self._start_time else None,
-                "statistics": self.get_statistics(),
+                "statistics": statistics,
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
 
