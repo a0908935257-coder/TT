@@ -18,9 +18,9 @@ from exchange import ExchangeClient
 from notification import NotificationManager
 
 from .calculator import SmartGridCalculator
-from .models import GridConfig, GridLevel, GridSetup, GridType, RiskLevel
+from .models import DynamicAdjustConfig, GridConfig, GridLevel, GridSetup, GridType, RiskLevel
 from .order_manager import FilledRecord, GridOrderManager
-from .risk_manager import BotState, GridRiskManager, RiskConfig
+from .risk_manager import BotState, GridRiskManager, RebuildRecord, RiskConfig
 
 logger = get_logger(__name__)
 
@@ -55,6 +55,9 @@ class GridBotConfig:
 
     # Risk configuration
     risk_config: RiskConfig = field(default_factory=RiskConfig)
+
+    # Dynamic adjustment configuration
+    dynamic_adjust: DynamicAdjustConfig = field(default_factory=DynamicAdjustConfig)
 
     # ATR settings
     atr_period: int = 14
@@ -264,6 +267,12 @@ class GridBot:
                 config=self._config.risk_config,
             )
 
+            # Step 6b: Configure dynamic adjustment
+            if self._config.dynamic_adjust.enabled:
+                self._risk_manager.set_dynamic_adjust_config(self._config.dynamic_adjust)
+                self._risk_manager.set_rebuild_callback(self._rebuild_grid)
+                logger.info("Dynamic grid adjustment enabled")
+
             # Register order manager callback for fills
             # (This would require extending order_manager to support callbacks)
 
@@ -441,10 +450,66 @@ class GridBot:
         if not self._risk_manager:
             return
 
+        # Check dynamic adjustment first (higher priority)
+        if self._config.dynamic_adjust.enabled:
+            adjusted = await self._risk_manager.check_and_execute_dynamic_adjust(price)
+            if adjusted:
+                return  # Grid was rebuilt, skip other checks
+
         # Check breakout
         direction = self._risk_manager.check_breakout(price)
         if direction.value != "none":
             await self._risk_manager.handle_breakout(direction, price)
+
+    async def _rebuild_grid(self, new_center_price: Decimal) -> None:
+        """
+        Rebuild grid around new center price.
+
+        Called when dynamic adjustment is triggered.
+
+        Args:
+            new_center_price: New center price for grid calculation
+        """
+        logger.info(f"Rebuilding grid around {new_center_price}")
+
+        try:
+            # Fetch fresh kline data
+            klines = await self._fetch_klines()
+            if not klines:
+                raise RuntimeError("Failed to fetch kline data for rebuild")
+
+            # Create new grid config (keeping existing settings)
+            grid_config = self._create_grid_config()
+
+            # Create new calculator with current price override
+            self._calculator = SmartGridCalculator(
+                config=grid_config,
+                klines=klines,
+                current_price=new_center_price,
+            )
+
+            # Calculate new grid
+            self._setup = self._calculator.calculate()
+
+            logger.info(
+                f"Grid rebuilt: {self._setup.grid_count} levels, "
+                f"range {self._setup.lower_price}-{self._setup.upper_price}"
+            )
+
+            # Re-initialize order manager with new setup
+            self._order_manager.initialize(self._setup)
+
+            # Place new orders
+            placed = await self._order_manager.place_initial_orders()
+            logger.info(f"Placed {placed} orders after grid rebuild")
+
+            # Save state
+            await self._save_state()
+
+        except Exception as e:
+            logger.error(f"Failed to rebuild grid: {e}")
+            await self._notify_error(f"Grid rebuild failed: {e}")
+            raise
 
     # =========================================================================
     # Status Query Methods
@@ -514,6 +579,16 @@ class GridBot:
                     else "none"
                 ),
             })
+
+            # Dynamic adjustment status
+            if self._config.dynamic_adjust.enabled:
+                status.update({
+                    "dynamic_adjust_enabled": True,
+                    "rebuilds_in_cooldown": self._risk_manager.rebuilds_in_cooldown_period,
+                    "max_rebuilds": self._config.dynamic_adjust.max_rebuilds,
+                    "can_rebuild": self._risk_manager.can_rebuild,
+                    "next_rebuild_available": self._risk_manager.next_rebuild_available,
+                })
 
         return status
 

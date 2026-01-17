@@ -139,6 +139,41 @@ class ATRData:
 
 
 @dataclass
+class DynamicAdjustConfig:
+    """
+    Dynamic grid adjustment configuration.
+
+    Controls automatic grid rebuilding when price breaks out of range.
+
+    Trigger Condition:
+        - Upper breakout: current_price > upper_price × (1 + breakout_threshold)
+        - Lower breakout: current_price < lower_price × (1 - breakout_threshold)
+
+    Cooldown Mechanism:
+        - Maximum rebuilds within cooldown period
+        - If limit reached, wait until oldest rebuild expires
+
+    Example:
+        >>> config = DynamicAdjustConfig(
+        ...     enabled=True,
+        ...     breakout_threshold=Decimal("0.04"),  # 4%
+        ...     cooldown_days=7,
+        ...     max_rebuilds=3,
+        ... )
+    """
+
+    enabled: bool = True
+    breakout_threshold: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4%
+    cooldown_days: int = 7
+    max_rebuilds: int = 3
+
+    def __post_init__(self):
+        """Ensure Decimal types."""
+        if not isinstance(self.breakout_threshold, Decimal):
+            self.breakout_threshold = Decimal(str(self.breakout_threshold))
+
+
+@dataclass
 class GridConfig:
     """
     User configuration for grid trading.
@@ -176,6 +211,9 @@ class GridConfig:
     atr_period: int = 14
     atr_timeframe: str = "4h"
     stop_loss_percent: Decimal = field(default_factory=lambda: Decimal("20"))
+
+    # Dynamic adjustment settings
+    dynamic_adjust: DynamicAdjustConfig = field(default_factory=DynamicAdjustConfig)
 
     # Optional manual overrides
     manual_upper_price: Optional[Decimal] = None

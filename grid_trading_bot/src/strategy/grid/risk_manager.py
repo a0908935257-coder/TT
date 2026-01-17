@@ -16,9 +16,23 @@ from core import get_logger
 from core.models import Kline, MarketType, OrderSide
 from notification import NotificationManager
 
+from .models import DynamicAdjustConfig
 from .order_manager import GridOrderManager
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class RebuildRecord:
+    """Record of a grid rebuild event."""
+
+    timestamp: datetime
+    reason: str
+    old_upper: Decimal
+    old_lower: Decimal
+    new_upper: Decimal
+    new_lower: Decimal
+    trigger_price: Decimal
 
 
 class BreakoutDirection(str, Enum):
@@ -212,6 +226,11 @@ class GridRiskManager:
 
         # State change callbacks
         self._state_change_callbacks: list[Callable[[BotState, BotState, str], Any]] = []
+
+        # Dynamic adjustment tracking
+        self._rebuild_history: list[RebuildRecord] = []
+        self._dynamic_adjust_config: Optional[DynamicAdjustConfig] = None
+        self._on_rebuild_callback: Optional[Callable[[Decimal], Any]] = None
 
     # =========================================================================
     # Properties
@@ -1467,3 +1486,335 @@ class GridRiskManager:
             )
         except Exception as e:
             logger.warning(f"Failed to send stopped notification: {e}")
+
+    # =========================================================================
+    # Dynamic Grid Adjustment
+    # =========================================================================
+
+    def set_dynamic_adjust_config(self, config: DynamicAdjustConfig) -> None:
+        """
+        Set dynamic adjustment configuration.
+
+        Args:
+            config: DynamicAdjustConfig instance
+        """
+        self._dynamic_adjust_config = config
+        logger.info(
+            f"Dynamic adjust configured: threshold={config.breakout_threshold}, "
+            f"cooldown={config.cooldown_days}d, max_rebuilds={config.max_rebuilds}"
+        )
+
+    def set_rebuild_callback(
+        self,
+        callback: Callable[[Decimal], Any],
+    ) -> None:
+        """
+        Set callback for grid rebuild.
+
+        The callback receives the new center price and should
+        trigger grid recalculation in the bot.
+
+        Args:
+            callback: Async function(new_center_price) -> None
+        """
+        self._on_rebuild_callback = callback
+
+    @property
+    def rebuild_history(self) -> list[RebuildRecord]:
+        """Get rebuild history."""
+        return self._rebuild_history.copy()
+
+    @property
+    def rebuilds_in_cooldown_period(self) -> int:
+        """Get number of rebuilds within cooldown period."""
+        if not self._dynamic_adjust_config:
+            return 0
+        return len(self._get_recent_rebuilds())
+
+    @property
+    def can_rebuild(self) -> bool:
+        """Check if rebuild is allowed (not in cooldown)."""
+        if not self._dynamic_adjust_config:
+            return False
+        if not self._dynamic_adjust_config.enabled:
+            return False
+        return self.rebuilds_in_cooldown_period < self._dynamic_adjust_config.max_rebuilds
+
+    @property
+    def next_rebuild_available(self) -> Optional[datetime]:
+        """
+        Get when the next rebuild will be available.
+
+        Returns:
+            datetime when rebuild becomes available, or None if already available
+        """
+        if self.can_rebuild:
+            return None
+
+        if not self._dynamic_adjust_config:
+            return None
+
+        recent = self._get_recent_rebuilds()
+        if not recent:
+            return None
+
+        # Find the oldest rebuild that will expire first
+        oldest = min(recent, key=lambda r: r.timestamp)
+        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        return oldest.timestamp + cooldown_delta
+
+    def _get_recent_rebuilds(self) -> list[RebuildRecord]:
+        """
+        Get rebuilds within the cooldown period.
+
+        Returns:
+            List of RebuildRecord within cooldown window
+        """
+        if not self._dynamic_adjust_config:
+            return []
+
+        now = datetime.now(timezone.utc)
+        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        cutoff = now - cooldown_delta
+
+        return [r for r in self._rebuild_history if r.timestamp > cutoff]
+
+    def _clean_expired_rebuilds(self) -> int:
+        """
+        Remove rebuild records older than cooldown period.
+
+        Returns:
+            Number of records removed
+        """
+        if not self._dynamic_adjust_config:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        cutoff = now - cooldown_delta
+
+        before_count = len(self._rebuild_history)
+        self._rebuild_history = [r for r in self._rebuild_history if r.timestamp > cutoff]
+        removed = before_count - len(self._rebuild_history)
+
+        if removed > 0:
+            logger.debug(f"Cleaned {removed} expired rebuild records")
+
+        return removed
+
+    def check_dynamic_adjust_trigger(
+        self,
+        current_price: Decimal,
+    ) -> Optional[str]:
+        """
+        Check if dynamic adjustment should be triggered.
+
+        Trigger conditions:
+        - Upper: current_price > upper_price × (1 + threshold)
+        - Lower: current_price < lower_price × (1 - threshold)
+
+        Args:
+            current_price: Current market price
+
+        Returns:
+            "upper" or "lower" if triggered, None otherwise
+        """
+        if not self._dynamic_adjust_config:
+            return None
+        if not self._dynamic_adjust_config.enabled:
+            return None
+
+        setup = self._order_manager.setup
+        if setup is None:
+            return None
+
+        threshold = self._dynamic_adjust_config.breakout_threshold
+
+        # Calculate trigger thresholds (4% beyond bounds)
+        upper_trigger = setup.upper_price * (Decimal("1") + threshold)
+        lower_trigger = setup.lower_price * (Decimal("1") - threshold)
+
+        if current_price > upper_trigger:
+            logger.info(
+                f"Dynamic adjust trigger: upper breakout "
+                f"({current_price} > {upper_trigger})"
+            )
+            return "upper"
+        elif current_price < lower_trigger:
+            logger.info(
+                f"Dynamic adjust trigger: lower breakout "
+                f"({current_price} < {lower_trigger})"
+            )
+            return "lower"
+
+        return None
+
+    async def execute_dynamic_adjust(
+        self,
+        current_price: Decimal,
+        trigger_direction: str,
+    ) -> bool:
+        """
+        Execute dynamic grid adjustment.
+
+        Flow:
+        1. Clean expired rebuild records
+        2. Check cooldown limit
+        3. Cancel all orders
+        4. Record rebuild event
+        5. Trigger callback for grid recalculation
+
+        Args:
+            current_price: Current market price (new center)
+            trigger_direction: "upper" or "lower"
+
+        Returns:
+            True if rebuild executed successfully
+        """
+        setup = self._order_manager.setup
+        if setup is None:
+            return False
+
+        if not self._dynamic_adjust_config:
+            return False
+
+        # Step 1: Clean expired records
+        self._clean_expired_rebuilds()
+
+        # Step 2: Check cooldown limit
+        if not self.can_rebuild:
+            recent_count = self.rebuilds_in_cooldown_period
+            next_available = self.next_rebuild_available
+            logger.warning(
+                f"Rebuild blocked by cooldown: {recent_count}/{self._dynamic_adjust_config.max_rebuilds} "
+                f"in last {self._dynamic_adjust_config.cooldown_days} days. "
+                f"Next available: {next_available}"
+            )
+            await self._notify_rebuild_blocked(recent_count, next_available)
+            return False
+
+        logger.info(
+            f"Executing dynamic grid adjustment at {current_price} "
+            f"(trigger: {trigger_direction})"
+        )
+
+        # Step 3: Cancel all orders
+        cancelled = await self._order_manager.cancel_all_orders()
+        logger.info(f"Cancelled {cancelled} orders for rebuild")
+
+        # Record old bounds for history
+        old_upper = setup.upper_price
+        old_lower = setup.lower_price
+
+        # Step 4: Trigger callback for grid recalculation
+        # The callback will recalculate grid with current_price as center
+        if self._on_rebuild_callback:
+            try:
+                result = self._on_rebuild_callback(current_price)
+                if asyncio.iscoroutine(result):
+                    await result
+
+                # Get new setup after rebuild
+                new_setup = self._order_manager.setup
+                new_upper = new_setup.upper_price if new_setup else current_price
+                new_lower = new_setup.lower_price if new_setup else current_price
+
+            except Exception as e:
+                logger.error(f"Rebuild callback failed: {e}")
+                return False
+        else:
+            # No callback - estimate new bounds
+            new_upper = current_price
+            new_lower = current_price
+            logger.warning("No rebuild callback set - grid not actually rebuilt")
+
+        # Step 5: Record rebuild event
+        record = RebuildRecord(
+            timestamp=datetime.now(timezone.utc),
+            reason=f"{trigger_direction}_breakout",
+            old_upper=old_upper,
+            old_lower=old_lower,
+            new_upper=new_upper,
+            new_lower=new_lower,
+            trigger_price=current_price,
+        )
+        self._rebuild_history.append(record)
+
+        # Send notification
+        await self._notify_grid_rebuilt(record)
+
+        logger.info(
+            f"Grid rebuilt: old=[{old_upper}, {old_lower}] -> "
+            f"new=[{new_upper}, {new_lower}], "
+            f"rebuilds in period: {self.rebuilds_in_cooldown_period}"
+        )
+
+        return True
+
+    async def check_and_execute_dynamic_adjust(
+        self,
+        current_price: Decimal,
+    ) -> bool:
+        """
+        Combined check and execute for dynamic adjustment.
+
+        Called on each K-line close or price update.
+
+        Args:
+            current_price: Current market price
+
+        Returns:
+            True if rebuild was triggered and executed
+        """
+        trigger = self.check_dynamic_adjust_trigger(current_price)
+        if trigger is None:
+            return False
+
+        return await self.execute_dynamic_adjust(current_price, trigger)
+
+    async def _notify_grid_rebuilt(self, record: RebuildRecord) -> None:
+        """Send grid rebuild notification."""
+        try:
+            symbol = self._order_manager.symbol
+            remaining = self._dynamic_adjust_config.max_rebuilds - self.rebuilds_in_cooldown_period
+
+            message = (
+                f"📊 {symbol} Grid Rebuilt\n\n"
+                f"Trigger: {record.reason}\n"
+                f"Price: {record.trigger_price}\n\n"
+                f"Old Range: {record.old_lower} - {record.old_upper}\n"
+                f"New Range: {record.new_lower} - {record.new_upper}\n\n"
+                f"Rebuilds remaining: {remaining}/{self._dynamic_adjust_config.max_rebuilds} "
+                f"(in {self._dynamic_adjust_config.cooldown_days} days)"
+            )
+
+            await self._notifier.send_info(
+                title="Grid Dynamically Adjusted",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send rebuild notification: {e}")
+
+    async def _notify_rebuild_blocked(
+        self,
+        current_count: int,
+        next_available: Optional[datetime],
+    ) -> None:
+        """Send rebuild blocked notification."""
+        try:
+            symbol = self._order_manager.symbol
+            next_str = next_available.strftime("%Y-%m-%d %H:%M UTC") if next_available else "N/A"
+
+            message = (
+                f"⚠️ {symbol} Rebuild Blocked\n\n"
+                f"Cooldown limit reached: {current_count}/{self._dynamic_adjust_config.max_rebuilds}\n"
+                f"Next rebuild available: {next_str}\n\n"
+                f"The grid will not be adjusted until cooldown expires."
+            )
+
+            await self._notifier.send_warning(
+                title="Grid Rebuild Blocked",
+                message=message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send blocked notification: {e}")
