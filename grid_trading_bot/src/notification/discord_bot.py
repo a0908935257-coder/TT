@@ -103,26 +103,46 @@ class TradingDiscordBot:
             except Exception as e:
                 logger.error(f"Failed to sync commands: {e}")
 
-        # Register slash commands
+        # Register slash commands with error handling
         @self._bot.tree.command(name="status", description="查看機器人狀態")
         async def status_command(interaction: discord.Interaction):
-            await self._handle_status(interaction)
+            try:
+                await self._handle_status(interaction)
+            except Exception as e:
+                logger.error(f"Error in /status command: {e}")
+                await self._send_error_response(interaction, str(e))
 
         @self._bot.tree.command(name="stats", description="查看績效統計")
         async def stats_command(interaction: discord.Interaction):
-            await self._handle_stats(interaction)
+            try:
+                await self._handle_stats(interaction)
+            except Exception as e:
+                logger.error(f"Error in /stats command: {e}")
+                await self._send_error_response(interaction, str(e))
 
         @self._bot.tree.command(name="orders", description="查看掛單")
         async def orders_command(interaction: discord.Interaction):
-            await self._handle_orders(interaction)
+            try:
+                await self._handle_orders(interaction)
+            except Exception as e:
+                logger.error(f"Error in /orders command: {e}")
+                await self._send_error_response(interaction, str(e))
 
         @self._bot.tree.command(name="balance", description="查看餘額")
         async def balance_command(interaction: discord.Interaction):
-            await self._handle_balance(interaction)
+            try:
+                await self._handle_balance(interaction)
+            except Exception as e:
+                logger.error(f"Error in /balance command: {e}")
+                await self._send_error_response(interaction, str(e))
 
         @self._bot.tree.command(name="help", description="顯示指令說明")
         async def help_command(interaction: discord.Interaction):
-            await self._handle_help(interaction)
+            try:
+                await self._handle_help(interaction)
+            except Exception as e:
+                logger.error(f"Error in /help command: {e}")
+                await self._send_error_response(interaction, str(e))
 
         # Also support ! prefix commands
         @self._bot.command(name="status")
@@ -189,6 +209,22 @@ class TradingDiscordBot:
         """Handle /help command."""
         embed = self._create_help_embed()
         await interaction.response.send_message(embed=embed)
+
+    async def _send_error_response(self, interaction: discord.Interaction, error: str) -> None:
+        """Send error response to interaction."""
+        try:
+            embed = discord.Embed(
+                title="❌ 錯誤",
+                description=f"執行指令時發生錯誤:\n```{error}```",
+                color=discord.Color.red(),
+            )
+            # Check if already responded
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Failed to send error response: {e}")
 
     # =========================================================================
     # Prefix Command Handlers
