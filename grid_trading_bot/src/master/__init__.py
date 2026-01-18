@@ -40,6 +40,15 @@ from .dashboard import (
     DashboardData,
     DashboardSummary,
 )
+from .factory import (
+    BotFactory,
+    InvalidBotConfigError,
+    UnsupportedBotTypeError,
+)
+from .commander import (
+    BotCommander,
+    CommandResult,
+)
 
 __all__ = [
     # Models
@@ -74,4 +83,11 @@ __all__ = [
     "Dashboard",
     "DashboardData",
     "DashboardSummary",
+    # Factory
+    "BotFactory",
+    "InvalidBotConfigError",
+    "UnsupportedBotTypeError",
+    # Commander
+    "BotCommander",
+    "CommandResult",
 ]
