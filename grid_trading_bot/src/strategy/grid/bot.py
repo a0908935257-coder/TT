@@ -290,10 +290,14 @@ class GridBot:
             # Step 8: Subscribe to user data stream
             await self._subscribe_user_data()
 
-            # Step 9: Start risk monitoring
+            # Step 9: Subscribe to K-line close events for dynamic adjustment
+            if self._config.dynamic_adjust.enabled:
+                await self._subscribe_kline_close()
+
+            # Step 10: Start risk monitoring
             await self._risk_manager.start_monitoring()
 
-            # Step 10: Update state
+            # Step 11: Update state
             self._state = BotState.RUNNING
             self._running = True
             self._start_time = datetime.now(timezone.utc)
@@ -349,8 +353,10 @@ class GridBot:
             if clear_position and self._order_manager:
                 await self._clear_position()
 
-            # Unsubscribe from user data
+            # Unsubscribe from streams
             await self._unsubscribe_user_data()
+            if self._config.dynamic_adjust.enabled:
+                await self._unsubscribe_kline_close()
 
             # Get final statistics
             stats = self.get_statistics()
@@ -473,6 +479,39 @@ class GridBot:
         if direction.value != "none":
             await self._risk_manager.handle_breakout(direction, price)
 
+    async def on_kline_close(self, kline: Kline) -> None:
+        """
+        Handle K-line close event.
+
+        Called when each K-line closes. Used for dynamic adjustment
+        to check if grid needs to be rebuilt.
+
+        Args:
+            kline: Closed Kline data
+        """
+        if not self._config.dynamic_adjust.enabled:
+            return
+
+        if not self._risk_manager:
+            return
+
+        if self._state != BotState.RUNNING:
+            return
+
+        # Get current close price
+        current_price = kline.close
+
+        # Check and execute dynamic adjustment
+        rebuilt = await self._risk_manager.check_and_execute_dynamic_adjust(current_price)
+
+        if rebuilt:
+            # Update local setup reference after rebuild
+            if self._order_manager and self._order_manager.setup:
+                self._setup = self._order_manager.setup
+                logger.info(
+                    f"Grid rebuilt via K-line close, version {self._setup.version}"
+                )
+
     async def _rebuild_grid(self, new_center_price: Decimal) -> None:
         """
         Rebuild grid around new center price.
@@ -551,6 +590,14 @@ class GridBot:
                 "current_price": self._setup.current_price,
                 "grid_count": self._setup.grid_count,
                 "grid_spacing": f"{self._setup.grid_spacing_percent:.2f}%",
+                "grid_version": self._setup.version,
+            })
+
+            # ATR configuration
+            status.update({
+                "atr_multiplier": self._setup.atr_data.multiplier,
+                "atr_period": self._setup.atr_data.period,
+                "atr_timeframe": self._setup.atr_data.timeframe,
             })
 
         # Order info
@@ -593,14 +640,26 @@ class GridBot:
             })
 
             # Dynamic adjustment status
-            if self._config.dynamic_adjust.enabled:
-                status.update({
-                    "dynamic_adjust_enabled": True,
-                    "rebuilds_in_cooldown": self._risk_manager.rebuilds_in_cooldown_period,
-                    "max_rebuilds": self._config.dynamic_adjust.max_rebuilds,
-                    "can_rebuild": self._risk_manager.can_rebuild,
-                    "next_rebuild_available": self._risk_manager.next_rebuild_available,
-                })
+            rebuilds_used = self._risk_manager.rebuilds_in_cooldown_period
+            max_rebuilds = self._config.dynamic_adjust.max_rebuilds
+            rebuilds_remaining = max(0, max_rebuilds - rebuilds_used)
+            is_in_cooldown = rebuilds_used >= max_rebuilds
+
+            # Get last rebuild time from rebuild history
+            rebuild_history = self._risk_manager.rebuild_history
+            last_rebuild_time = (
+                rebuild_history[-1].timestamp if rebuild_history else None
+            )
+
+            status.update({
+                "auto_rebuild_enabled": self._config.dynamic_adjust.enabled,
+                "rebuilds_used": rebuilds_used,
+                "rebuilds_remaining": rebuilds_remaining,
+                "cooldown_days": self._config.dynamic_adjust.cooldown_days,
+                "is_in_cooldown": is_in_cooldown,
+                "last_rebuild_time": last_rebuild_time,
+                "next_rebuild_available": self._risk_manager.next_rebuild_available,
+            })
 
         return status
 
@@ -907,6 +966,68 @@ class GridBot:
             logger.info("Unsubscribed from user data stream")
         except Exception as e:
             logger.warning(f"Failed to unsubscribe from user data: {e}")
+
+    async def _subscribe_kline_close(self) -> None:
+        """Subscribe to K-line close events for dynamic adjustment."""
+        try:
+            # Subscribe to K-lines based on ATR timeframe
+            await self._exchange.subscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.atr_config.timeframe,
+                callback=self._handle_kline_close,
+            )
+            logger.info(
+                f"Subscribed to K-line close events: {self._config.symbol} "
+                f"interval={self._config.atr_config.timeframe}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to K-line close events: {e}")
+
+    async def _unsubscribe_kline_close(self) -> None:
+        """Unsubscribe from K-line close events."""
+        try:
+            await self._exchange.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.atr_config.timeframe,
+            )
+            logger.info("Unsubscribed from K-line close events")
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from K-line close: {e}")
+
+    async def _handle_kline_close(self, data: dict) -> None:
+        """
+        Handle K-line WebSocket data.
+
+        Extracts Kline from data and calls on_kline_close if closed.
+
+        Args:
+            data: WebSocket kline event data
+        """
+        try:
+            # Check if kline is closed
+            kline_data = data.get("k", {})
+            is_closed = kline_data.get("x", False)
+
+            if not is_closed:
+                return
+
+            # Parse kline data
+            kline = Kline(
+                symbol=kline_data.get("s", self._config.symbol),
+                interval=kline_data.get("i", self._config.atr_config.timeframe),
+                open_time=kline_data.get("t", 0),
+                open=Decimal(str(kline_data.get("o", "0"))),
+                high=Decimal(str(kline_data.get("h", "0"))),
+                low=Decimal(str(kline_data.get("l", "0"))),
+                close=Decimal(str(kline_data.get("c", "0"))),
+                volume=Decimal(str(kline_data.get("v", "0"))),
+                close_time=kline_data.get("T", 0),
+            )
+
+            await self.on_kline_close(kline)
+
+        except Exception as e:
+            logger.error(f"Error handling kline close: {e}")
 
     async def _handle_user_data(self, data: dict) -> None:
         """Handle user data stream events."""
