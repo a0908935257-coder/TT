@@ -151,3 +151,41 @@ Edit(file_path="existing_feature.py", old_string="...", new_string="...")
 **Prevention is better than consolidation - build clean from the start.**
 **Focus on single source of truth and extending existing functionality.**
 **Each task should maintain clean architecture and prevent technical debt.**
+
+## 測試規則
+
+執行測試時必須遵守：
+
+1. **永遠不要執行完整測試套件** (`pytest tests/`)
+2. **單獨測試每個模組**，每次最多一個檔案：
+```bash
+   pytest tests/unit/test_xxx.py -v --timeout=30 -x
+```
+3. **加入超時限制**：`--timeout=30`
+4. **遇到第一個失敗就停止**：`-x`
+5. **限制輸出行數**：`2>&1 | head -50`
+
+範例：
+```bash
+# 正確
+pytest tests/unit/test_atr.py -v --timeout=30 -x 2>&1 | head -50
+
+# 錯誤 - 不要這樣做
+pytest tests/ -v
+```
+```
+
+---
+
+## 立即解決：告訴 Claude Code
+
+按 `Ctrl + C` 中斷後，輸入：
+```
+停止執行完整測試套件。
+
+測試規則：
+1. 不要執行 pytest tests/ （太大會超時）
+2. 每次只測試一個檔案，加上 --timeout=30 -x
+3. 例如：pytest tests/unit/test_atr.py -v --timeout=30 -x 2>&1 | head -50
+
+請逐一測試每個檔案，確認通過後標記任務完成。
