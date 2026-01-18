@@ -163,18 +163,34 @@ class ExchangeClient:
         """Close all connections gracefully."""
         logger.info("Closing ExchangeClient")
 
+        self._connected = False
+
+        # Cancel user data keepalive task
+        if self._user_data_keepalive_task:
+            self._user_data_keepalive_task.cancel()
+            try:
+                await self._user_data_keepalive_task
+            except asyncio.CancelledError:
+                pass
+            self._user_data_keepalive_task = None
+
         # Close WebSockets
         if self._spot_ws:
             await self._spot_ws.disconnect()
+            self._spot_ws = None
         if self._futures_ws:
             await self._futures_ws.disconnect()
+            self._futures_ws = None
 
         # Close REST APIs
         await self._spot.close()
         await self._futures.close()
 
-        self._connected = False
         logger.info("ExchangeClient closed")
+
+    async def disconnect(self) -> None:
+        """Alias for close() for API consistency."""
+        await self.close()
 
     async def __aenter__(self) -> "ExchangeClient":
         """Async context manager entry."""

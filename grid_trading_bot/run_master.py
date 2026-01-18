@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 _master: Master | None = None
 _exchange: ExchangeClient | None = None
 _data_manager: MarketDataManager | None = None
+_notifier: NotificationManager | None = None
 
 
 async def create_exchange_client() -> ExchangeClient:
@@ -298,7 +299,7 @@ Dashboard 摘要:
 
 async def main() -> None:
     """主程式"""
-    global _master, _exchange, _data_manager
+    global _master, _exchange, _data_manager, _notifier
 
     print("=" * 60)
     print("       Master Control Console - 主控台")
@@ -315,7 +316,7 @@ async def main() -> None:
         print("✓ 數據庫連接成功")
 
         print("正在設定通知...")
-        notifier = create_notifier()
+        _notifier = create_notifier()
         print("✓ 通知設定完成")
 
         # 建立 Master
@@ -330,7 +331,7 @@ async def main() -> None:
             exchange=_exchange,
             data_manager=_data_manager,
             db_manager=None,
-            notifier=notifier,
+            notifier=_notifier,
             config=master_config,
         )
 
@@ -374,6 +375,12 @@ async def main() -> None:
         if _exchange:
             try:
                 await _exchange.disconnect()
+            except:
+                pass
+
+        if _notifier:
+            try:
+                await _notifier.close()
             except:
                 pass
 

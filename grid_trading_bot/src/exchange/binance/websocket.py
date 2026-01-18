@@ -100,6 +100,7 @@ class BinanceWebSocket:
         self.max_reconnect_attempts = 10  # Maximum attempts
         self._reconnect_attempts = 0
         self._current_delay = self.reconnect_delay
+        self._intentional_close = False  # Flag to prevent reconnection on intentional close
 
         # Heartbeat settings
         self._heartbeat_interval = 30  # seconds
@@ -181,24 +182,29 @@ class BinanceWebSocket:
 
     async def disconnect(self) -> None:
         """Close WebSocket connection gracefully."""
-        logger.info("Disconnecting WebSocket")
+        logger.debug("Disconnecting WebSocket")
+
+        # Set flags FIRST to prevent reconnection
+        self._intentional_close = True
         self._running = False
         self._connected = False
 
         # Cancel background tasks
-        if self._message_task:
+        if self._message_task and not self._message_task.done():
             self._message_task.cancel()
             try:
                 await self._message_task
             except asyncio.CancelledError:
                 pass
+            self._message_task = None
 
-        if self._heartbeat_task:
+        if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
+            self._heartbeat_task = None
 
         # Close WebSocket
         if self._ws:
@@ -206,9 +212,9 @@ class BinanceWebSocket:
                 await self._ws.close()
             except Exception as e:
                 logger.debug(f"Error closing WebSocket: {e}")
+            self._ws = None
 
-        self._ws = None
-        logger.info("WebSocket disconnected")
+        logger.debug("WebSocket disconnected")
 
         if self._on_close:
             self._on_close()
@@ -220,6 +226,11 @@ class BinanceWebSocket:
         Returns:
             True if reconnection successful
         """
+        # Don't reconnect if intentionally closed
+        if self._intentional_close:
+            logger.debug("Skipping reconnection - intentional close")
+            return False
+
         if self._reconnect_attempts >= self.max_reconnect_attempts:
             logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
             if self._on_error:
@@ -511,8 +522,8 @@ class BinanceWebSocket:
 
         finally:
             self._connected = False
-            if self._running:
-                # Attempt reconnection
+            # Only attempt reconnection if not intentionally closed
+            if self._running and not self._intentional_close:
                 asyncio.create_task(self.reconnect())
 
     async def _handle_message(self, raw_message: str) -> None:
