@@ -1,7 +1,8 @@
 """
 Master Module.
 
-Bot registration center and lifecycle management.
+Bot registration center, lifecycle management, heartbeat monitoring,
+and health checking.
 """
 
 from .models import (
@@ -16,6 +17,17 @@ from .models import (
     VALID_STATE_TRANSITIONS,
 )
 from .registry import BotRegistry
+from .heartbeat import (
+    HeartbeatConfig,
+    HeartbeatData,
+    HeartbeatMonitor,
+)
+from .health import (
+    CheckItem,
+    HealthCheckResult,
+    HealthChecker,
+    HealthStatus,
+)
 
 __all__ = [
     # Models
@@ -31,4 +43,13 @@ __all__ = [
     "InvalidStateTransitionError",
     # Registry
     "BotRegistry",
+    # Heartbeat
+    "HeartbeatConfig",
+    "HeartbeatData",
+    "HeartbeatMonitor",
+    # Health
+    "CheckItem",
+    "HealthCheckResult",
+    "HealthChecker",
+    "HealthStatus",
 ]
