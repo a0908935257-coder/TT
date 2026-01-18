@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional
 
 from src.core import get_logger
 from src.core.models import Kline, MarketType, OrderSide
+from src.master.models import BotState
 from src.notification import NotificationManager
 
 from .models import DynamicAdjustConfig
@@ -64,18 +65,8 @@ class RiskState(str, Enum):
     STOPPED = "stopped"         # Bot stopped (stop loss triggered)
 
 
-class BotState(str, Enum):
-    """Bot operational state."""
-
-    INITIALIZING = "initializing"  # Bot is initializing
-    RUNNING = "running"            # Bot is running normally
-    PAUSED = "paused"              # Bot is paused (can resume)
-    STOPPING = "stopping"          # Bot is stopping
-    STOPPED = "stopped"            # Bot is stopped
-    ERROR = "error"                # Bot encountered error
-
-
-# Valid state transitions
+# BotState is imported from src.master.models for consistency
+# Valid state transitions for GridRiskManager (subset of master.models)
 VALID_STATE_TRANSITIONS: dict[BotState, set[BotState]] = {
     BotState.INITIALIZING: {BotState.RUNNING, BotState.ERROR, BotState.STOPPED},
     BotState.RUNNING: {BotState.PAUSED, BotState.STOPPING, BotState.ERROR},

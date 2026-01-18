@@ -32,7 +32,6 @@ from .models import (
 )
 from .order_manager import FilledRecord, GridOrderManager
 from .risk_manager import (
-    BotState,
     BreakoutAction,
     BreakoutDirection,
     BreakoutEvent,
@@ -42,6 +41,8 @@ from .risk_manager import (
     RiskState,
     VALID_STATE_TRANSITIONS,
 )
+# Import BotState from master.models for consistency across the system
+from src.master.models import BotState
 
 __all__ = [
     # Bot

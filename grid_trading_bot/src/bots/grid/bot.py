@@ -17,10 +17,12 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 
+from src.master.models import BotState
+
 from .calculator import SmartGridCalculator
 from .models import ATRConfig, DynamicAdjustConfig, GridConfig, GridLevel, GridSetup, GridType, RiskLevel
 from .order_manager import FilledRecord, GridOrderManager
-from .risk_manager import BotState, GridRiskManager, RebuildRecord, RiskConfig
+from .risk_manager import GridRiskManager, RebuildRecord, RiskConfig
 
 logger = get_logger(__name__)
 
@@ -322,11 +324,12 @@ class GridBot:
             await self._notify_error(f"Failed to start: {e}")
             return False
 
-    async def stop(self, clear_position: bool = False) -> bool:
+    async def stop(self, reason: str = "Manual stop", clear_position: bool = False) -> bool:
         """
         Stop the GridBot.
 
         Args:
+            reason: Stop reason (for logging and notifications)
             clear_position: If True, market sell all positions
 
         Returns:
@@ -337,7 +340,7 @@ class GridBot:
             return False
 
         try:
-            logger.info(f"Stopping GridBot {self._bot_id}")
+            logger.info(f"Stopping GridBot {self._bot_id}: {reason}")
             self._state = BotState.STOPPING
             self._running = False
 

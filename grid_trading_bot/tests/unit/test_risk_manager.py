@@ -296,8 +296,10 @@ class TestStateTransitions:
     """Tests for bot state transitions."""
 
     def test_valid_state_transitions_defined(self):
-        """Test that all states have defined transitions."""
-        for state in BotState:
+        """Test that operational states have defined transitions."""
+        # REGISTERED is managed by Master, not by GridRiskManager
+        operational_states = [s for s in BotState if s != BotState.REGISTERED]
+        for state in operational_states:
             assert state in VALID_STATE_TRANSITIONS
 
     def test_initializing_transitions(self):

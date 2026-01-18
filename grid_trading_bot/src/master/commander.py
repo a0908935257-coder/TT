@@ -285,7 +285,7 @@ class BotCommander:
                 if clear_position:
                     reason += " (clearing positions)"
 
-                success = await instance.stop(reason=reason)
+                success = await instance.stop(reason, clear_position)
 
                 if success:
                     # Update state to STOPPED
