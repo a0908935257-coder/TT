@@ -738,7 +738,7 @@ class GridBot:
         """
         try:
             # Load saved state
-            saved_state = await self._data_manager.load_bot_state(self._bot_id)
+            saved_state = await self._data_manager.get_bot_state(self._bot_id)
             if not saved_state:
                 logger.debug("No saved state found, starting fresh")
                 return 0
@@ -863,7 +863,7 @@ class GridBot:
         """
         try:
             # Load state from database
-            state_data = await data_manager.load_bot_state(bot_id)
+            state_data = await data_manager.get_bot_state(bot_id)
             if not state_data:
                 logger.warning(f"No saved state for bot: {bot_id}")
                 return None

@@ -134,6 +134,10 @@ PRIVATE_ENDPOINTS = {
     "OPEN_ORDERS": {"path": "/api/v3/openOrders", "method": "GET"},
     "ALL_ORDERS": {"path": "/api/v3/allOrders", "method": "GET"},
     "MY_TRADES": {"path": "/api/v3/myTrades", "method": "GET"},
+    # User Data Stream
+    "USER_DATA_STREAM": {"path": "/api/v3/userDataStream", "method": "POST"},
+    "USER_DATA_STREAM_KEEPALIVE": {"path": "/api/v3/userDataStream", "method": "PUT"},
+    "USER_DATA_STREAM_DELETE": {"path": "/api/v3/userDataStream", "method": "DELETE"},
 }
 
 # Futures endpoints dictionary format

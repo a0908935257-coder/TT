@@ -5,8 +5,9 @@ Provides a single entry point for all exchange operations including
 REST API (Spot & Futures) and WebSocket streaming.
 """
 
+import asyncio
 from decimal import Decimal, ROUND_DOWN
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from core import get_logger
 from core.models import (
@@ -86,6 +87,11 @@ class ExchangeClient:
 
         # Connection state
         self._connected = False
+
+        # User Data Stream state
+        self._user_data_listen_key: Optional[str] = None
+        self._user_data_callback: Optional[Callable[[dict], Any]] = None
+        self._user_data_keepalive_task: Optional[asyncio.Task] = None
 
     # =========================================================================
     # Properties
@@ -562,6 +568,138 @@ class ExchangeClient:
         if self._futures_ws and self._futures_ws._subscriptions:
             streams = list(self._futures_ws._subscriptions.keys())
             await self._futures_ws.unsubscribe(streams)
+
+    # =========================================================================
+    # User Data Stream
+    # =========================================================================
+
+    async def subscribe_user_data(
+        self,
+        callback: Callable[[dict], Any],
+        market: MarketType = MarketType.SPOT,
+    ) -> bool:
+        """
+        Subscribe to User Data Stream for order/account updates.
+
+        Args:
+            callback: Callback function receiving user data events
+            market: SPOT or FUTURES
+
+        Returns:
+            True if subscription successful
+        """
+        try:
+            # Create listen key
+            if market == MarketType.SPOT:
+                self._user_data_listen_key = await self._spot.create_listen_key()
+            else:
+                # TODO: Add futures user data stream support
+                logger.warning("Futures user data stream not yet implemented")
+                return False
+
+            self._user_data_callback = callback
+
+            # Subscribe to the user data stream via WebSocket
+            ws = self._get_ws(market)
+            if ws is None:
+                logger.error("WebSocket not connected")
+                return False
+
+            stream = self._user_data_listen_key
+
+            async def wrapper(data: dict):
+                if self._user_data_callback:
+                    await self._invoke_user_data_callback(data)
+
+            # Subscribe to user data stream
+            success = await ws.subscribe([stream], wrapper)
+
+            if success:
+                # Start keep-alive task (ping every 30 minutes)
+                self._user_data_keepalive_task = asyncio.create_task(
+                    self._user_data_keepalive_loop(market)
+                )
+                logger.info("Subscribed to user data stream")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to subscribe to user data stream: {e}")
+            return False
+
+    async def unsubscribe_user_data(self) -> bool:
+        """
+        Unsubscribe from User Data Stream.
+
+        Returns:
+            True if unsubscription successful
+        """
+        try:
+            # Stop keep-alive task
+            if self._user_data_keepalive_task:
+                self._user_data_keepalive_task.cancel()
+                try:
+                    await self._user_data_keepalive_task
+                except asyncio.CancelledError:
+                    pass
+                self._user_data_keepalive_task = None
+
+            # Unsubscribe from WebSocket
+            if self._user_data_listen_key and self._spot_ws:
+                await self._spot_ws.unsubscribe([self._user_data_listen_key])
+
+            # Delete listen key
+            if self._user_data_listen_key:
+                await self._spot.delete_listen_key(self._user_data_listen_key)
+                self._user_data_listen_key = None
+
+            self._user_data_callback = None
+            logger.info("Unsubscribed from user data stream")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to unsubscribe from user data stream: {e}")
+            return False
+
+    async def _user_data_keepalive_loop(self, market: MarketType) -> None:
+        """
+        Keep the user data stream alive by pinging every 30 minutes.
+
+        Args:
+            market: SPOT or FUTURES
+        """
+        try:
+            while True:
+                await asyncio.sleep(30 * 60)  # 30 minutes
+
+                if not self._user_data_listen_key:
+                    break
+
+                try:
+                    if market == MarketType.SPOT:
+                        await self._spot.keep_alive_listen_key(
+                            self._user_data_listen_key
+                        )
+                        logger.debug("User data stream keep-alive sent")
+                except Exception as e:
+                    logger.error(f"Failed to keep-alive user data stream: {e}")
+
+        except asyncio.CancelledError:
+            logger.debug("User data keep-alive task cancelled")
+            raise
+
+    async def _invoke_user_data_callback(self, data: dict) -> None:
+        """
+        Invoke user data callback, handling both sync and async.
+
+        Args:
+            data: User data event dict
+        """
+        if self._user_data_callback:
+            if asyncio.iscoroutinefunction(self._user_data_callback):
+                await self._user_data_callback(data)
+            else:
+                self._user_data_callback(data)
 
     # =========================================================================
     # Symbol Info & Precision Methods

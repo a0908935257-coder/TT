@@ -136,6 +136,7 @@ class BinanceSpotAPI:
         endpoint: str,
         params: dict | None = None,
         signed: bool = False,
+        api_key_required: bool = False,
     ) -> dict:
         """
         Send HTTP request to Binance API.
@@ -145,6 +146,7 @@ class BinanceSpotAPI:
             endpoint: API endpoint path
             params: Request parameters
             signed: Whether to sign the request
+            api_key_required: Whether to include API key header (without signature)
 
         Returns:
             JSON response as dict
@@ -171,6 +173,11 @@ class BinanceSpotAPI:
             if self._auth is None:
                 raise AuthenticationError("API key and secret required for signed requests")
             params = self._auth.sign_params(params)
+            headers = self._auth.get_headers()
+        elif api_key_required:
+            # Some endpoints require API key but not signature
+            if self._auth is None:
+                raise AuthenticationError("API key required for this request")
             headers = self._auth.get_headers()
 
         logger.debug(f"Request: {method} {endpoint}")
@@ -784,3 +791,57 @@ class BinanceSpotAPI:
             time_in_force=time_in_force,
             client_order_id=client_order_id,
         )
+
+    # =========================================================================
+    # User Data Stream
+    # =========================================================================
+
+    async def create_listen_key(self) -> str:
+        """
+        Create a new listen key for User Data Stream.
+
+        Returns:
+            Listen key string
+        """
+        data = await self._request(
+            "POST",
+            PRIVATE_ENDPOINTS["USER_DATA_STREAM"]["path"],
+            api_key_required=True,
+        )
+        return data["listenKey"]
+
+    async def keep_alive_listen_key(self, listen_key: str) -> bool:
+        """
+        Keep alive a listen key (should be called every 30 minutes).
+
+        Args:
+            listen_key: The listen key to keep alive
+
+        Returns:
+            True if successful
+        """
+        await self._request(
+            "PUT",
+            PRIVATE_ENDPOINTS["USER_DATA_STREAM_KEEPALIVE"]["path"],
+            params={"listenKey": listen_key},
+            api_key_required=True,
+        )
+        return True
+
+    async def delete_listen_key(self, listen_key: str) -> bool:
+        """
+        Delete a listen key.
+
+        Args:
+            listen_key: The listen key to delete
+
+        Returns:
+            True if successful
+        """
+        await self._request(
+            "DELETE",
+            PRIVATE_ENDPOINTS["USER_DATA_STREAM_DELETE"]["path"],
+            params={"listenKey": listen_key},
+            api_key_required=True,
+        )
+        return True
