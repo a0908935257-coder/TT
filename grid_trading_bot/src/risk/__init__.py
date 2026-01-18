@@ -8,6 +8,7 @@ Provides global risk management for the grid trading bot system:
 - Emergency stop functionality
 """
 
+from src.risk.capital_monitor import CapitalMonitor
 from src.risk.models import (
     CapitalSnapshot,
     CircuitBreakerState,
@@ -30,4 +31,5 @@ __all__ = [
     "RiskAlert",
     "CircuitBreakerState",
     "GlobalRiskStatus",
+    "CapitalMonitor",
 ]
