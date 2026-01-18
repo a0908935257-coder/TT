@@ -15,6 +15,7 @@ from core.models import Kline, MarketType
 from src.strategy.grid import (
     ATRConfig,
     ATRData,
+    DynamicAdjustConfig,
     GridConfig,
     GridLevel,
     GridSetup,
@@ -293,13 +294,53 @@ def risk_config() -> RiskConfig:
         lower_breakout_action="pause",
         stop_loss_percent=Decimal("20"),
         breakout_buffer=Decimal("0.5"),
-        auto_reset_enabled=False,
+        auto_rebuild_enabled=True,
         daily_loss_limit=Decimal("5"),
         max_consecutive_losses=5,
         volatility_threshold=Decimal("10"),
         order_failure_threshold=3,
         health_check_interval=30,
         monitoring_interval=5,
+    )
+
+
+# =============================================================================
+# ATR Configuration Fixture
+# =============================================================================
+
+
+@pytest.fixture
+def atr_config() -> ATRConfig:
+    """Create a default ATR configuration for testing."""
+    return ATRConfig(
+        period=14,
+        timeframe="4h",
+        multiplier=Decimal("2.0"),
+        use_ema=True,
+    )
+
+
+# =============================================================================
+# Dynamic Adjustment Configuration Fixture
+# =============================================================================
+
+
+@pytest.fixture
+def adjustment_config() -> DynamicAdjustConfig:
+    """
+    Create a default dynamic adjustment configuration for testing.
+
+    Uses default values per Prompt 25 spec:
+    - breakout_threshold: 4% (0.04)
+    - cooldown_days: 7
+    - max_rebuilds: 3
+    - enabled: True
+    """
+    return DynamicAdjustConfig(
+        enabled=True,
+        breakout_threshold=Decimal("0.04"),  # 4%
+        cooldown_days=7,
+        max_rebuilds=3,
     )
 
 
