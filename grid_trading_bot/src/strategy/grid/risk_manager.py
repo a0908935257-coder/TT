@@ -101,6 +101,11 @@ class RiskConfig:
         cooldown_days: Days between allowed rebuilds (default: 7)
         max_rebuilds_in_period: Max rebuilds within cooldown period (default: 3)
 
+        Price-based stop loss (new):
+        price_stop_loss_enabled: Enable price-based stop loss (default: False)
+        price_stop_loss: Absolute price level for stop loss (optional)
+        range_stop_loss_percent: Stop loss as % below grid lower bound (optional)
+
     Example:
         >>> config = RiskConfig(
         ...     upper_breakout_action=BreakoutAction.AUTO_REBUILD,
@@ -108,13 +113,25 @@ class RiskConfig:
         ...     stop_loss_percent=Decimal("15"),
         ...     daily_loss_limit=Decimal("5"),
         ... )
+
+        >>> # Price-based stop loss example
+        >>> config = RiskConfig(
+        ...     price_stop_loss_enabled=True,
+        ...     price_stop_loss=Decimal("42000"),  # Stop if price < 42000
+        ... )
+
+        >>> # Range-based stop loss example
+        >>> config = RiskConfig(
+        ...     price_stop_loss_enabled=True,
+        ...     range_stop_loss_percent=Decimal("10"),  # Stop if price < lower_bound * 0.9
+        ... )
     """
 
     # Breakout actions (Prompt 21: default to AUTO_REBUILD)
     upper_breakout_action: BreakoutAction = BreakoutAction.AUTO_REBUILD
     lower_breakout_action: BreakoutAction = BreakoutAction.AUTO_REBUILD
 
-    # Stop loss threshold (percentage)
+    # Stop loss threshold (percentage-based, for unrealized P&L)
     stop_loss_percent: Decimal = field(default_factory=lambda: Decimal("20"))
 
     # Breakout buffer (percentage beyond grid bounds)
@@ -128,6 +145,11 @@ class RiskConfig:
 
     # Expand grid settings
     expand_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("1.5"))
+
+    # Price-based stop loss settings (new)
+    price_stop_loss_enabled: bool = False  # Enable price-based stop loss
+    price_stop_loss: Optional[Decimal] = None  # Absolute price level
+    range_stop_loss_percent: Optional[Decimal] = None  # % below grid lower bound
 
     # Monitoring settings (Prompt 22)
     daily_loss_limit: Decimal = field(default_factory=lambda: Decimal("5"))  # Daily loss limit %
@@ -151,6 +173,10 @@ class RiskConfig:
             self.daily_loss_limit = Decimal(str(self.daily_loss_limit))
         if not isinstance(self.volatility_threshold, Decimal):
             self.volatility_threshold = Decimal(str(self.volatility_threshold))
+        if self.price_stop_loss is not None and not isinstance(self.price_stop_loss, Decimal):
+            self.price_stop_loss = Decimal(str(self.price_stop_loss))
+        if self.range_stop_loss_percent is not None and not isinstance(self.range_stop_loss_percent, Decimal):
+            self.range_stop_loss_percent = Decimal(str(self.range_stop_loss_percent))
 
 
 @dataclass
@@ -715,6 +741,198 @@ class GridRiskManager:
 
         return False
 
+    def check_price_stop_loss(self, current_price: Decimal) -> bool:
+        """
+        Check if price-based stop loss is triggered.
+
+        Two modes:
+        1. Absolute price: Triggers if current_price < price_stop_loss
+        2. Range-based: Triggers if current_price < lower_bound * (1 - range_stop_loss_percent/100)
+
+        Args:
+            current_price: Current market price
+
+        Returns:
+            True if price stop loss should be triggered
+        """
+        if not self._config.price_stop_loss_enabled:
+            return False
+
+        # Mode 1: Absolute price stop loss
+        if self._config.price_stop_loss is not None:
+            if current_price < self._config.price_stop_loss:
+                logger.warning(
+                    f"Price stop loss triggered: {current_price} < {self._config.price_stop_loss}"
+                )
+                return True
+
+        # Mode 2: Range-based stop loss (% below grid lower bound)
+        if self._config.range_stop_loss_percent is not None:
+            setup = self._order_manager.setup
+            if setup is not None:
+                lower_bound = setup.lower_price
+                stop_price = lower_bound * (
+                    Decimal("1") - self._config.range_stop_loss_percent / Decimal("100")
+                )
+                if current_price < stop_price:
+                    logger.warning(
+                        f"Range stop loss triggered: {current_price} < {stop_price} "
+                        f"(lower_bound {lower_bound} - {self._config.range_stop_loss_percent}%)"
+                    )
+                    return True
+
+        return False
+
+    def get_price_stop_loss_level(self) -> Optional[Decimal]:
+        """
+        Get the current price stop loss level.
+
+        Returns:
+            Stop loss price level, or None if not configured
+        """
+        if not self._config.price_stop_loss_enabled:
+            return None
+
+        # Absolute price takes priority
+        if self._config.price_stop_loss is not None:
+            return self._config.price_stop_loss
+
+        # Calculate from range percentage
+        if self._config.range_stop_loss_percent is not None:
+            setup = self._order_manager.setup
+            if setup is not None:
+                lower_bound = setup.lower_price
+                return lower_bound * (
+                    Decimal("1") - self._config.range_stop_loss_percent / Decimal("100")
+                )
+
+        return None
+
+    async def execute_price_stop_loss(self, current_price: Decimal) -> None:
+        """
+        Execute price-based stop loss.
+
+        1. Cancel all pending orders
+        2. Market sell any positions
+        3. Send notification
+        4. Stop the bot
+
+        Args:
+            current_price: Current market price
+        """
+        logger.warning(f"Executing price stop loss at {current_price}")
+
+        # Get stop loss level for notification
+        stop_level = self.get_price_stop_loss_level()
+
+        # Cancel all pending orders first
+        cancelled = await self._order_manager.cancel_all_orders()
+        logger.info(f"Price stop loss: cancelled {cancelled} orders")
+
+        # Calculate position
+        total_quantity = self._calculate_total_position()
+
+        # Market sell if we have positions
+        if total_quantity > 0:
+            try:
+                order = await self._order_manager._exchange.market_sell(
+                    self._order_manager.symbol,
+                    total_quantity,
+                    self._order_manager._market_type,
+                )
+
+                loss = self._calculate_unrealized_pnl(current_price)
+
+                logger.warning(
+                    f"Price stop loss executed: sold {total_quantity} at ~{current_price}, "
+                    f"unrealized loss was {loss}"
+                )
+
+                # Send notification
+                await self._notify_price_stop_loss(
+                    current_price=current_price,
+                    stop_level=stop_level,
+                    quantity_sold=total_quantity,
+                    loss=loss,
+                    had_positions=True,
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to execute price stop loss market sell: {e}")
+                await self._notify_price_stop_loss(
+                    current_price=current_price,
+                    stop_level=stop_level,
+                    quantity_sold=Decimal("0"),
+                    loss=Decimal("0"),
+                    had_positions=True,
+                    error=str(e),
+                )
+        else:
+            # No positions, just cancelled orders
+            logger.info("Price stop loss: no positions to sell, orders cancelled")
+            await self._notify_price_stop_loss(
+                current_price=current_price,
+                stop_level=stop_level,
+                quantity_sold=Decimal("0"),
+                loss=Decimal("0"),
+                had_positions=False,
+            )
+
+        # Update state
+        self._state = RiskState.STOPPED
+
+    async def _notify_price_stop_loss(
+        self,
+        current_price: Decimal,
+        stop_level: Optional[Decimal],
+        quantity_sold: Decimal,
+        loss: Decimal,
+        had_positions: bool,
+        error: Optional[str] = None,
+    ) -> None:
+        """Send price stop loss notification."""
+        try:
+            if error:
+                title = "🚨 價格止損執行失敗"
+                message = (
+                    f"價格跌破止損線，但賣出失敗\n\n"
+                    f"當前價格: {current_price:,.2f}\n"
+                    f"止損價格: {stop_level:,.2f}\n"
+                    f"錯誤: {error}\n\n"
+                    f"請手動處理！"
+                )
+                level = "error"
+            elif had_positions:
+                title = "🛑 價格止損已執行"
+                message = (
+                    f"價格跌破止損線，已市價賣出\n\n"
+                    f"當前價格: {current_price:,.2f}\n"
+                    f"止損價格: {stop_level:,.2f}\n"
+                    f"賣出數量: {quantity_sold}\n"
+                    f"預估虧損: {loss:,.2f} USDT\n\n"
+                    f"機器人已停止運行"
+                )
+                level = "warning"
+            else:
+                title = "🛑 價格止損觸發"
+                message = (
+                    f"價格跌破止損線\n\n"
+                    f"當前價格: {current_price:,.2f}\n"
+                    f"止損價格: {stop_level:,.2f}\n"
+                    f"持倉數量: 0（無需賣出）\n"
+                    f"已取消所有掛單\n\n"
+                    f"機器人已停止運行"
+                )
+                level = "warning"
+
+            await self._notifier.send(
+                title=title,
+                message=message,
+                level=level,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send price stop loss notification: {e}")
+
     def _calculate_unrealized_pnl(self, current_price: Decimal) -> Decimal:
         """
         Calculate unrealized P&L from filled buy positions.
@@ -1007,9 +1225,14 @@ class GridRiskManager:
                         await self.handle_breakout(direction, current_price)
                         continue
 
-                    # Check stop loss
+                    # Check stop loss (P&L based)
                     if self.check_stop_loss(current_price):
                         await self._action_stop_loss(BreakoutDirection.LOWER, current_price)
+                        continue
+
+                    # Check price stop loss (works even without filled positions)
+                    if self.check_price_stop_loss(current_price):
+                        await self.execute_price_stop_loss(current_price)
                         continue
 
                     # Check daily loss
