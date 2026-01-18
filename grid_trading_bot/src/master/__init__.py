@@ -53,6 +53,8 @@ from .master import (
     Master,
     MasterConfig,
 )
+from .ipc_handler import MasterIPCHandler
+from .process_manager import ProcessInfo, ProcessManager
 
 __all__ = [
     # Models
@@ -97,4 +99,9 @@ __all__ = [
     # Master
     "Master",
     "MasterConfig",
+    # IPC Handler
+    "MasterIPCHandler",
+    # Process Manager
+    "ProcessInfo",
+    "ProcessManager",
 ]
