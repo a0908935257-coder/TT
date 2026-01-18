@@ -549,7 +549,7 @@ def backtest_config():
         symbol="BTCUSDT",
         market_type=MarketType.SPOT,
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.GEOMETRIC,
         manual_upper=Decimal("55000"),
         manual_lower=Decimal("45000"),

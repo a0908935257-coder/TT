@@ -18,6 +18,7 @@ from .exceptions import (
     InvalidPriceRangeError,
 )
 from .models import (
+    ATRConfig,
     ATRData,
     GridConfig,
     GridLevel,
@@ -158,13 +159,15 @@ class SmartGridCalculator:
 
     def _calculate_atr(self) -> None:
         """Calculate ATR from klines."""
+        atr_config = self._config.atr_config
+
         if self._klines is None or len(self._klines) == 0:
             raise InsufficientDataError(
-                required=self._config.atr_period + 1,
+                required=atr_config.period + 1,
                 actual=0,
             )
 
-        min_required = self._config.atr_period + 1
+        min_required = atr_config.period + 1
         if len(self._klines) < min_required:
             raise InsufficientDataError(
                 required=min_required,
@@ -173,8 +176,7 @@ class SmartGridCalculator:
 
         self._atr_data = ATRCalculator.calculate_from_klines(
             klines=self._klines,
-            period=self._config.atr_period,
-            timeframe=self._config.atr_timeframe,
+            config=atr_config,
         )
 
         # Update current price from klines if not set
@@ -191,37 +193,33 @@ class SmartGridCalculator:
         current_price = self._get_current_price()
         upper = self._config.manual_upper_price
         lower = self._config.manual_lower_price
+        atr_config = self._config.atr_config
 
-        # Estimate ATR from range
-        estimated_atr = (upper - lower) / Decimal("4")
+        # Estimate ATR from range (assuming 2x multiplier)
+        estimated_atr = (upper - lower) / (atr_config.multiplier * Decimal("2"))
 
         return ATRData(
             value=estimated_atr,
-            period=self._config.atr_period,
-            timeframe=self._config.atr_timeframe,
+            period=atr_config.period,
+            timeframe=atr_config.timeframe,
+            multiplier=atr_config.multiplier,
             current_price=current_price,
+            upper_price=upper,
+            lower_price=lower,
         )
 
     def _calculate_price_range(self) -> tuple[Decimal, Decimal]:
         """
         Calculate price range based on ATR and risk level.
 
+        The ATRData already contains calculated upper/lower prices
+        based on the configured multiplier, so we use those directly.
+
         Returns:
             Tuple of (upper_price, lower_price)
         """
-        current_price = self._atr_data.current_price
-        multiplier = self._config.risk_level.atr_multiplier
-        range_width = self._atr_data.value * multiplier
-
-        upper_price = current_price + range_width
-        lower_price = current_price - range_width
-
-        # Ensure lower price is positive
-        if lower_price <= 0:
-            lower_price = current_price * Decimal("0.5")
-            upper_price = current_price * Decimal("1.5")
-
-        return upper_price, lower_price
+        # ATRData already has calculated boundaries using the configured multiplier
+        return self._atr_data.upper_price, self._atr_data.lower_price
 
     def _validate_price_range(self, upper: Decimal, lower: Decimal) -> None:
         """Validate price range."""
@@ -522,10 +520,9 @@ def create_grid(
     symbol: str,
     investment: Decimal | float | str,
     klines: Sequence[Any],
-    risk_level: RiskLevel = RiskLevel.MEDIUM,
+    risk_level: RiskLevel = RiskLevel.MODERATE,
     grid_type: GridType = GridType.GEOMETRIC,
-    atr_period: int = 14,
-    atr_timeframe: str = "4h",
+    atr_config: Optional[ATRConfig] = None,
 ) -> GridSetup:
     """
     Quick function to create grid setup.
@@ -534,10 +531,9 @@ def create_grid(
         symbol: Trading pair symbol
         investment: Total investment amount
         klines: K-line data for ATR calculation
-        risk_level: Risk level (default: MEDIUM)
+        risk_level: Risk level (default: MODERATE)
         grid_type: Grid type (default: GEOMETRIC)
-        atr_period: ATR period (default: 14)
-        atr_timeframe: ATR timeframe (default: "4h")
+        atr_config: ATR configuration (optional, uses defaults if not provided)
 
     Returns:
         Calculated GridSetup
@@ -548,14 +544,24 @@ def create_grid(
         ...     investment=10000,
         ...     klines=klines,
         ... )
+
+        >>> # With custom ATR config
+        >>> setup = create_grid(
+        ...     symbol="BTCUSDT",
+        ...     investment=10000,
+        ...     klines=klines,
+        ...     atr_config=ATRConfig.aggressive(),
+        ... )
     """
+    if atr_config is None:
+        atr_config = ATRConfig()
+
     config = GridConfig(
         symbol=symbol,
         total_investment=Decimal(str(investment)),
         risk_level=risk_level,
         grid_type=grid_type,
-        atr_period=atr_period,
-        atr_timeframe=atr_timeframe,
+        atr_config=atr_config,
     )
 
     calculator = SmartGridCalculator(config=config, klines=klines)

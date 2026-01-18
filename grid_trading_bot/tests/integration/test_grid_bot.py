@@ -31,7 +31,7 @@ def bot_config():
         symbol="BTCUSDT",
         market_type=MarketType.SPOT,
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.GEOMETRIC,
         risk_config=RiskConfig(
             daily_loss_limit=Decimal("5"),
@@ -47,7 +47,7 @@ def manual_bot_config():
         symbol="BTCUSDT",
         market_type=MarketType.SPOT,
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.GEOMETRIC,
         manual_upper=Decimal("55000"),
         manual_lower=Decimal("45000"),

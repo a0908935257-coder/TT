@@ -13,6 +13,7 @@ import pytest
 from core.models import Kline, MarketType
 
 from src.strategy.grid import (
+    ATRConfig,
     ATRData,
     GridConfig,
     GridLevel,
@@ -100,19 +101,34 @@ def atr_test_klines() -> list[Kline]:
     """
     Generate specific klines for ATR calculation verification.
 
-    High:  [100, 102, 101, 103, 102]
-    Low:   [98,  99,  98,  100, 99]
-    Close: [99,  101, 100, 102, 101]
-    """
-    base_time = datetime.now(timezone.utc) - timedelta(hours=20)
+    Expanded to support ATRConfig validation (min period=5).
+    Contains 8 klines to allow period=5 testing (needs period + 1 data points).
 
-    highs = [Decimal("100"), Decimal("102"), Decimal("101"), Decimal("103"), Decimal("102")]
-    lows = [Decimal("98"), Decimal("99"), Decimal("98"), Decimal("100"), Decimal("99")]
-    closes = [Decimal("99"), Decimal("101"), Decimal("100"), Decimal("102"), Decimal("101")]
-    opens = [Decimal("99"), Decimal("100"), Decimal("101"), Decimal("101"), Decimal("102")]
+    High:  [100, 102, 101, 103, 102, 104, 103, 105]
+    Low:   [98,  99,  98,  100, 99,  101, 100, 102]
+    Close: [99,  101, 100, 102, 101, 103, 102, 104]
+    """
+    base_time = datetime.now(timezone.utc) - timedelta(hours=32)
+
+    highs = [
+        Decimal("100"), Decimal("102"), Decimal("101"), Decimal("103"),
+        Decimal("102"), Decimal("104"), Decimal("103"), Decimal("105"),
+    ]
+    lows = [
+        Decimal("98"), Decimal("99"), Decimal("98"), Decimal("100"),
+        Decimal("99"), Decimal("101"), Decimal("100"), Decimal("102"),
+    ]
+    closes = [
+        Decimal("99"), Decimal("101"), Decimal("100"), Decimal("102"),
+        Decimal("101"), Decimal("103"), Decimal("102"), Decimal("104"),
+    ]
+    opens = [
+        Decimal("99"), Decimal("100"), Decimal("101"), Decimal("101"),
+        Decimal("102"), Decimal("102"), Decimal("103"), Decimal("103"),
+    ]
 
     klines = []
-    for i in range(5):
+    for i in range(8):
         kline = Kline(
             symbol="TESTUSDT",
             interval="4h",
@@ -169,13 +185,12 @@ def grid_config() -> GridConfig:
     return GridConfig(
         symbol="BTCUSDT",
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.GEOMETRIC,
         min_grid_count=5,
         max_grid_count=50,
         min_order_value=Decimal("10"),
-        atr_period=14,
-        atr_timeframe="4h",
+        atr_config=ATRConfig(period=14, timeframe="4h"),
     )
 
 
@@ -185,7 +200,7 @@ def manual_grid_config() -> GridConfig:
     return GridConfig(
         symbol="BTCUSDT",
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.GEOMETRIC,
         manual_upper_price=Decimal("55000"),
         manual_lower_price=Decimal("45000"),
@@ -199,7 +214,7 @@ def arithmetic_grid_config() -> GridConfig:
     return GridConfig(
         symbol="BTCUSDT",
         total_investment=Decimal("10000"),
-        risk_level=RiskLevel.MEDIUM,
+        risk_level=RiskLevel.MODERATE,
         grid_type=GridType.ARITHMETIC,
         manual_upper_price=Decimal("55000"),
         manual_lower_price=Decimal("45000"),
@@ -220,7 +235,10 @@ def grid_setup(grid_config: GridConfig) -> GridSetup:
         value=Decimal("1000"),
         period=14,
         timeframe="4h",
+        multiplier=Decimal("2.0"),
         current_price=Decimal("50000"),
+        upper_price=Decimal("52000"),
+        lower_price=Decimal("48000"),
     )
 
     # Create grid levels (10 levels from 45000 to 55000)

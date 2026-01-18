@@ -18,7 +18,7 @@ from exchange import ExchangeClient
 from notification import NotificationManager
 
 from .calculator import SmartGridCalculator
-from .models import DynamicAdjustConfig, GridConfig, GridLevel, GridSetup, GridType, RiskLevel
+from .models import ATRConfig, DynamicAdjustConfig, GridConfig, GridLevel, GridSetup, GridType, RiskLevel
 from .order_manager import FilledRecord, GridOrderManager
 from .risk_manager import BotState, GridRiskManager, RebuildRecord, RiskConfig
 
@@ -35,7 +35,7 @@ class GridBotConfig:
         ...     symbol="BTCUSDT",
         ...     market_type=MarketType.SPOT,
         ...     total_investment=Decimal("10000"),
-        ...     risk_level=RiskLevel.MEDIUM,
+        ...     risk_level=RiskLevel.MODERATE,
         ... )
     """
 
@@ -45,7 +45,7 @@ class GridBotConfig:
     total_investment: Decimal = field(default_factory=lambda: Decimal("1000"))
 
     # Grid calculation
-    risk_level: RiskLevel = RiskLevel.MEDIUM
+    risk_level: RiskLevel = RiskLevel.MODERATE
     grid_type: GridType = GridType.ARITHMETIC
 
     # Manual overrides (optional)
@@ -59,9 +59,10 @@ class GridBotConfig:
     # Dynamic adjustment configuration
     dynamic_adjust: DynamicAdjustConfig = field(default_factory=DynamicAdjustConfig)
 
-    # ATR settings
-    atr_period: int = 14
-    kline_timeframe: str = "4h"
+    # ATR configuration (unified)
+    atr_config: ATRConfig = field(default_factory=ATRConfig)
+
+    # Kline settings for data fetching
     kline_limit: int = 100
 
     # State persistence
@@ -860,7 +861,7 @@ class GridBot:
         """Fetch kline data for ATR calculation."""
         klines = await self._data_manager.get_klines(
             symbol=self._config.symbol,
-            interval=self._config.kline_timeframe,
+            interval=self._config.atr_config.timeframe,
             limit=self._config.kline_limit,
         )
 
@@ -868,7 +869,7 @@ class GridBot:
             # Try exchange directly
             klines = await self._exchange.get_klines(
                 symbol=self._config.symbol,
-                interval=self._config.kline_timeframe,
+                interval=self._config.atr_config.timeframe,
                 limit=self._config.kline_limit,
                 market=self._config.market_type,
             )
@@ -885,7 +886,7 @@ class GridBot:
             manual_upper_price=self._config.manual_upper,
             manual_lower_price=self._config.manual_lower,
             manual_grid_count=self._config.manual_grid_count,
-            atr_period=self._config.atr_period,
+            atr_config=self._config.atr_config,
         )
 
     async def _subscribe_user_data(self) -> None:

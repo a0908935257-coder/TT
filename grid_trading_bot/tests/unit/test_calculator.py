@@ -30,7 +30,7 @@ class TestSmartGridCalculator:
         config = GridConfig(
             symbol="BTCUSDT",
             total_investment=Decimal("10000"),
-            risk_level=RiskLevel.MEDIUM,
+            risk_level=RiskLevel.MODERATE,
             grid_type=GridType.GEOMETRIC,
         )
 
@@ -122,7 +122,7 @@ class TestSmartGridCalculator:
         """Test different risk levels produce different ranges."""
         results = {}
 
-        for risk_level in [RiskLevel.CONSERVATIVE, RiskLevel.MEDIUM, RiskLevel.AGGRESSIVE]:
+        for risk_level in [RiskLevel.CONSERVATIVE, RiskLevel.MODERATE, RiskLevel.AGGRESSIVE]:
             config = GridConfig(
                 symbol="BTCUSDT",
                 total_investment=Decimal("10000"),
@@ -140,8 +140,8 @@ class TestSmartGridCalculator:
             results[RiskLevel.CONSERVATIVE].lower_price
         )
         medium_range = (
-            results[RiskLevel.MEDIUM].upper_price -
-            results[RiskLevel.MEDIUM].lower_price
+            results[RiskLevel.MODERATE].upper_price -
+            results[RiskLevel.MODERATE].lower_price
         )
         aggressive_range = (
             results[RiskLevel.AGGRESSIVE].upper_price -
@@ -253,7 +253,7 @@ class TestConvenienceFunctions:
             symbol="BTCUSDT",
             investment=10000,
             klines=sample_klines,
-            risk_level=RiskLevel.MEDIUM,
+            risk_level=RiskLevel.MODERATE,
             grid_type=GridType.GEOMETRIC,
         )
 

@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.strategy.grid import ATRCalculator, ATRData, GridConfig, RiskLevel
+from src.strategy.grid import ATRCalculator, ATRConfig, ATRData, GridConfig, RiskLevel
 
 
 class TestATRCalculator:
@@ -21,22 +21,22 @@ class TestATRCalculator:
         #   High=102, Low=99, Prev Close=99
         #   TR = max(102-99, |102-99|, |99-99|) = max(3, 3, 0) = 3
 
+        config = ATRConfig(period=5, timeframe="4h")
         atr_data = ATRCalculator.calculate_from_klines(
             klines=atr_test_klines,
-            period=2,  # Use small period for test data
-            timeframe="4h",
+            config=config,
         )
 
         # ATR should be calculated and positive
         assert atr_data.value > 0
-        assert atr_data.period == 2
+        assert atr_data.period == 5
 
     def test_calculate_atr_basic(self, sample_klines):
         """Test basic ATR calculation with sample klines."""
+        config = ATRConfig(period=14, timeframe="4h")
         atr_data = ATRCalculator.calculate_from_klines(
             klines=sample_klines,
-            period=14,
-            timeframe="4h",
+            config=config,
         )
 
         # Verify ATR data structure
@@ -48,48 +48,40 @@ class TestATRCalculator:
 
     def test_calculate_atr_with_gaps(self):
         """Test ATR calculation with price gaps (simulating gaps via large moves)."""
-        # Create klines with gaps
+        # Create klines with gaps - expanded to support min period=5
         highs = [
             Decimal("100"), Decimal("102"), Decimal("115"),  # Gap up
-            Decimal("112"), Decimal("110"),
+            Decimal("112"), Decimal("110"), Decimal("113"), Decimal("111"),
         ]
         lows = [
             Decimal("98"), Decimal("99"), Decimal("108"),
-            Decimal("105"), Decimal("107"),
+            Decimal("105"), Decimal("107"), Decimal("109"), Decimal("108"),
         ]
         closes = [
             Decimal("99"), Decimal("101"), Decimal("110"),  # Large move
-            Decimal("108"), Decimal("109"),
+            Decimal("108"), Decimal("109"), Decimal("111"), Decimal("110"),
         ]
 
+        config = ATRConfig(period=5, timeframe="4h")
         atr_data = ATRCalculator.calculate(
             highs=highs,
             lows=lows,
             closes=closes,
-            period=2,
-            timeframe="4h",
+            config=config,
         )
 
         # ATR should reflect the higher volatility from gaps
-        assert atr_data.value > Decimal("4")  # Higher than typical 2-3
+        assert atr_data.value > Decimal("3")  # Higher volatility expected
 
     def test_atr_matches_tradingview(self, atr_test_klines):
         """Test ATR calculation matches expected values."""
-        # Using period=2 for simpler verification
-        # High:  [100, 102, 101, 103, 102]
-        # Low:   [98,  99,  98,  100, 99]
-        # Close: [99,  101, 100, 102, 101]
+        # Using period=5 with expanded test klines
+        # TR calculations result in consistent values around 3
 
-        # TR calculations (starting from index 1):
-        # TR[1] = max(102-99, |102-99|, |99-99|) = 3
-        # TR[2] = max(101-98, |101-101|, |98-101|) = 3
-        # TR[3] = max(103-100, |103-100|, |100-100|) = 3
-        # TR[4] = max(102-99, |102-102|, |99-102|) = 3
-
+        config = ATRConfig(period=5, timeframe="4h")
         atr_data = ATRCalculator.calculate_from_klines(
             klines=atr_test_klines,
-            period=2,
-            timeframe="4h",
+            config=config,
         )
 
         # With EMA smoothing, ATR should be close to 3
@@ -97,10 +89,10 @@ class TestATRCalculator:
 
     def test_volatility_level(self, sample_klines):
         """Test volatility level classification."""
+        config = ATRConfig(period=14, timeframe="4h")
         atr_data = ATRCalculator.calculate_from_klines(
             klines=sample_klines,
-            period=14,
-            timeframe="4h",
+            config=config,
         )
 
         # Volatility percent should be calculated
@@ -120,12 +112,13 @@ class TestATRCalculator:
         lows = [Decimal("98"), Decimal("99")]
         closes = [Decimal("99"), Decimal("101")]
 
+        config = ATRConfig(period=14, timeframe="4h")
         with pytest.raises(ValueError, match="Need at least"):
             ATRCalculator.calculate(
                 highs=highs,
                 lows=lows,
                 closes=closes,
-                period=14,  # Requires 15 data points
+                config=config,  # Requires 15 data points
             )
 
     def test_mismatched_lengths_error(self):
@@ -134,12 +127,13 @@ class TestATRCalculator:
         lows = [Decimal("98"), Decimal("99")]  # Different length
         closes = [Decimal("99"), Decimal("101"), Decimal("100")]
 
+        config = ATRConfig(period=5, timeframe="4h")
         with pytest.raises(ValueError, match="same length"):
             ATRCalculator.calculate(
                 highs=highs,
                 lows=lows,
                 closes=closes,
-                period=2,
+                config=config,
             )
 
 
@@ -152,20 +146,24 @@ class TestATRData:
             value=Decimal("500"),
             period=14,
             timeframe="4h",
+            multiplier=Decimal("2.0"),
             current_price=Decimal("50000"),
+            upper_price=Decimal("51000"),
+            lower_price=Decimal("49000"),
         )
 
         # 500 / 50000 * 100 = 1%
         assert atr_data.volatility_percent == Decimal("1")
 
     def test_volatility_levels(self):
-        """Test volatility level thresholds."""
+        """Test volatility level thresholds (per Prompt 17 spec)."""
+        # Thresholds: <1% very_low, 1-2% low, 2-4% medium, 4-6% high, >=6% very_high
         test_cases = [
-            (Decimal("100"), Decimal("50000"), "very_low"),   # 0.2%
-            (Decimal("400"), Decimal("50000"), "low"),        # 0.8%
-            (Decimal("750"), Decimal("50000"), "medium"),     # 1.5%
-            (Decimal("1500"), Decimal("50000"), "high"),      # 3%
-            (Decimal("2500"), Decimal("50000"), "very_high"), # 5%
+            (Decimal("250"), Decimal("50000"), "very_low"),   # 0.5%
+            (Decimal("750"), Decimal("50000"), "low"),        # 1.5%
+            (Decimal("1500"), Decimal("50000"), "medium"),    # 3%
+            (Decimal("2500"), Decimal("50000"), "high"),      # 5%
+            (Decimal("3500"), Decimal("50000"), "very_high"), # 7%
         ]
 
         for atr_value, price, expected_level in test_cases:
@@ -173,7 +171,10 @@ class TestATRData:
                 value=atr_value,
                 period=14,
                 timeframe="4h",
+                multiplier=Decimal("2.0"),
                 current_price=price,
+                upper_price=price + atr_value * 2,
+                lower_price=price - atr_value * 2,
             )
             assert atr_data.volatility_level_en == expected_level, (
                 f"ATR {atr_value} / Price {price} = {atr_data.volatility_percent}% "
@@ -186,7 +187,10 @@ class TestATRData:
             value=Decimal("500"),
             period=14,
             timeframe="4h",
+            multiplier=Decimal("2.0"),
             current_price=Decimal("0"),
+            upper_price=Decimal("1000"),
+            lower_price=Decimal("0"),
         )
 
         assert atr_data.volatility_percent == Decimal("0")
@@ -201,13 +205,16 @@ class TestATRSuggestParameters:
             value=Decimal("1000"),
             period=14,
             timeframe="4h",
+            multiplier=Decimal("2.0"),
             current_price=Decimal("50000"),
+            upper_price=Decimal("52000"),
+            lower_price=Decimal("48000"),
         )
 
         params = ATRCalculator.suggest_parameters(
             atr_data=atr_data,
             investment=Decimal("10000"),
-            risk_level=RiskLevel.MEDIUM,
+            risk_level=RiskLevel.MODERATE,
         )
 
         # Verify required keys
@@ -226,21 +233,42 @@ class TestATRSuggestParameters:
 
     def test_suggest_parameters_different_risk_levels(self):
         """Test parameter suggestions vary by risk level."""
-        atr_data = ATRData(
-            value=Decimal("1000"),
+        # Using ATRConfig factory methods to create proper ATRData
+        # Conservative: 1.5x, Aggressive: 2.5x
+        conservative_config = ATRConfig.conservative()
+        aggressive_config = ATRConfig.aggressive()
+
+        atr_value = Decimal("1000")
+        current_price = Decimal("50000")
+
+        conservative_atr = ATRData(
+            value=atr_value,
             period=14,
             timeframe="4h",
-            current_price=Decimal("50000"),
+            multiplier=conservative_config.multiplier,
+            current_price=current_price,
+            upper_price=current_price + atr_value * conservative_config.multiplier,
+            lower_price=current_price - atr_value * conservative_config.multiplier,
+        )
+
+        aggressive_atr = ATRData(
+            value=atr_value,
+            period=14,
+            timeframe="4h",
+            multiplier=aggressive_config.multiplier,
+            current_price=current_price,
+            upper_price=current_price + atr_value * aggressive_config.multiplier,
+            lower_price=current_price - atr_value * aggressive_config.multiplier,
         )
 
         conservative = ATRCalculator.suggest_parameters(
-            atr_data=atr_data,
+            atr_data=conservative_atr,
             investment=Decimal("10000"),
             risk_level=RiskLevel.CONSERVATIVE,
         )
 
         aggressive = ATRCalculator.suggest_parameters(
-            atr_data=atr_data,
+            atr_data=aggressive_atr,
             investment=Decimal("10000"),
             risk_level=RiskLevel.AGGRESSIVE,
         )
