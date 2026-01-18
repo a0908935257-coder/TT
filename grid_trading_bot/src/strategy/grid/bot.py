@@ -994,38 +994,17 @@ class GridBot:
         except Exception as e:
             logger.warning(f"Failed to unsubscribe from K-line close: {e}")
 
-    async def _handle_kline_close(self, data: dict) -> None:
+    async def _handle_kline_close(self, kline: Kline) -> None:
         """
-        Handle K-line WebSocket data.
+        Handle K-line close event.
 
-        Extracts Kline from data and calls on_kline_close if closed.
+        Called by WebSocket when a kline is closed.
 
         Args:
-            data: WebSocket kline event data
+            kline: Closed Kline object
         """
         try:
-            # Check if kline is closed
-            kline_data = data.get("k", {})
-            is_closed = kline_data.get("x", False)
-
-            if not is_closed:
-                return
-
-            # Parse kline data
-            kline = Kline(
-                symbol=kline_data.get("s", self._config.symbol),
-                interval=kline_data.get("i", self._config.atr_config.timeframe),
-                open_time=kline_data.get("t", 0),
-                open=Decimal(str(kline_data.get("o", "0"))),
-                high=Decimal(str(kline_data.get("h", "0"))),
-                low=Decimal(str(kline_data.get("l", "0"))),
-                close=Decimal(str(kline_data.get("c", "0"))),
-                volume=Decimal(str(kline_data.get("v", "0"))),
-                close_time=kline_data.get("T", 0),
-            )
-
             await self.on_kline_close(kline)
-
         except Exception as e:
             logger.error(f"Error handling kline close: {e}")
 

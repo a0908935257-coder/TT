@@ -528,6 +528,31 @@ class ExchangeClient:
             return False
         return await ws.subscribe_kline(symbol, interval, callback)
 
+    async def unsubscribe_kline(
+        self,
+        symbol: str,
+        interval: KlineInterval | str,
+        market: MarketType = MarketType.SPOT,
+    ) -> bool:
+        """
+        Unsubscribe from kline stream.
+
+        Args:
+            symbol: Trading pair
+            interval: Kline interval
+            market: SPOT or FUTURES
+
+        Returns:
+            True if successful
+        """
+        ws = self._get_ws(market)
+        if ws is None:
+            logger.error("WebSocket not connected")
+            return False
+        interval_str = interval.value if isinstance(interval, KlineInterval) else interval
+        stream = f"{symbol.lower()}@kline_{interval_str}"
+        return await ws.unsubscribe([stream])
+
     async def unsubscribe_all(self) -> None:
         """Unsubscribe from all streams."""
         if self._spot_ws and self._spot_ws._subscriptions:

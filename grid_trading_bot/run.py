@@ -23,7 +23,7 @@ from exchange import ExchangeClient
 from notification import NotificationManager
 from notification.discord_bot import TradingDiscordBot
 from strategy.grid.bot import GridBot, GridBotConfig
-from strategy.grid.models import GridType, RiskLevel
+from strategy.grid.models import GridType, RiskLevel, ATRConfig
 from strategy.grid.risk_manager import RiskConfig, BreakoutAction
 
 # Load environment variables
@@ -48,10 +48,11 @@ def get_config_from_env() -> GridBotConfig:
     # 對應風險等級
     risk_level_map = {
         'conservative': RiskLevel.CONSERVATIVE,
-        'medium': RiskLevel.MEDIUM,
+        'moderate': RiskLevel.MODERATE,
+        'medium': RiskLevel.MODERATE,  # Alias for moderate
         'aggressive': RiskLevel.AGGRESSIVE,
     }
-    risk_level = risk_level_map.get(risk_level_str, RiskLevel.MEDIUM)
+    risk_level = risk_level_map.get(risk_level_str, RiskLevel.MODERATE)
 
     # 對應網格類型
     grid_type_map = {
@@ -65,10 +66,16 @@ def get_config_from_env() -> GridBotConfig:
         stop_loss_percent=Decimal(os.getenv('STOP_LOSS_PERCENT', '20')),
         daily_loss_limit=Decimal(os.getenv('DAILY_LOSS_LIMIT', '5')),
         max_consecutive_losses=int(os.getenv('MAX_CONSECUTIVE_LOSSES', '5')),
-        upper_breakout_action=BreakoutAction.PAUSE,
-        lower_breakout_action=BreakoutAction.PAUSE,
-        auto_reset_enabled=os.getenv('AUTO_RESET_ENABLED', 'false').lower() == 'true',
-        reset_cooldown_minutes=int(os.getenv('RESET_COOLDOWN_MINUTES', '60')),
+        upper_breakout_action=BreakoutAction.AUTO_REBUILD,
+        lower_breakout_action=BreakoutAction.AUTO_REBUILD,
+        auto_rebuild_enabled=os.getenv('AUTO_REBUILD_ENABLED', 'true').lower() == 'true',
+        cooldown_days=int(os.getenv('COOLDOWN_DAYS', '7')),
+    )
+
+    # ATR 設定
+    atr_config = ATRConfig(
+        period=int(os.getenv('ATR_PERIOD', '14')),
+        timeframe=os.getenv('ATR_TIMEFRAME', '4h'),
     )
 
     return GridBotConfig(
@@ -78,8 +85,7 @@ def get_config_from_env() -> GridBotConfig:
         risk_level=risk_level,
         grid_type=grid_type,
         risk_config=risk_config,
-        atr_period=int(os.getenv('ATR_PERIOD', '14')),
-        kline_timeframe=os.getenv('ATR_TIMEFRAME', '4h'),
+        atr_config=atr_config,
     )
 
 
@@ -175,8 +181,8 @@ async def main() -> None:
     print(f"  投資金額: {config.total_investment} USDT")
     print(f"  風險等級: {config.risk_level.value}")
     print(f"  網格類型: {config.grid_type.value}")
-    print(f"  ATR 週期: {config.atr_period}")
-    print(f"  時間框架: {config.kline_timeframe}")
+    print(f"  ATR 週期: {config.atr_config.period}")
+    print(f"  時間框架: {config.atr_config.timeframe}")
     print(f"  止損: {config.risk_config.stop_loss_percent}%")
     print(f"  日虧損限制: {config.risk_config.daily_loss_limit}%")
     print(f"  自動啟動交易: {'是' if auto_start else '否（使用 /start 啟動）'}")

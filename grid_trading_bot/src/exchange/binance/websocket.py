@@ -371,6 +371,10 @@ class BinanceWebSocket:
         stream = f"{symbol.lower()}@kline_{interval_str}"
 
         async def wrapper(data: dict):
+            # Only invoke callback when kline is closed
+            k = data.get("k", {})
+            if not k.get("x", False):
+                return  # Skip unclosed klines
             kline = self._parse_kline(data)
             await self._invoke_callback(callback, kline)
 
