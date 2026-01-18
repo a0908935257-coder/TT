@@ -114,8 +114,9 @@ class PermissionChecker:
         if member.id in self._config.owner_ids:
             return PermissionLevel.OWNER
 
-        # For User objects (DMs), only check owner
-        if not isinstance(member, discord.Member):
+        # For User objects (DMs) without roles, only check owner
+        # Use duck typing to support both discord.Member and mock objects
+        if not hasattr(member, "roles") or not hasattr(member, "guild_permissions"):
             return PermissionLevel.NONE
 
         # Check server administrator (if allowed)
