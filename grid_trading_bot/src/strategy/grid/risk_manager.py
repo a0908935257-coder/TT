@@ -49,8 +49,9 @@ class BreakoutAction(str, Enum):
     HOLD = "hold"           # Hold and wait for price return
     PAUSE = "pause"         # Pause trading, cancel orders
     STOP_LOSS = "stop_loss" # Stop loss - market sell all
-    RESET_GRID = "reset"    # Reset grid around current price
+    RESET_GRID = "reset"    # Reset grid around current price (manual)
     EXPAND_GRID = "expand"  # Expand grid range in breakout direction
+    AUTO_REBUILD = "auto"   # Auto rebuild using dynamic adjuster
 
 
 class RiskState(str, Enum):
@@ -90,18 +91,28 @@ class RiskConfig:
     """
     Risk management configuration.
 
+    Attributes:
+        upper_breakout_action: Action for upper breakout (default: AUTO_REBUILD)
+        lower_breakout_action: Action for lower breakout (default: AUTO_REBUILD)
+        stop_loss_percent: Stop loss threshold percentage (default: 20)
+        breakout_buffer: Buffer percentage before triggering breakout (default: 0.5)
+        auto_rebuild_enabled: Enable automatic grid rebuild (default: True)
+        breakout_threshold: Price movement % to trigger rebuild (default: 4.0)
+        cooldown_days: Days between allowed rebuilds (default: 7)
+        max_rebuilds_in_period: Max rebuilds within cooldown period (default: 3)
+
     Example:
         >>> config = RiskConfig(
-        ...     upper_breakout_action=BreakoutAction.PAUSE,
+        ...     upper_breakout_action=BreakoutAction.AUTO_REBUILD,
         ...     lower_breakout_action=BreakoutAction.STOP_LOSS,
         ...     stop_loss_percent=Decimal("15"),
         ...     daily_loss_limit=Decimal("5"),
         ... )
     """
 
-    # Breakout actions
-    upper_breakout_action: BreakoutAction = BreakoutAction.PAUSE
-    lower_breakout_action: BreakoutAction = BreakoutAction.PAUSE
+    # Breakout actions (Prompt 21: default to AUTO_REBUILD)
+    upper_breakout_action: BreakoutAction = BreakoutAction.AUTO_REBUILD
+    lower_breakout_action: BreakoutAction = BreakoutAction.AUTO_REBUILD
 
     # Stop loss threshold (percentage)
     stop_loss_percent: Decimal = field(default_factory=lambda: Decimal("20"))
@@ -109,9 +120,11 @@ class RiskConfig:
     # Breakout buffer (percentage beyond grid bounds)
     breakout_buffer: Decimal = field(default_factory=lambda: Decimal("0.5"))
 
-    # Auto reset settings
-    auto_reset_enabled: bool = False
-    reset_cooldown_minutes: int = 60
+    # Auto rebuild settings (Prompt 21)
+    auto_rebuild_enabled: bool = True  # Enable automatic grid rebuild
+    breakout_threshold: Decimal = field(default_factory=lambda: Decimal("4.0"))  # Trigger threshold %
+    cooldown_days: int = 7  # Cooldown period in days
+    max_rebuilds_in_period: int = 3  # Max rebuilds within cooldown period
 
     # Expand grid settings
     expand_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("1.5"))
@@ -130,6 +143,8 @@ class RiskConfig:
             self.stop_loss_percent = Decimal(str(self.stop_loss_percent))
         if not isinstance(self.breakout_buffer, Decimal):
             self.breakout_buffer = Decimal(str(self.breakout_buffer))
+        if not isinstance(self.breakout_threshold, Decimal):
+            self.breakout_threshold = Decimal(str(self.breakout_threshold))
         if not isinstance(self.expand_atr_multiplier, Decimal):
             self.expand_atr_multiplier = Decimal(str(self.expand_atr_multiplier))
         if not isinstance(self.daily_loss_limit, Decimal):
@@ -471,6 +486,9 @@ class GridRiskManager:
         elif action == BreakoutAction.EXPAND_GRID:
             await self._action_expand_grid(direction, current_price)
 
+        elif action == BreakoutAction.AUTO_REBUILD:
+            await self._action_auto_rebuild(direction, current_price)
+
     # =========================================================================
     # Action Implementations
     # =========================================================================
@@ -618,6 +636,44 @@ class GridRiskManager:
         self._state = RiskState.NORMAL
 
         logger.info(f"Grid expanded: lower={new_lower}, upper={new_upper}")
+
+    async def _action_auto_rebuild(
+        self,
+        direction: BreakoutDirection,
+        current_price: Decimal,
+    ) -> None:
+        """
+        AUTO_REBUILD action - automatically rebuild grid using dynamic adjuster.
+
+        Uses the dynamic adjustment mechanism to rebuild the grid around
+        the current price, respecting cooldown limits.
+
+        Args:
+            direction: Breakout direction
+            current_price: Current market price (new center)
+        """
+        if not self._config.auto_rebuild_enabled:
+            logger.info("Auto rebuild disabled, falling back to PAUSE")
+            await self._action_pause(direction)
+            return
+
+        logger.info(
+            f"AUTO_REBUILD action: rebuilding grid around {current_price} "
+            f"(trigger: {direction.value})"
+        )
+
+        # Use dynamic adjustment mechanism
+        trigger_direction = "upper" if direction == BreakoutDirection.UPPER else "lower"
+        success = await self.execute_dynamic_adjust(current_price, trigger_direction)
+
+        if success:
+            # Return to normal state after successful rebuild
+            self._state = RiskState.NORMAL
+            logger.info(f"Auto rebuild successful, grid rebuilt around {current_price}")
+        else:
+            # If rebuild blocked by cooldown, fall back to PAUSE
+            logger.warning("Auto rebuild blocked by cooldown, falling back to PAUSE")
+            await self._action_pause(direction)
 
     # =========================================================================
     # Stop Loss Calculation
@@ -1561,18 +1617,24 @@ class GridRiskManager:
     @property
     def rebuilds_in_cooldown_period(self) -> int:
         """Get number of rebuilds within cooldown period."""
-        if not self._dynamic_adjust_config:
-            return 0
         return len(self._get_recent_rebuilds())
 
     @property
     def can_rebuild(self) -> bool:
         """Check if rebuild is allowed (not in cooldown)."""
-        if not self._dynamic_adjust_config:
+        # Check auto_rebuild_enabled from RiskConfig first
+        if not self._config.auto_rebuild_enabled:
             return False
-        if not self._dynamic_adjust_config.enabled:
-            return False
-        return self.rebuilds_in_cooldown_period < self._dynamic_adjust_config.max_rebuilds
+
+        # Use DynamicAdjustConfig if set, otherwise use RiskConfig
+        if self._dynamic_adjust_config:
+            if not self._dynamic_adjust_config.enabled:
+                return False
+            max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+        else:
+            max_rebuilds = self._config.max_rebuilds_in_period
+
+        return self.rebuilds_in_cooldown_period < max_rebuilds
 
     @property
     def next_rebuild_available(self) -> Optional[datetime]:
@@ -1585,16 +1647,19 @@ class GridRiskManager:
         if self.can_rebuild:
             return None
 
-        if not self._dynamic_adjust_config:
-            return None
-
         recent = self._get_recent_rebuilds()
         if not recent:
             return None
 
+        # Get cooldown days from DynamicAdjustConfig or RiskConfig
+        if self._dynamic_adjust_config:
+            cooldown_days = self._dynamic_adjust_config.cooldown_days
+        else:
+            cooldown_days = self._config.cooldown_days
+
         # Find the oldest rebuild that will expire first
         oldest = min(recent, key=lambda r: r.timestamp)
-        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        cooldown_delta = timedelta(days=cooldown_days)
         return oldest.timestamp + cooldown_delta
 
     def _get_recent_rebuilds(self) -> list[RebuildRecord]:
@@ -1604,11 +1669,14 @@ class GridRiskManager:
         Returns:
             List of RebuildRecord within cooldown window
         """
-        if not self._dynamic_adjust_config:
-            return []
+        # Get cooldown days from DynamicAdjustConfig or RiskConfig
+        if self._dynamic_adjust_config:
+            cooldown_days = self._dynamic_adjust_config.cooldown_days
+        else:
+            cooldown_days = self._config.cooldown_days
 
         now = datetime.now(timezone.utc)
-        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        cooldown_delta = timedelta(days=cooldown_days)
         cutoff = now - cooldown_delta
 
         return [r for r in self._rebuild_history if r.timestamp > cutoff]
@@ -1620,11 +1688,14 @@ class GridRiskManager:
         Returns:
             Number of records removed
         """
-        if not self._dynamic_adjust_config:
-            return 0
+        # Get cooldown days from DynamicAdjustConfig or RiskConfig
+        if self._dynamic_adjust_config:
+            cooldown_days = self._dynamic_adjust_config.cooldown_days
+        else:
+            cooldown_days = self._config.cooldown_days
 
         now = datetime.now(timezone.utc)
-        cooldown_delta = timedelta(days=self._dynamic_adjust_config.cooldown_days)
+        cooldown_delta = timedelta(days=cooldown_days)
         cutoff = now - cooldown_delta
 
         before_count = len(self._rebuild_history)
@@ -1653,18 +1724,26 @@ class GridRiskManager:
         Returns:
             "upper" or "lower" if triggered, None otherwise
         """
-        if not self._dynamic_adjust_config:
+        # Check if auto rebuild is enabled
+        if not self._config.auto_rebuild_enabled:
             return None
-        if not self._dynamic_adjust_config.enabled:
+
+        # If DynamicAdjustConfig is set, check its enabled flag too
+        if self._dynamic_adjust_config and not self._dynamic_adjust_config.enabled:
             return None
 
         setup = self._order_manager.setup
         if setup is None:
             return None
 
-        threshold = self._dynamic_adjust_config.breakout_threshold
+        # Get threshold from DynamicAdjustConfig or RiskConfig
+        if self._dynamic_adjust_config:
+            threshold = self._dynamic_adjust_config.breakout_threshold
+        else:
+            # Use RiskConfig's breakout_threshold (convert from % to decimal)
+            threshold = self._config.breakout_threshold / Decimal("100")
 
-        # Calculate trigger thresholds (4% beyond bounds)
+        # Calculate trigger thresholds (e.g., 4% beyond bounds)
         upper_trigger = setup.upper_price * (Decimal("1") + threshold)
         lower_trigger = setup.lower_price * (Decimal("1") - threshold)
 
@@ -1709,7 +1788,7 @@ class GridRiskManager:
         if setup is None:
             return False
 
-        if not self._dynamic_adjust_config:
+        if not self._config.auto_rebuild_enabled:
             return False
 
         # Step 1: Clean expired records
@@ -1719,9 +1798,18 @@ class GridRiskManager:
         if not self.can_rebuild:
             recent_count = self.rebuilds_in_cooldown_period
             next_available = self.next_rebuild_available
+
+            # Get max_rebuilds and cooldown_days from config
+            if self._dynamic_adjust_config:
+                max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+                cooldown_days = self._dynamic_adjust_config.cooldown_days
+            else:
+                max_rebuilds = self._config.max_rebuilds_in_period
+                cooldown_days = self._config.cooldown_days
+
             logger.warning(
-                f"Rebuild blocked by cooldown: {recent_count}/{self._dynamic_adjust_config.max_rebuilds} "
-                f"in last {self._dynamic_adjust_config.cooldown_days} days. "
+                f"Rebuild blocked by cooldown: {recent_count}/{max_rebuilds} "
+                f"in last {cooldown_days} days. "
                 f"Next available: {next_available}"
             )
             await self._notify_rebuild_blocked(recent_count, next_available)
@@ -1810,7 +1898,16 @@ class GridRiskManager:
         """Send grid rebuild notification."""
         try:
             symbol = self._order_manager.symbol
-            remaining = self._dynamic_adjust_config.max_rebuilds - self.rebuilds_in_cooldown_period
+
+            # Get max_rebuilds and cooldown_days from config
+            if self._dynamic_adjust_config:
+                max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+                cooldown_days = self._dynamic_adjust_config.cooldown_days
+            else:
+                max_rebuilds = self._config.max_rebuilds_in_period
+                cooldown_days = self._config.cooldown_days
+
+            remaining = max_rebuilds - self.rebuilds_in_cooldown_period
 
             message = (
                 f"📊 {symbol} Grid Rebuilt\n\n"
@@ -1818,8 +1915,8 @@ class GridRiskManager:
                 f"Price: {record.trigger_price}\n\n"
                 f"Old Range: {record.old_lower} - {record.old_upper}\n"
                 f"New Range: {record.new_lower} - {record.new_upper}\n\n"
-                f"Rebuilds remaining: {remaining}/{self._dynamic_adjust_config.max_rebuilds} "
-                f"(in {self._dynamic_adjust_config.cooldown_days} days)"
+                f"Rebuilds remaining: {remaining}/{max_rebuilds} "
+                f"(in {cooldown_days} days)"
             )
 
             await self._notifier.send_info(
@@ -1839,9 +1936,15 @@ class GridRiskManager:
             symbol = self._order_manager.symbol
             next_str = next_available.strftime("%Y-%m-%d %H:%M UTC") if next_available else "N/A"
 
+            # Get max_rebuilds from config
+            if self._dynamic_adjust_config:
+                max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+            else:
+                max_rebuilds = self._config.max_rebuilds_in_period
+
             message = (
                 f"⚠️ {symbol} Rebuild Blocked\n\n"
-                f"Cooldown limit reached: {current_count}/{self._dynamic_adjust_config.max_rebuilds}\n"
+                f"Cooldown limit reached: {current_count}/{max_rebuilds}\n"
                 f"Next rebuild available: {next_str}\n\n"
                 f"The grid will not be adjusted until cooldown expires."
             )
