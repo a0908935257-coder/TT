@@ -801,6 +801,146 @@ class NotificationManager:
         return await self._send_embed(embed, NotificationLevel.ERROR)
 
     # =========================================================================
+    # Master Control Console Integration
+    # =========================================================================
+
+    async def send(self, message: str, **kwargs: Any) -> bool:
+        """
+        Send a simple text message notification.
+
+        This method is used by Master Control Console for generic notifications.
+
+        Args:
+            message: Message text to send
+            **kwargs: Additional parameters (ignored)
+
+        Returns:
+            True if sent successfully
+        """
+        embed = {
+            "title": "📢 通知",
+            "description": message,
+            "color": 0x3498DB,  # Blue
+        }
+        return await self._send_embed(embed, NotificationLevel.INFO)
+
+    async def notify_bot_registered(
+        self,
+        bot_id: str,
+        bot_type: str,
+        symbol: str,
+    ) -> None:
+        """
+        Send bot registered notification.
+
+        Args:
+            bot_id: Bot identifier
+            bot_type: Type of bot (grid, dca, etc.)
+            symbol: Trading symbol
+        """
+        embed = {
+            "title": "🤖 機器人已註冊",
+            "description": f"新機器人已加入系統",
+            "color": 0x3498DB,  # Blue
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "類型", "value": bot_type.upper(), "inline": True},
+                {"name": "交易對", "value": symbol, "inline": True},
+            ],
+        }
+        await self._send_embed(embed, NotificationLevel.INFO)
+
+    async def notify_bot_state_changed(
+        self,
+        bot_id: str,
+        old_state: str,
+        new_state: str,
+        message: str = "",
+    ) -> None:
+        """
+        Send bot state changed notification.
+
+        Args:
+            bot_id: Bot identifier
+            old_state: Previous state
+            new_state: New state
+            message: Optional message
+        """
+        # Choose color based on new state
+        state_colors = {
+            "running": 0x2ECC71,    # Green
+            "paused": 0xF39C12,     # Orange
+            "stopped": 0x95A5A6,    # Gray
+            "error": 0xE74C3C,      # Red
+            "initializing": 0x3498DB,  # Blue
+            "stopping": 0xF39C12,   # Orange
+        }
+        color = state_colors.get(new_state.lower(), 0x3498DB)
+
+        # Choose emoji based on new state
+        state_emojis = {
+            "running": "▶️",
+            "paused": "⏸️",
+            "stopped": "⏹️",
+            "error": "❌",
+            "initializing": "🔄",
+            "stopping": "⏳",
+        }
+        emoji = state_emojis.get(new_state.lower(), "📋")
+
+        embed = {
+            "title": f"{emoji} 狀態變更",
+            "description": message if message else f"機器人狀態已更新",
+            "color": color,
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "狀態", "value": f"{old_state} → {new_state}", "inline": True},
+            ],
+        }
+        await self._send_embed(embed, NotificationLevel.INFO)
+
+    async def notify_bot_timeout(
+        self,
+        bot_id: str,
+        message: str = "",
+    ) -> None:
+        """
+        Send bot timeout notification.
+
+        Args:
+            bot_id: Bot identifier
+            message: Timeout message
+        """
+        embed = {
+            "title": "⚠️ 心跳超時",
+            "description": message if message else f"機器人 {bot_id} 心跳超時",
+            "color": 0xE74C3C,  # Red
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "狀態", "value": "無回應", "inline": True},
+            ],
+        }
+        await self._send_embed(embed, NotificationLevel.WARNING)
+
+    async def notify_bot_recovered(self, bot_id: str) -> None:
+        """
+        Send bot recovered notification.
+
+        Args:
+            bot_id: Bot identifier
+        """
+        embed = {
+            "title": "✅ 心跳恢復",
+            "description": f"機器人 {bot_id} 已恢復正常",
+            "color": 0x2ECC71,  # Green
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "狀態", "value": "正常", "inline": True},
+            ],
+        }
+        await self._send_embed(embed, NotificationLevel.SUCCESS)
+
+    # =========================================================================
     # Lifecycle
     # =========================================================================
 
