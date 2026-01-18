@@ -123,6 +123,7 @@ class GridBot:
         exchange: ExchangeClient,
         data_manager: MarketDataManager,
         notifier: NotificationManager,
+        heartbeat_callback: Optional[callable] = None,
     ):
         """
         Initialize GridBot.
@@ -133,12 +134,14 @@ class GridBot:
             exchange: ExchangeClient instance
             data_manager: MarketDataManager instance
             notifier: NotificationManager instance
+            heartbeat_callback: Optional callback for sending heartbeats to Master
         """
         self._bot_id = bot_id
         self._config = config
         self._exchange = exchange
         self._data_manager = data_manager
         self._notifier = notifier
+        self._heartbeat_callback = heartbeat_callback
 
         # Components (initialized in start())
         self._calculator: Optional[SmartGridCalculator] = None
@@ -155,6 +158,7 @@ class GridBot:
 
         # Persistence task
         self._save_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Last trade profit (for risk manager callback)
         self._last_trade_profit: Decimal = Decimal("0")
@@ -312,6 +316,9 @@ class GridBot:
             # Start persistence task
             self._start_save_task()
 
+            # Start heartbeat task
+            self._start_heartbeat_task()
+
             # Send notification
             await self._notify_bot_started()
 
@@ -346,6 +353,9 @@ class GridBot:
 
             # Stop persistence task
             self._stop_save_task()
+
+            # Stop heartbeat task
+            self._stop_heartbeat_task()
 
             # Stop risk monitoring
             if self._risk_manager:
@@ -843,6 +853,60 @@ class GridBot:
         if self._save_task:
             self._save_task.cancel()
             self._save_task = None
+
+    def _start_heartbeat_task(self) -> None:
+        """Start heartbeat task to notify Master."""
+        if self._heartbeat_task is not None or self._heartbeat_callback is None:
+            return
+
+        async def heartbeat_loop():
+            while self._running:
+                try:
+                    # Send heartbeat every 5 seconds
+                    await asyncio.sleep(5)
+                    if self._running and self._heartbeat_callback:
+                        self._send_heartbeat()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.warning(f"Error in heartbeat loop: {e}")
+
+        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
+        logger.debug(f"Heartbeat task started for {self._bot_id}")
+
+    def _stop_heartbeat_task(self) -> None:
+        """Stop heartbeat task."""
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            self._heartbeat_task = None
+            logger.debug(f"Heartbeat task stopped for {self._bot_id}")
+
+    def _send_heartbeat(self) -> None:
+        """Send heartbeat to Master."""
+        if not self._heartbeat_callback:
+            return
+
+        try:
+            # Import here to avoid circular imports
+            from src.master.heartbeat import HeartbeatData
+
+            # Gather metrics
+            stats = self._order_manager.get_statistics() if self._order_manager else {}
+
+            heartbeat = HeartbeatData(
+                bot_id=self._bot_id,
+                state=self._state,
+                metrics={
+                    "total_trades": stats.get("trade_count", 0),
+                    "total_profit": float(stats.get("total_profit", 0)),
+                    "pending_buy_orders": stats.get("pending_buy_count", 0),
+                    "pending_sell_orders": stats.get("pending_sell_count", 0),
+                    "uptime_seconds": int((datetime.now(timezone.utc) - self._start_time).total_seconds()) if self._start_time else 0,
+                },
+            )
+            self._heartbeat_callback(heartbeat)
+        except Exception as e:
+            logger.warning(f"Failed to send heartbeat: {e}")
 
     @classmethod
     async def restore(

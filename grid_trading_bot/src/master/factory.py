@@ -83,6 +83,7 @@ class BotFactory:
         exchange: Optional[ExchangeClientProtocol] = None,
         data_manager: Optional[DataManagerProtocol] = None,
         notifier: Optional[NotifierProtocol] = None,
+        heartbeat_callback: Optional[callable] = None,
     ):
         """
         Initialize BotFactory.
@@ -91,10 +92,12 @@ class BotFactory:
             exchange: ExchangeClient instance
             data_manager: MarketDataManager instance
             notifier: NotificationManager instance
+            heartbeat_callback: Optional callback for bot heartbeats
         """
         self._exchange = exchange
         self._data_manager = data_manager
         self._notifier = notifier
+        self._heartbeat_callback = heartbeat_callback
 
         # Registry of bot creators
         self._creators: dict[BotType, callable] = {
@@ -208,6 +211,7 @@ class BotFactory:
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
         )
 
         return bot

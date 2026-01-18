@@ -667,7 +667,7 @@ class BotCommander:
         if bot_info is None:
             return False, f"Bot not found: {bot_id}"
 
-        valid_states = [BotState.RUNNING, BotState.PAUSED]
+        valid_states = [BotState.RUNNING, BotState.PAUSED, BotState.ERROR]
         if bot_info.state not in valid_states:
             return False, f"Cannot stop bot in state: {bot_info.state.value}"
 

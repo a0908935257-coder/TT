@@ -131,13 +131,16 @@ class Master:
 
         # Initialize sub-modules
         self._registry = BotRegistry(db_manager, notifier)
-        self._factory = BotFactory(exchange, data_manager, notifier)
-        self._commander = BotCommander(self._registry, self._factory, notifier)
         self._heartbeat = HeartbeatMonitor(
             self._registry,
             self._config.heartbeat,
             notifier,
         )
+        self._factory = BotFactory(
+            exchange, data_manager, notifier,
+            heartbeat_callback=self._heartbeat.receive,
+        )
+        self._commander = BotCommander(self._registry, self._factory, notifier)
         self._health = HealthChecker(self._registry)
         self._aggregator = MetricsAggregator(self._registry)
         self._dashboard = Dashboard(self._registry, self._aggregator, self._health)

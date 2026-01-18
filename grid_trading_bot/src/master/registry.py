@@ -240,11 +240,11 @@ class BotRegistry:
 
             bot_info = self._bots[bot_id]
 
-            # Check state allows unregistration
-            if bot_info.state not in (BotState.STOPPED, BotState.REGISTERED):
+            # Check state allows unregistration (also allow ERROR state)
+            if bot_info.state not in (BotState.STOPPED, BotState.REGISTERED, BotState.ERROR):
                 raise ValueError(
                     f"Cannot unregister bot in state {bot_info.state.value}. "
-                    "Bot must be STOPPED or REGISTERED."
+                    "Bot must be STOPPED, REGISTERED, or ERROR."
                 )
 
             # Stop instance if exists
