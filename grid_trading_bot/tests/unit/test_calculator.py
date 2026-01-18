@@ -15,10 +15,12 @@ from src.strategy.grid import (
     InsufficientFundError,
     InvalidPriceRangeError,
     LevelSide,
+    RebuildInfo,
     RiskLevel,
     SmartGridCalculator,
     create_grid,
     create_grid_with_manual_range,
+    rebuild_grid,
 )
 
 
@@ -332,3 +334,182 @@ class TestGridLevelSides:
         indices = [level.index for level in setup.levels]
         expected = list(range(len(setup.levels)))
         assert indices == expected, "Level indices should be sequential"
+
+
+class TestCenterPriceCalculation:
+    """Tests for calculate() with center_price parameter."""
+
+    def test_calculate_with_center_price(self, sample_klines):
+        """Test calculation with explicit center_price."""
+        config = GridConfig(
+            symbol="BTCUSDT",
+            total_investment=Decimal("10000"),
+            risk_level=RiskLevel.MODERATE,
+            grid_type=GridType.GEOMETRIC,
+        )
+
+        calculator = SmartGridCalculator(config=config, klines=sample_klines)
+
+        # Calculate with new center price
+        new_center = Decimal("55000")
+        setup = calculator.calculate(center_price=new_center)
+
+        # Current price should be the center_price
+        assert setup.current_price == new_center
+        # Range should be centered around new_center
+        assert setup.lower_price < new_center < setup.upper_price
+
+    def test_center_price_recalculates_range(self, sample_klines):
+        """Test that center_price triggers range recalculation."""
+        config = GridConfig(
+            symbol="BTCUSDT",
+            total_investment=Decimal("10000"),
+            risk_level=RiskLevel.MODERATE,
+            grid_type=GridType.GEOMETRIC,
+        )
+
+        calculator = SmartGridCalculator(config=config, klines=sample_klines)
+
+        # Calculate without center_price
+        setup_normal = calculator.calculate()
+
+        # Calculate with different center_price
+        calculator2 = SmartGridCalculator(config=config, klines=sample_klines)
+        setup_centered = calculator2.calculate(center_price=Decimal("60000"))
+
+        # Ranges should be different
+        assert setup_centered.current_price != setup_normal.current_price
+        assert setup_centered.upper_price != setup_normal.upper_price
+        assert setup_centered.lower_price != setup_normal.lower_price
+
+
+class TestRebuildGrid:
+    """Tests for rebuild_grid function."""
+
+    def test_rebuild_grid_basic(self, sample_klines):
+        """Test basic grid rebuild."""
+        # Create initial setup
+        initial_setup = create_grid(
+            symbol="BTCUSDT",
+            investment=10000,
+            klines=sample_klines,
+            risk_level=RiskLevel.MODERATE,
+        )
+
+        # Rebuild with new center price
+        new_center = Decimal("57500")
+        rebuilt_setup = rebuild_grid(
+            old_setup=initial_setup,
+            klines=sample_klines,
+            new_center_price=new_center,
+            reason="upper_breakout",
+        )
+
+        # Version should increment
+        assert rebuilt_setup.version == initial_setup.version + 1
+
+        # Should have rebuild_info
+        assert rebuilt_setup.rebuild_info is not None
+        assert isinstance(rebuilt_setup.rebuild_info, RebuildInfo)
+
+    def test_rebuild_grid_info_populated(self, sample_klines):
+        """Test that rebuild_info is correctly populated."""
+        initial_setup = create_grid(
+            symbol="BTCUSDT",
+            investment=10000,
+            klines=sample_klines,
+        )
+
+        new_center = Decimal("60000")
+        rebuilt_setup = rebuild_grid(
+            old_setup=initial_setup,
+            klines=sample_klines,
+            new_center_price=new_center,
+            reason="manual_rebuild",
+        )
+
+        info = rebuilt_setup.rebuild_info
+        assert info.old_upper == initial_setup.upper_price
+        assert info.old_lower == initial_setup.lower_price
+        assert info.new_center == new_center
+        assert info.reason == "manual_rebuild"
+        assert info.rebuilt_at is not None
+
+    def test_rebuild_grid_preserves_config(self, sample_klines):
+        """Test that rebuild preserves original config."""
+        initial_setup = create_grid(
+            symbol="ETHUSDT",
+            investment=5000,
+            klines=sample_klines,
+            risk_level=RiskLevel.AGGRESSIVE,
+            grid_type=GridType.ARITHMETIC,
+        )
+
+        rebuilt_setup = rebuild_grid(
+            old_setup=initial_setup,
+            klines=sample_klines,
+            new_center_price=Decimal("55000"),
+        )
+
+        # Config should be preserved
+        assert rebuilt_setup.config.symbol == initial_setup.config.symbol
+        assert rebuilt_setup.config.total_investment == initial_setup.config.total_investment
+        assert rebuilt_setup.config.grid_type == initial_setup.config.grid_type
+
+    def test_rebuild_grid_multiple_times(self, sample_klines):
+        """Test multiple sequential rebuilds."""
+        setup_v1 = create_grid(
+            symbol="BTCUSDT",
+            investment=10000,
+            klines=sample_klines,
+        )
+        assert setup_v1.version == 1
+
+        setup_v2 = rebuild_grid(
+            old_setup=setup_v1,
+            klines=sample_klines,
+            new_center_price=Decimal("55000"),
+        )
+        assert setup_v2.version == 2
+
+        setup_v3 = rebuild_grid(
+            old_setup=setup_v2,
+            klines=sample_klines,
+            new_center_price=Decimal("60000"),
+        )
+        assert setup_v3.version == 3
+
+        # v3's rebuild_info should reference v2's boundaries
+        assert setup_v3.rebuild_info.old_upper == setup_v2.upper_price
+        assert setup_v3.rebuild_info.old_lower == setup_v2.lower_price
+
+
+class TestRebuildInfo:
+    """Tests for RebuildInfo dataclass."""
+
+    def test_rebuild_info_creation(self):
+        """Test RebuildInfo creation."""
+        info = RebuildInfo(
+            old_upper=Decimal("52000"),
+            old_lower=Decimal("48000"),
+            new_center=Decimal("55000"),
+            reason="price_breakout",
+        )
+
+        assert info.old_upper == Decimal("52000")
+        assert info.old_lower == Decimal("48000")
+        assert info.new_center == Decimal("55000")
+        assert info.reason == "price_breakout"
+        assert info.rebuilt_at is not None
+
+    def test_rebuild_info_type_conversion(self):
+        """Test RebuildInfo converts types to Decimal."""
+        info = RebuildInfo(
+            old_upper=52000,  # int
+            old_lower="48000",  # str
+            new_center=55000.0,  # float
+        )
+
+        assert isinstance(info.old_upper, Decimal)
+        assert isinstance(info.old_lower, Decimal)
+        assert isinstance(info.new_center, Decimal)

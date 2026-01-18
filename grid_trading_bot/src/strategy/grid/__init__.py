@@ -5,6 +5,7 @@ from .calculator import (
     SmartGridCalculator,
     create_grid,
     create_grid_with_manual_range,
+    rebuild_grid,
 )
 from .exceptions import (
     GridCalculationError,
@@ -25,6 +26,7 @@ from .models import (
     GridType,
     LevelSide,
     LevelState,
+    RebuildInfo,
     RiskLevel,
     VALID_TIMEFRAMES,
 )
@@ -65,6 +67,7 @@ __all__ = [
     "GridConfig",
     "GridLevel",
     "GridSetup",
+    "RebuildInfo",
     "VALID_TIMEFRAMES",
     # Calculator
     "ATRCalculator",
@@ -85,4 +88,5 @@ __all__ = [
     # Convenience functions
     "create_grid",
     "create_grid_with_manual_range",
+    "rebuild_grid",
 ]

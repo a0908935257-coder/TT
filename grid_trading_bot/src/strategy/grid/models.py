@@ -613,6 +613,51 @@ class GridLevel:
 
 
 # =============================================================================
+# Rebuild Info
+# =============================================================================
+
+
+@dataclass
+class RebuildInfo:
+    """
+    Information about a grid rebuild event.
+
+    Created when a grid is rebuilt due to price breakout or manual trigger.
+    Contains the old boundaries, new center price, and rebuild timestamp.
+
+    Attributes:
+        old_upper: Previous upper boundary before rebuild
+        old_lower: Previous lower boundary before rebuild
+        new_center: New center price used for rebuild
+        rebuilt_at: Timestamp when rebuild occurred
+        reason: Optional reason for rebuild (e.g., "upper_breakout", "lower_breakout")
+
+    Example:
+        >>> info = RebuildInfo(
+        ...     old_upper=Decimal("52000"),
+        ...     old_lower=Decimal("48000"),
+        ...     new_center=Decimal("55000"),
+        ...     reason="upper_breakout",
+        ... )
+    """
+
+    old_upper: Decimal
+    old_lower: Decimal
+    new_center: Decimal
+    rebuilt_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    reason: Optional[str] = None
+
+    def __post_init__(self):
+        """Ensure Decimal types."""
+        if not isinstance(self.old_upper, Decimal):
+            self.old_upper = Decimal(str(self.old_upper))
+        if not isinstance(self.old_lower, Decimal):
+            self.old_lower = Decimal(str(self.old_lower))
+        if not isinstance(self.new_center, Decimal):
+            self.new_center = Decimal(str(self.new_center))
+
+
+# =============================================================================
 # Grid Setup
 # =============================================================================
 
@@ -638,6 +683,7 @@ class GridSetup:
         expected_profit_per_trade: Expected profit per completed grid trade
         created_at: Timestamp when grid was created
         version: Version number (increments on rebuild)
+        rebuild_info: Information about rebuild (if this is a rebuilt grid)
 
     Example:
         >>> setup = GridSetup(
@@ -666,6 +712,7 @@ class GridSetup:
     expected_profit_per_trade: Decimal
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     version: int = 1
+    rebuild_info: Optional[RebuildInfo] = None
 
     @property
     def buy_levels(self) -> list[GridLevel]:

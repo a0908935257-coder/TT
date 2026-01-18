@@ -26,6 +26,7 @@ from .models import (
     GridType,
     LevelSide,
     LevelState,
+    RebuildInfo,
     RiskLevel,
 )
 
@@ -75,7 +76,7 @@ class SmartGridCalculator:
         self._current_price = Decimal(str(current_price)) if current_price else None
         self._atr_data: Optional[ATRData] = None
 
-    def calculate(self) -> GridSetup:
+    def calculate(self, center_price: Optional[Decimal] = None) -> GridSetup:
         """
         Calculate complete grid setup.
 
@@ -89,6 +90,11 @@ class SmartGridCalculator:
         7. Create levels with pyramid fund allocation
         8. Calculate expected profit
 
+        Args:
+            center_price: Optional center price for range calculation.
+                         If provided, uses this as center instead of klines[-1].close.
+                         Useful for grid rebuilding with new center price.
+
         Returns:
             GridSetup with all calculated parameters
 
@@ -96,8 +102,19 @@ class SmartGridCalculator:
             InsufficientDataError: If klines insufficient
             InsufficientFundError: If investment too low
             GridCalculationError: If calculation fails
+
+        Example:
+            >>> # Normal calculation using klines
+            >>> setup = calculator.calculate()
+
+            >>> # Rebuild with new center price
+            >>> setup = calculator.calculate(center_price=Decimal("57500"))
         """
         logger.info(f"Calculating grid for {self._config.symbol}")
+
+        # If center_price provided, use it as current price
+        if center_price is not None:
+            self._current_price = Decimal(str(center_price))
 
         # Step 1: Calculate ATR or use manual range
         if self._config.has_manual_range:
@@ -106,7 +123,11 @@ class SmartGridCalculator:
             lower_price = self._config.manual_lower_price
         else:
             self._calculate_atr()
-            upper_price, lower_price = self._calculate_price_range()
+            # If center_price provided, recalculate range around it
+            if center_price is not None:
+                upper_price, lower_price = self._calculate_price_range_from_center(center_price)
+            else:
+                upper_price, lower_price = self._calculate_price_range()
 
         # Validate price range
         self._validate_price_range(upper_price, lower_price)
@@ -220,6 +241,34 @@ class SmartGridCalculator:
         """
         # ATRData already has calculated boundaries using the configured multiplier
         return self._atr_data.upper_price, self._atr_data.lower_price
+
+    def _calculate_price_range_from_center(
+        self,
+        center_price: Decimal,
+    ) -> tuple[Decimal, Decimal]:
+        """
+        Calculate price range centered around a specific price.
+
+        Used for grid rebuilding when price has moved to a new range.
+
+        Args:
+            center_price: The price to center the range around
+
+        Returns:
+            Tuple of (upper_price, lower_price)
+        """
+        multiplier = self._config.atr_config.multiplier
+        range_width = self._atr_data.value * multiplier
+
+        upper_price = center_price + range_width
+        lower_price = center_price - range_width
+
+        # Ensure lower price is positive
+        if lower_price <= 0:
+            lower_price = center_price * Decimal("0.5")
+            upper_price = center_price * Decimal("1.5")
+
+        return upper_price, lower_price
 
     def _validate_price_range(self, upper: Decimal, lower: Decimal) -> None:
         """Validate price range."""
@@ -616,3 +665,74 @@ def create_grid_with_manual_range(
         current_price=Decimal(str(current_price)),
     )
     return calculator.calculate()
+
+
+def rebuild_grid(
+    old_setup: GridSetup,
+    klines: Sequence[Any],
+    new_center_price: Decimal | float | str,
+    reason: Optional[str] = None,
+) -> GridSetup:
+    """
+    Rebuild grid with new center price, preserving original configuration.
+
+    This function creates a new grid setup centered around a new price while
+    keeping the same grid parameters (investment, grid count, risk level, etc.).
+    The new setup's version is incremented and rebuild_info is populated with
+    the old boundaries and new center price.
+
+    Use this when:
+    - Price breaks out of the current grid range
+    - Manual grid reconfiguration is needed
+    - Dynamic adjustment triggers a grid rebuild
+
+    Args:
+        old_setup: The existing GridSetup to rebuild from
+        klines: K-line data for ATR recalculation
+        new_center_price: The new center price for the grid
+        reason: Optional reason for rebuild (e.g., "upper_breakout", "lower_breakout")
+
+    Returns:
+        New GridSetup with:
+        - version: old_setup.version + 1
+        - rebuild_info populated with old boundaries and new center
+        - New price range centered around new_center_price
+
+    Example:
+        >>> # Price broke out above grid, rebuild with new center
+        >>> new_setup = rebuild_grid(
+        ...     old_setup=current_setup,
+        ...     klines=latest_klines,
+        ...     new_center_price=Decimal("57500"),
+        ...     reason="upper_breakout",
+        ... )
+        >>> print(f"Version: {new_setup.version}")  # old version + 1
+        >>> print(f"Old range: {new_setup.rebuild_info.old_lower}-{new_setup.rebuild_info.old_upper}")
+    """
+    new_center = Decimal(str(new_center_price))
+
+    # Create calculator with original config
+    calculator = SmartGridCalculator(
+        config=old_setup.config,
+        klines=klines,
+    )
+
+    # Calculate new setup with the new center price
+    new_setup = calculator.calculate(center_price=new_center)
+
+    # Update version and rebuild info
+    new_setup.version = old_setup.version + 1
+    new_setup.rebuild_info = RebuildInfo(
+        old_upper=old_setup.upper_price,
+        old_lower=old_setup.lower_price,
+        new_center=new_center,
+        reason=reason,
+    )
+
+    logger.info(
+        f"Grid rebuilt: v{old_setup.version} -> v{new_setup.version}, "
+        f"center {old_setup.current_price:.2f} -> {new_center:.2f}, "
+        f"range {new_setup.lower_price:.2f}-{new_setup.upper_price:.2f}"
+    )
+
+    return new_setup
