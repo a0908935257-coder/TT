@@ -53,6 +53,11 @@ class GridBotConfig:
     manual_lower: Optional[Decimal] = None
     manual_grid_count: Optional[int] = None
 
+    # Grid limits
+    min_order_value: Decimal = field(default_factory=lambda: Decimal("10"))
+    min_grid_count: int = 5
+    max_grid_count: int = 50
+
     # Risk configuration
     risk_config: RiskConfig = field(default_factory=RiskConfig)
 
@@ -946,6 +951,9 @@ class GridBot:
             manual_lower_price=self._config.manual_lower,
             manual_grid_count=self._config.manual_grid_count,
             atr_config=self._config.atr_config,
+            min_order_value=self._config.min_order_value,
+            min_grid_count=self._config.min_grid_count,
+            max_grid_count=self._config.max_grid_count,
         )
 
     async def _subscribe_user_data(self) -> None:

@@ -78,6 +78,11 @@ def get_config_from_env() -> GridBotConfig:
         timeframe=os.getenv('ATR_TIMEFRAME', '4h'),
     )
 
+    # 網格限制
+    min_order_value = Decimal(os.getenv('MIN_ORDER_VALUE', '10'))
+    min_grid_count = int(os.getenv('MIN_GRID_COUNT', '5'))
+    max_grid_count = int(os.getenv('MAX_GRID_COUNT', '50'))
+
     return GridBotConfig(
         symbol=symbol,
         market_type=MarketType.SPOT,
@@ -86,6 +91,9 @@ def get_config_from_env() -> GridBotConfig:
         grid_type=grid_type,
         risk_config=risk_config,
         atr_config=atr_config,
+        min_order_value=min_order_value,
+        min_grid_count=min_grid_count,
+        max_grid_count=max_grid_count,
     )
 
 
