@@ -28,6 +28,18 @@ from .health import (
     HealthChecker,
     HealthStatus,
 )
+from .aggregator import (
+    BotMetrics,
+    MetricsAggregator,
+)
+from .dashboard import (
+    Alert,
+    AlertLevel,
+    BotDetail,
+    Dashboard,
+    DashboardData,
+    DashboardSummary,
+)
 
 __all__ = [
     # Models
@@ -52,4 +64,14 @@ __all__ = [
     "HealthCheckResult",
     "HealthChecker",
     "HealthStatus",
+    # Aggregator
+    "BotMetrics",
+    "MetricsAggregator",
+    # Dashboard
+    "Alert",
+    "AlertLevel",
+    "BotDetail",
+    "Dashboard",
+    "DashboardData",
+    "DashboardSummary",
 ]
