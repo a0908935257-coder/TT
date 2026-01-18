@@ -134,12 +134,12 @@ class TestBinanceAuth:
         # Use fixed timestamp for reproducible test
         params = {"symbol": "BTCUSDT", "side": "BUY"}
 
-        # Patch where it's used, not where it's defined
-        with patch("exchange.binance.auth.now_timestamp", return_value=1234567890000):
+        # Patch time.time() directly since auth.py uses time.time()
+        with patch("time.time", return_value=1234567890.0):
             signed = auth.sign_params(params)
 
-        # Manually calculate expected signature
-        query_string = "side=BUY&symbol=BTCUSDT&timestamp=1234567890000"
+        # Manually calculate expected signature (includes recvWindow, preserves dict order)
+        query_string = "symbol=BTCUSDT&side=BUY&timestamp=1234567890000&recvWindow=60000"
         expected_sig = hmac.new(
             b"test_api_secret",
             query_string.encode(),

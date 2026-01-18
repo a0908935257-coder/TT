@@ -199,18 +199,19 @@ class TestExchangeClientConnection:
     async def test_connect_success(self, client):
         """Test successful connection."""
         with patch.object(client._spot, "connect", new_callable=AsyncMock) as mock_spot:
-            with patch.object(client._futures, "connect", new_callable=AsyncMock) as mock_futures:
-                with patch("exchange.client.BinanceWebSocket") as mock_ws_class:
-                    mock_ws_instance = MagicMock()
-                    mock_ws_instance.connect = AsyncMock(return_value=True)
-                    mock_ws_class.return_value = mock_ws_instance
+            with patch.object(client._spot, "sync_time", new_callable=AsyncMock) as mock_sync:
+                with patch.object(client._futures, "connect", new_callable=AsyncMock) as mock_futures:
+                    with patch("exchange.client.BinanceWebSocket") as mock_ws_class:
+                        mock_ws_instance = MagicMock()
+                        mock_ws_instance.connect = AsyncMock(return_value=True)
+                        mock_ws_class.return_value = mock_ws_instance
 
-                    result = await client.connect()
+                        result = await client.connect()
 
-                    assert result is True
-                    assert client.is_connected is True
-                    mock_spot.assert_called_once()
-                    mock_futures.assert_called_once()
+                        assert result is True
+                        assert client.is_connected is True
+                        mock_spot.assert_called_once()
+                        mock_futures.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close(self, client):

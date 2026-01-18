@@ -249,17 +249,31 @@ class GridOrderManager:
 
         # Check base asset balance for SELL orders (SPOT market only)
         base_asset_balance = Decimal("0")
+        quote_asset_balance = Decimal("0")
         if self._market_type == MarketType.SPOT:
             base_asset = symbol_info.base_asset
+            quote_asset = symbol_info.quote_asset
+
+            # Get base asset balance (for SELL orders)
             balance = await self._exchange.get_balance(base_asset, self._market_type)
             if balance:
                 base_asset_balance = balance.free
             logger.info(f"Base asset ({base_asset}) balance: {base_asset_balance}")
 
+            # Get quote asset balance (for BUY orders)
+            balance = await self._exchange.get_balance(quote_asset, self._market_type)
+            if balance:
+                quote_asset_balance = balance.free
+            logger.info(f"Quote asset ({quote_asset}) balance: {quote_asset_balance}")
+
         # Prepare orders to place
         orders_to_place: list[dict] = []
         skipped_sell_no_balance = 0
+        skipped_buy_no_balance = 0
         skipped_low_notional = 0
+
+        # Track cumulative required quote asset for BUY orders
+        cumulative_buy_cost = Decimal("0")
 
         for level in self._setup.levels:
             # Skip if level already has order
@@ -314,6 +328,19 @@ class GridOrderManager:
                     skipped_sell_no_balance += 1
                     continue
 
+            # For BUY orders in SPOT, check if we have enough quote asset
+            if side == OrderSide.BUY and self._market_type == MarketType.SPOT:
+                order_cost = rounded_quantity * level.price
+                if cumulative_buy_cost + order_cost > quote_asset_balance:
+                    logger.debug(
+                        f"Skipping BUY at level {level.index} - "
+                        f"insufficient {symbol_info.quote_asset} balance "
+                        f"(need {cumulative_buy_cost + order_cost:.2f}, have {quote_asset_balance:.2f})"
+                    )
+                    skipped_buy_no_balance += 1
+                    continue
+                cumulative_buy_cost += order_cost
+
             orders_to_place.append({
                 "level_index": level.index,
                 "side": side,
@@ -340,6 +367,11 @@ class GridOrderManager:
             logger.info(
                 f"Skipped {skipped_sell_no_balance} SELL orders "
                 f"(insufficient base asset balance)"
+            )
+        if skipped_buy_no_balance > 0:
+            logger.info(
+                f"Skipped {skipped_buy_no_balance} BUY orders "
+                f"(insufficient quote asset balance, available: {quote_asset_balance:.2f} USDT)"
             )
         if skipped_low_notional > 0:
             logger.info(
