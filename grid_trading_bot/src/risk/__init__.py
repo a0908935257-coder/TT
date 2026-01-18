@@ -23,6 +23,7 @@ from src.risk.models import (
     RiskConfig,
     RiskLevel,
 )
+from src.risk.risk_engine import RiskEngine
 
 __all__ = [
     "RiskLevel",
@@ -42,4 +43,5 @@ __all__ = [
     "EmergencyConfig",
     "EmergencyStop",
     "EmergencyStopStatus",
+    "RiskEngine",
 ]
