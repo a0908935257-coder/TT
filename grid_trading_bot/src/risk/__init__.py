@@ -9,6 +9,7 @@ Provides global risk management for the grid trading bot system:
 """
 
 from src.risk.capital_monitor import CapitalMonitor
+from src.risk.drawdown_calculator import DrawdownCalculator
 from src.risk.models import (
     CapitalSnapshot,
     CircuitBreakerState,
@@ -32,4 +33,5 @@ __all__ = [
     "CircuitBreakerState",
     "GlobalRiskStatus",
     "CapitalMonitor",
+    "DrawdownCalculator",
 ]
