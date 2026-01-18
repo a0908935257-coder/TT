@@ -49,6 +49,10 @@ from .commander import (
     BotCommander,
     CommandResult,
 )
+from .master import (
+    Master,
+    MasterConfig,
+)
 
 __all__ = [
     # Models
@@ -90,4 +94,7 @@ __all__ = [
     # Commander
     "BotCommander",
     "CommandResult",
+    # Master
+    "Master",
+    "MasterConfig",
 ]
