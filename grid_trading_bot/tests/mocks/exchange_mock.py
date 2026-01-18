@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Optional
 
-from core.models import Balance, Kline, MarketType, Order, OrderSide, OrderStatus, OrderType, SymbolInfo
+from src.core.models import Balance, Kline, MarketType, Order, OrderSide, OrderStatus, OrderType, SymbolInfo
 
 
 @dataclass

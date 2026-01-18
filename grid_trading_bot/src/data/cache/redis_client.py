@@ -12,7 +12,7 @@ from typing import Any, Callable, Optional, Union
 import redis.asyncio as redis
 from redis.asyncio.client import PubSub
 
-from core import get_logger
+from src.core import get_logger
 
 logger = get_logger(__name__)
 

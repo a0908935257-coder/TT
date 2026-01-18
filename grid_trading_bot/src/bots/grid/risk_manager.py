@@ -12,9 +12,9 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Callable, Optional
 
-from core import get_logger
-from core.models import Kline, MarketType, OrderSide
-from notification import NotificationManager
+from src.core import get_logger
+from src.core.models import Kline, MarketType, OrderSide
+from src.notification import NotificationManager
 
 from .models import DynamicAdjustConfig
 from .order_manager import GridOrderManager

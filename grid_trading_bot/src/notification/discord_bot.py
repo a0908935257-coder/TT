@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
-from core import get_logger
+from src.core import get_logger
 
 logger = get_logger(__name__)
 

@@ -7,7 +7,7 @@ import hmac
 import time
 from urllib.parse import urlencode
 
-from core.utils import now_timestamp
+from src.core.utils import now_timestamp
 
 
 class BinanceAuth:

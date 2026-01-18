@@ -7,8 +7,8 @@ Provides caching for market data including tickers, orderbooks, and prices.
 from decimal import Decimal
 from typing import Any, Optional
 
-from core import get_logger
-from core.models import Ticker
+from src.core import get_logger
+from src.core.models import Ticker
 
 from .redis_client import RedisManager
 

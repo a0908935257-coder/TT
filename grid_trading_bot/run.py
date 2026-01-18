@@ -17,14 +17,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from dotenv import load_dotenv
 
 from core import get_logger
-from core.models import MarketType
+from src.core.models import MarketType
 from data import MarketDataManager
 from exchange import ExchangeClient
 from notification import NotificationManager
-from notification.discord_bot import TradingDiscordBot
-from strategy.grid.bot import GridBot, GridBotConfig
-from strategy.grid.models import GridType, RiskLevel, ATRConfig
-from strategy.grid.risk_manager import RiskConfig, BreakoutAction
+from src.notification.discord_bot import TradingDiscordBot
+from src.bots.grid.bot import GridBot, GridBotConfig
+from src.bots.grid.models import GridType, RiskLevel, ATRConfig
+from src.bots.grid.risk_manager import RiskConfig, BreakoutAction
 
 # Load environment variables
 load_dotenv()

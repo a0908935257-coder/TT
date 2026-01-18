@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from core.models import (
+from src.core.models import (
     Balance as DomainBalance,
     Kline as DomainKline,
     KlineInterval,

@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Optional, Protocol, TypeVar
 
-from core import get_logger
+from src.core import get_logger
 
 from .models import (
     BotAlreadyExistsError,

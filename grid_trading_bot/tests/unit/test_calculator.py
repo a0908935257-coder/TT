@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.strategy.grid import (
+from src.bots.grid import (
     GridConfig,
     GridSetup,
     GridType,

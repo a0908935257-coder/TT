@@ -13,8 +13,8 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core.logger import setup_logger, get_logger, Colors
-from core.exceptions import (
+from src.core.logger import setup_logger, get_logger, Colors
+from src.core.exceptions import (
     TradingBotError,
     ExchangeError,
     ConnectionError,
@@ -28,7 +28,7 @@ from core.exceptions import (
     ConfigError,
     StrategyError,
 )
-from core.utils import (
+from src.core.utils import (
     timestamp_to_datetime,
     datetime_to_timestamp,
     now_timestamp,

@@ -9,8 +9,8 @@ from typing import Any, Optional
 
 from sqlalchemy import select, update
 
-from core import get_logger
-from data.database import BotStateModel, DatabaseManager
+from src.core import get_logger
+from src.data.database import BotStateModel, DatabaseManager
 
 from .base import BaseRepository
 

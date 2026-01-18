@@ -9,7 +9,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Literal, Optional
 
-from core import get_logger
+from src.core import get_logger
 
 logger = get_logger(__name__)
 

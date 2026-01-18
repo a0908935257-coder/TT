@@ -15,8 +15,8 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from exchange.binance.auth import BinanceAuth
-from exchange.binance.constants import (
+from src.exchange.binance.auth import BinanceAuth
+from src.exchange.binance.constants import (
     BINANCE_ERROR_CODES,
     PRIVATE_ENDPOINTS,
     PUBLIC_ENDPOINTS,
@@ -26,15 +26,15 @@ from exchange.binance.constants import (
     PrivateEndpoints,
     PublicEndpoints,
 )
-from exchange.binance.spot_api import BinanceSpotAPI
-from core.exceptions import (
+from src.exchange.binance.spot_api import BinanceSpotAPI
+from src.core.exceptions import (
     AuthenticationError,
     ExchangeError,
     InsufficientBalanceError,
     OrderError,
     RateLimitError,
 )
-from core.models import KlineInterval
+from src.core.models import KlineInterval
 
 
 # =============================================================================

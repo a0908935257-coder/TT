@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models import MarketType
+from src.core.models import MarketType
 
-from src.strategy.grid import (
+from src.bots.grid import (
     ATRConfig,
     ATRData,
     DynamicAdjustConfig,
@@ -30,7 +30,7 @@ from src.strategy.grid import (
     LevelState,
     RiskLevel,
 )
-from src.strategy.grid.risk_manager import (
+from src.bots.grid.risk_manager import (
     BreakoutAction,
     GridRiskManager,
     RebuildRecord,
@@ -47,7 +47,7 @@ from tests.mocks import MockDataManager, MockExchangeClient, MockNotifier
 @pytest.fixture
 def mock_order_manager(mock_exchange: MockExchangeClient, mock_data_manager: MockDataManager, mock_notifier: MockNotifier):
     """Create a mock order manager with a grid setup."""
-    from src.strategy.grid import GridOrderManager
+    from src.bots.grid import GridOrderManager
 
     order_manager = GridOrderManager(
         exchange=mock_exchange,
@@ -630,7 +630,7 @@ class TestEdgeCases:
 
     def test_no_setup_returns_none(self, mock_notifier: MockNotifier):
         """Test that check returns None when no setup exists."""
-        from src.strategy.grid import GridOrderManager
+        from src.bots.grid import GridOrderManager
 
         # Create order manager without setup
         order_manager = MagicMock()

@@ -11,8 +11,8 @@ from typing import Optional
 
 import aiohttp
 
-from core import get_logger
-from core.exceptions import (
+from src.core import get_logger
+from src.core.exceptions import (
     AuthenticationError,
     ConnectionError,
     ExchangeError,
@@ -20,7 +20,7 @@ from core.exceptions import (
     OrderError,
     RateLimitError,
 )
-from core.models import (
+from src.core.models import (
     AccountInfo,
     Balance,
     Kline,
@@ -34,7 +34,7 @@ from core.models import (
     Ticker,
     Trade,
 )
-from core.utils import timestamp_to_datetime
+from src.core.utils import timestamp_to_datetime
 
 from .auth import BinanceAuth
 from .constants import (

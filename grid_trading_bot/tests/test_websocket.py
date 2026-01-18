@@ -14,14 +14,14 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from exchange.binance.websocket import BinanceWebSocket
-from exchange.binance.constants import (
+from src.exchange.binance.websocket import BinanceWebSocket
+from src.exchange.binance.constants import (
     SPOT_WS_URL,
     SPOT_WS_TESTNET_URL,
     FUTURES_WS_URL,
     FUTURES_WS_TESTNET_URL,
 )
-from core.models import MarketType, KlineInterval, Ticker, Kline
+from src.core.models import MarketType, KlineInterval, Ticker, Kline
 
 
 # =============================================================================

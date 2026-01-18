@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models import MarketType, Order, OrderSide, OrderStatus, OrderType
-from src.strategy.grid import (
+from src.core.models import MarketType, Order, OrderSide, OrderStatus, OrderType
+from src.bots.grid import (
     FilledRecord,
     GridConfig,
     GridLevel,

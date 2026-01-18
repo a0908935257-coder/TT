@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models import Balance, Position, Ticker
-from data.cache import AccountCache, MarketCache, RedisManager
+from src.core.models import Balance, Position, Ticker
+from src.data.cache import AccountCache, MarketCache, RedisManager
 
 
 # =============================================================================

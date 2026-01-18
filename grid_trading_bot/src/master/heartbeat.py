@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional, Protocol
 
-from core import get_logger
+from src.core import get_logger
 
 from .models import BotState
 from .registry import BotRegistry

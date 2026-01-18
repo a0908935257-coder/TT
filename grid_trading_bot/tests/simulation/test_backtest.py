@@ -12,8 +12,8 @@ from typing import Optional
 
 import pytest
 
-from core.models import Kline, MarketType, OrderSide
-from src.strategy.grid import (
+from src.core.models import Kline, MarketType, OrderSide
+from src.bots.grid import (
     GridBotConfig,
     GridConfig,
     GridType,

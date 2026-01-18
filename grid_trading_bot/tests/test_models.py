@@ -13,7 +13,7 @@ from pydantic import ValidationError
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core.models import (
+from src.core.models import (
     # Enums
     OrderSide,
     OrderType,

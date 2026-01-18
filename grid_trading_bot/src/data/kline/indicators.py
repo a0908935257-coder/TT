@@ -8,7 +8,7 @@ from K-line (candlestick) data.
 from decimal import Decimal
 from typing import Optional
 
-from core.models import Kline
+from src.core.models import Kline
 
 
 class TechnicalIndicators:

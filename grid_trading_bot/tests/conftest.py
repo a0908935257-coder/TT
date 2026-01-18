@@ -10,9 +10,9 @@ from typing import Optional
 
 import pytest
 
-from core.models import Kline, MarketType
+from src.core.models import Kline, MarketType
 
-from src.strategy.grid import (
+from src.bots.grid import (
     ATRConfig,
     ATRData,
     DynamicAdjustConfig,

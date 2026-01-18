@@ -10,8 +10,8 @@ from typing import Any, Optional
 
 import aiohttp
 
-from core import get_logger
-from notification.base import BaseNotifier, NotificationLevel
+from src.core import get_logger
+from src.notification.base import BaseNotifier, NotificationLevel
 
 from .embed import DiscordEmbed, EmbedColor
 

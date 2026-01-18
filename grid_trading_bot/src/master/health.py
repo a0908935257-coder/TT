@@ -17,7 +17,7 @@ except ImportError:
     HAS_PSUTIL = False
     psutil = None  # type: ignore
 
-from core import get_logger
+from src.core import get_logger
 
 from .models import BotState
 from .registry import BotRegistry

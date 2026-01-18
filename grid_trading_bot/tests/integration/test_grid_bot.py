@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models import MarketType, Order, OrderSide, OrderStatus, OrderType
-from src.strategy.grid import (
+from src.core.models import MarketType, Order, OrderSide, OrderStatus, OrderType
+from src.bots.grid import (
     BotState,
     BreakoutDirection,
     GridBot,
@@ -688,7 +688,7 @@ class TestBotDynamicAdjustment:
     @pytest.fixture
     def dynamic_bot_config(self):
         """Create a bot config with dynamic adjustment enabled."""
-        from src.strategy.grid import ATRConfig, DynamicAdjustConfig
+        from src.bots.grid import ATRConfig, DynamicAdjustConfig
 
         return GridBotConfig(
             symbol="BTCUSDT",
@@ -817,7 +817,7 @@ class TestBotDynamicAdjustment:
 
         # Simulate 3 successful rebuilds via the risk manager
         from datetime import datetime, timezone
-        from src.strategy.grid.risk_manager import RebuildRecord
+        from src.bots.grid.risk_manager import RebuildRecord
 
         for i in range(3):
             record = RebuildRecord(
@@ -853,7 +853,7 @@ class TestBotDynamicAdjustment:
         """
         Test that K-line close event can trigger dynamic adjustment.
         """
-        from core.models import Kline
+        from src.core.models import Kline
         from datetime import datetime, timezone
 
         await dynamic_bot.start()

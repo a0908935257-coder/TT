@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from core import get_logger
+from src.core import get_logger
 
 logger = get_logger(__name__)
 

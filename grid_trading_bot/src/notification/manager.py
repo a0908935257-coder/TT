@@ -11,7 +11,7 @@ import time
 from decimal import Decimal
 from typing import Any, Optional
 
-from core import get_logger
+from src.core import get_logger
 
 from .base import NotificationLevel
 from .discord import DiscordNotifier

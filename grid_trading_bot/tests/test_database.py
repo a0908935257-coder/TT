@@ -13,8 +13,8 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from data.database.connection import DatabaseManager
-from data.database.models import (
+from src.data.database.connection import DatabaseManager
+from src.data.database.models import (
     Base,
     BalanceModel,
     BotStateModel,
@@ -23,7 +23,7 @@ from data.database.models import (
     PositionModel,
     TradeModel,
 )
-from core.models import (
+from src.core.models import (
     Balance,
     Kline,
     KlineInterval,

@@ -10,9 +10,9 @@ from typing import Optional
 
 from sqlalchemy import and_, func, select
 
-from core import get_logger
-from core.models import Balance, MarketType
-from data.database import BalanceModel, DatabaseManager
+from src.core import get_logger
+from src.core.models import Balance, MarketType
+from src.data.database import BalanceModel, DatabaseManager
 
 from .base import BaseRepository
 

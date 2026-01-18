@@ -13,21 +13,21 @@ import pytest
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from exchange.binance.futures_api import BinanceFuturesAPI
-from exchange.binance.constants import (
+from src.exchange.binance.futures_api import BinanceFuturesAPI
+from src.exchange.binance.constants import (
     FUTURES_REST_URL,
     FUTURES_TESTNET_URL,
     FUTURES_PUBLIC_ENDPOINTS,
     FUTURES_PRIVATE_ENDPOINTS,
 )
-from core.exceptions import (
+from src.core.exceptions import (
     AuthenticationError,
     ExchangeError,
     InsufficientBalanceError,
     OrderError,
     RateLimitError,
 )
-from core.models import KlineInterval, PositionSide
+from src.core.models import KlineInterval, PositionSide
 
 
 # =============================================================================

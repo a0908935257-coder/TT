@@ -13,14 +13,14 @@ from typing import Any, Callable, Optional
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from core import get_logger
-from core.models import (
+from src.core import get_logger
+from src.core.models import (
     Kline,
     KlineInterval,
     MarketType,
     Ticker,
 )
-from core.utils import timestamp_to_datetime
+from src.core.utils import timestamp_to_datetime
 
 from .constants import (
     FUTURES_WS_TESTNET_URL,

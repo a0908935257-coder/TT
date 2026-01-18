@@ -17,8 +17,8 @@ from decimal import Decimal
 
 import pytest
 
-from core.models import Kline, MarketType, Order, OrderSide, OrderStatus
-from src.strategy.grid import (
+from src.core.models import Kline, MarketType, Order, OrderSide, OrderStatus
+from src.bots.grid import (
     ATRConfig,
     BotState,
     BreakoutDirection,
@@ -312,7 +312,7 @@ class TestFullTradingFlow:
         print("\n========== Step 5: Test Cooldown Mechanism ==========")
 
         # Simulate additional breakouts to reach cooldown limit
-        from src.strategy.grid.risk_manager import RebuildRecord
+        from src.bots.grid.risk_manager import RebuildRecord
 
         # Manually add rebuild records to test cooldown
         for i in range(2):  # Add 2 more to reach 3 total

@@ -9,8 +9,8 @@ import asyncio
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Optional
 
-from core import get_logger
-from core.models import (
+from src.core import get_logger
+from src.core.models import (
     AccountInfo,
     Balance,
     Kline,

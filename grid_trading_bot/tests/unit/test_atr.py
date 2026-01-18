@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from src.strategy.grid import ATRCalculator, ATRConfig, ATRData, GridConfig, RiskLevel
+from src.bots.grid import ATRCalculator, ATRConfig, ATRData, GridConfig, RiskLevel
 
 
 class TestATRCalculator:

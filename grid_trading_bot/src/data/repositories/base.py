@@ -11,8 +11,8 @@ from typing import Generic, Optional, TypeVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core import get_logger
-from data.database import DatabaseManager
+from src.core import get_logger
+from src.data.database import DatabaseManager
 
 logger = get_logger(__name__)
 

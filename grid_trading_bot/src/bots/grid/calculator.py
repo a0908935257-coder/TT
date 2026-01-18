@@ -8,7 +8,7 @@ price levels, and pyramid fund allocation.
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import Any, Optional, Sequence
 
-from core import get_logger
+from src.core import get_logger
 
 from .atr import ATRCalculator
 from .exceptions import (
