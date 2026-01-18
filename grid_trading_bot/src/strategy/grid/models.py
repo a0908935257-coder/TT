@@ -369,12 +369,23 @@ class DynamicAdjustConfig:
         - Maximum rebuilds within cooldown period
         - If limit reached, wait until oldest rebuild expires
 
+    Check Interval Options:
+        - "kline_close": Check at each K-line close (recommended)
+        - "realtime": Real-time price monitoring
+        - "interval_30s": Check every 30 seconds
+
+    Validation Rules:
+        - breakout_threshold: 0.01 <= threshold <= 0.20 (1% - 20%)
+        - cooldown_days: 1 <= days <= 30
+        - max_rebuilds: 1 <= max <= 10
+
     Example:
         >>> config = DynamicAdjustConfig(
         ...     enabled=True,
         ...     breakout_threshold=Decimal("0.04"),  # 4%
         ...     cooldown_days=7,
         ...     max_rebuilds=3,
+        ...     check_interval="kline_close",
         ... )
     """
 
@@ -382,11 +393,39 @@ class DynamicAdjustConfig:
     breakout_threshold: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4%
     cooldown_days: int = 7
     max_rebuilds: int = 3
+    check_interval: str = "kline_close"  # "kline_close", "realtime", "interval_30s"
 
     def __post_init__(self):
-        """Ensure Decimal types."""
+        """Ensure Decimal types and validate parameters."""
         if not isinstance(self.breakout_threshold, Decimal):
             self.breakout_threshold = Decimal(str(self.breakout_threshold))
+
+        # Validate breakout_threshold: 1% - 20%
+        if not (Decimal("0.01") <= self.breakout_threshold <= Decimal("0.20")):
+            raise ValueError(
+                f"breakout_threshold must be between 0.01 (1%) and 0.20 (20%), "
+                f"got {self.breakout_threshold}"
+            )
+
+        # Validate cooldown_days: 1 - 30
+        if not (1 <= self.cooldown_days <= 30):
+            raise ValueError(
+                f"cooldown_days must be between 1 and 30, got {self.cooldown_days}"
+            )
+
+        # Validate max_rebuilds: 1 - 10
+        if not (1 <= self.max_rebuilds <= 10):
+            raise ValueError(
+                f"max_rebuilds must be between 1 and 10, got {self.max_rebuilds}"
+            )
+
+        # Validate check_interval
+        valid_intervals = {"kline_close", "realtime", "interval_30s"}
+        if self.check_interval not in valid_intervals:
+            raise ValueError(
+                f"check_interval must be one of {valid_intervals}, "
+                f"got '{self.check_interval}'"
+            )
 
 
 # =============================================================================

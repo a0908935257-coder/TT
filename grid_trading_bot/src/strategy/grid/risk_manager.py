@@ -1707,6 +1707,70 @@ class GridRiskManager:
 
         return removed
 
+    def get_remaining_rebuilds(self) -> int:
+        """
+        Get the number of remaining rebuilds allowed.
+
+        Returns:
+            Number of rebuilds still available within cooldown period
+        """
+        if self._dynamic_adjust_config:
+            max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+        else:
+            max_rebuilds = self._config.max_rebuilds_in_period
+
+        used = self.rebuilds_in_cooldown_period
+        return max(0, max_rebuilds - used)
+
+    def get_cooldown_status(self) -> dict:
+        """
+        Get comprehensive cooldown status.
+
+        Returns:
+            Dict with cooldown state information:
+            - is_cooling_down: Whether currently in cooldown
+            - rebuilds_used: Number of rebuilds used in period
+            - rebuilds_remaining: Number of rebuilds still allowed
+            - cooldown_period_days: Cooldown period in days
+            - oldest_record_expires: When oldest rebuild record expires
+            - next_available_rebuild: When next rebuild will be available (if in cooldown)
+            - recent_records: List of rebuild records within cooldown period
+        """
+        # Get config values
+        if self._dynamic_adjust_config:
+            cooldown_days = self._dynamic_adjust_config.cooldown_days
+            max_rebuilds = self._dynamic_adjust_config.max_rebuilds
+        else:
+            cooldown_days = self._config.cooldown_days
+            max_rebuilds = self._config.max_rebuilds_in_period
+
+        # Get recent rebuilds
+        recent = self._get_recent_rebuilds()
+        rebuilds_used = len(recent)
+        rebuilds_remaining = max(0, max_rebuilds - rebuilds_used)
+        is_cooling_down = rebuilds_remaining == 0
+
+        # Calculate oldest record expiry
+        oldest_record_expires = None
+        if recent:
+            oldest = min(recent, key=lambda r: r.timestamp)
+            oldest_record_expires = oldest.timestamp + timedelta(days=cooldown_days)
+
+        # Next available rebuild time
+        next_available = None
+        if is_cooling_down and oldest_record_expires:
+            next_available = oldest_record_expires
+
+        return {
+            "is_cooling_down": is_cooling_down,
+            "rebuilds_used": rebuilds_used,
+            "rebuilds_remaining": rebuilds_remaining,
+            "cooldown_period_days": cooldown_days,
+            "oldest_record_expires": oldest_record_expires,
+            "next_available_rebuild": next_available,
+            "recent_records": recent,
+        }
+
     def check_dynamic_adjust_trigger(
         self,
         current_price: Decimal,
