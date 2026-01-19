@@ -16,6 +16,7 @@ class BotType(str, Enum):
     """Bot type enumeration."""
 
     GRID = "grid"                    # Grid trading bot
+    BOLLINGER = "bollinger"          # Bollinger mean reversion bot
     DCA = "dca"                      # Dollar-cost averaging bot
     TRAILING_STOP = "trailing_stop"  # Trailing stop bot
     SIGNAL = "signal"                # Signal following bot

@@ -102,6 +102,7 @@ class BotFactory:
         # Registry of bot creators
         self._creators: dict[BotType, callable] = {
             BotType.GRID: self._create_grid_bot,
+            BotType.BOLLINGER: self._create_bollinger_bot,
             BotType.DCA: self._create_dca_bot,
             BotType.TRAILING_STOP: self._create_trailing_stop_bot,
             BotType.SIGNAL: self._create_signal_bot,
@@ -208,6 +209,53 @@ class BotFactory:
         bot = GridBot(
             bot_id=bot_id,
             config=grid_config,
+            exchange=self._exchange,
+            data_manager=self._data_manager,
+            notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
+        )
+
+        return bot
+
+    def _create_bollinger_bot(
+        self,
+        bot_id: str,
+        config: dict[str, Any],
+    ) -> BotProtocol:
+        """
+        Create a BollingerBot instance.
+
+        Args:
+            bot_id: Bot identifier
+            config: Bollinger bot configuration
+
+        Returns:
+            BollingerBot instance
+        """
+        # Import here to avoid circular imports
+        from decimal import Decimal
+
+        from src.bots.bollinger.bot import BollingerBot
+        from src.bots.bollinger.models import BollingerConfig
+
+        # Build BollingerConfig from dict
+        bollinger_config = BollingerConfig(
+            symbol=config["symbol"],
+            timeframe=config.get("timeframe", "15m"),
+            leverage=int(config.get("leverage", 2)),
+            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            bb_period=int(config.get("bb_period", 20)),
+            bb_std=Decimal(str(config.get("bb_std", "2.0"))),
+            bbw_lookback=int(config.get("bbw_lookback", 100)),
+            bbw_threshold_pct=Decimal(str(config.get("bbw_threshold_pct", "0.25"))),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),
+            timeout_bars=int(config.get("timeout_bars", 10)),
+        )
+
+        # Create bot instance
+        bot = BollingerBot(
+            bot_id=bot_id,
+            config=bollinger_config,
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,

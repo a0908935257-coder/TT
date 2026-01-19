@@ -32,6 +32,7 @@ from .indicators import (
 from .signal_generator import SignalGenerator
 from .position_manager import PositionManager, PositionExistsError, NoPositionError
 from .order_executor import OrderExecutor, OrderNotFoundError
+from .bot import BollingerBot
 
 __all__ = [
     # Models
@@ -58,4 +59,6 @@ __all__ = [
     # Order Executor
     "OrderExecutor",
     "OrderNotFoundError",
+    # Bot
+    "BollingerBot",
 ]
