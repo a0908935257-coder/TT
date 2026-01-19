@@ -64,7 +64,7 @@ def create_klines(prices: list[float]) -> list[MockKline]:
 
 @pytest.fixture
 def config() -> BollingerConfig:
-    """Create default config."""
+    """Create default config (with new filters disabled for legacy tests)."""
     return BollingerConfig(
         symbol="BTCUSDT",
         timeframe="15m",
@@ -76,6 +76,8 @@ def config() -> BollingerConfig:
         bbw_threshold_pct=20,
         stop_loss_pct=Decimal("0.015"),
         max_hold_bars=16,
+        use_trend_filter=False,  # Disable for legacy tests
+        use_atr_stop=False,  # Disable for legacy tests
     )
 
 

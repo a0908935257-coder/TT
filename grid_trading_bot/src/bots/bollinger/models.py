@@ -57,34 +57,52 @@ class BollingerConfig:
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "15m")
-        bb_period: Bollinger Band period (default 20)
+        timeframe: Kline timeframe (default "1h")
+        bb_period: Bollinger Band period (default 15)
         bb_std: Standard deviation multiplier (default 2.0)
         bbw_lookback: BBW history lookback period (default 200)
         bbw_threshold_pct: BBW squeeze threshold percentile (default 20)
-        stop_loss_pct: Stop loss percentage (default 1.5%)
-        max_hold_bars: Maximum bars to hold position (default 16)
+        stop_loss_pct: Stop loss percentage (default 1.5%, fallback if ATR disabled)
+        max_hold_bars: Maximum bars to hold position (default 24)
         leverage: Futures leverage (default 2)
         position_size_pct: Position size as percentage of balance (default 10%)
+
+        # Trend Filter (optimized)
+        use_trend_filter: Enable trend filter (default True)
+        trend_period: SMA period for trend detection (default 50)
+
+        # ATR Stop Loss (optimized)
+        use_atr_stop: Use ATR-based dynamic stop loss (default True)
+        atr_period: ATR calculation period (default 14)
+        atr_multiplier: ATR multiplier for stop distance (default 2.5)
 
     Example:
         >>> config = BollingerConfig(
         ...     symbol="BTCUSDT",
         ...     leverage=3,
-        ...     stop_loss_pct=Decimal("0.02"),
+        ...     use_trend_filter=True,
         ... )
     """
 
     symbol: str
-    timeframe: str = "15m"
-    bb_period: int = 20
+    timeframe: str = "1h"  # Optimized: 1h has better signal quality
+    bb_period: int = 15  # Optimized: shorter period is more responsive
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.015"))
-    max_hold_bars: int = 16
+    max_hold_bars: int = 24  # Optimized: longer hold time
     leverage: int = 2
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+
+    # Trend Filter
+    use_trend_filter: bool = True
+    trend_period: int = 50
+
+    # ATR Stop Loss
+    use_atr_stop: bool = True
+    atr_period: int = 14
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.5"))
 
     def __post_init__(self):
         """Validate and normalize configuration."""
@@ -95,6 +113,8 @@ class BollingerConfig:
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.position_size_pct, Decimal):
             self.position_size_pct = Decimal(str(self.position_size_pct))
+        if not isinstance(self.atr_multiplier, Decimal):
+            self.atr_multiplier = Decimal(str(self.atr_multiplier))
 
         self._validate()
 
@@ -127,6 +147,17 @@ class BollingerConfig:
         valid_timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
         if self.timeframe not in valid_timeframes:
             raise ValueError(f"timeframe must be one of {valid_timeframes}")
+
+        # Trend filter validation
+        if self.trend_period < 10 or self.trend_period > 200:
+            raise ValueError(f"trend_period must be 10-200, got {self.trend_period}")
+
+        # ATR validation
+        if self.atr_period < 5 or self.atr_period > 50:
+            raise ValueError(f"atr_period must be 5-50, got {self.atr_period}")
+
+        if self.atr_multiplier < Decimal("0.5") or self.atr_multiplier > Decimal("5.0"):
+            raise ValueError(f"atr_multiplier must be 0.5-5.0, got {self.atr_multiplier}")
 
 
 # =============================================================================
@@ -220,6 +251,8 @@ class Signal:
         bbw: BBW data at signal time
         timestamp: Signal timestamp
         reason: Signal reason description
+        trend_sma: Trend SMA value (for trend filter)
+        atr: ATR value (for dynamic stop loss)
     """
 
     signal_type: SignalType
@@ -230,6 +263,8 @@ class Signal:
     entry_price: Optional[Decimal] = None
     take_profit: Optional[Decimal] = None
     stop_loss: Optional[Decimal] = None
+    trend_sma: Optional[Decimal] = None
+    atr: Optional[Decimal] = None
 
     def __post_init__(self):
         """Ensure Decimal types."""
@@ -239,6 +274,10 @@ class Signal:
             self.take_profit = Decimal(str(self.take_profit))
         if self.stop_loss is not None and not isinstance(self.stop_loss, Decimal):
             self.stop_loss = Decimal(str(self.stop_loss))
+        if self.trend_sma is not None and not isinstance(self.trend_sma, Decimal):
+            self.trend_sma = Decimal(str(self.trend_sma))
+        if self.atr is not None and not isinstance(self.atr, Decimal):
+            self.atr = Decimal(str(self.atr))
 
     @property
     def is_valid(self) -> bool:

@@ -276,6 +276,72 @@ class BollingerCalculator:
 
         return bands, bbw
 
+    def calculate_sma(
+        self, klines: List[KlineProtocol], period: int
+    ) -> Optional[Decimal]:
+        """
+        Calculate Simple Moving Average for trend detection.
+
+        Args:
+            klines: List of Kline data
+            period: SMA period (e.g., 50 for trend filter)
+
+        Returns:
+            SMA value, or None if insufficient data
+        """
+        if len(klines) < period:
+            return None
+
+        closes = [k.close for k in klines[-period:]]
+        closes = [
+            c if isinstance(c, Decimal) else Decimal(str(c))
+            for c in closes
+        ]
+
+        return sum(closes) / Decimal(len(closes))
+
+    def calculate_atr(
+        self, klines: List[KlineProtocol], period: int = 14
+    ) -> Optional[Decimal]:
+        """
+        Calculate Average True Range (ATR) for dynamic stop loss.
+
+        ATR measures volatility by considering:
+        - Current high - current low
+        - Absolute value of current high - previous close
+        - Absolute value of current low - previous close
+
+        Args:
+            klines: List of Kline data
+            period: ATR period (default 14)
+
+        Returns:
+            ATR value, or None if insufficient data
+        """
+        if len(klines) < period + 1:
+            return None
+
+        true_ranges = []
+
+        for i in range(-period, 0):
+            kline = klines[i]
+            prev_close = klines[i - 1].close
+
+            # Ensure Decimal types
+            high = kline.high if isinstance(kline.high, Decimal) else Decimal(str(kline.high))
+            low = kline.low if isinstance(kline.low, Decimal) else Decimal(str(kline.low))
+            prev_close = prev_close if isinstance(prev_close, Decimal) else Decimal(str(prev_close))
+
+            # True Range = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr1 = high - low
+            tr2 = abs(high - prev_close)
+            tr3 = abs(low - prev_close)
+
+            true_ranges.append(max(tr1, tr2, tr3))
+
+        # ATR = Simple average of True Ranges
+        return sum(true_ranges) / Decimal(len(true_ranges))
+
     # =========================================================================
     # Initialization
     # =========================================================================
