@@ -52,16 +52,23 @@ class NoPositionError(Exception):
 # =============================================================================
 
 
+class FuturesAPIProtocol(Protocol):
+    """Protocol for futures API."""
+
+    async def set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]: ...
+
+    async def set_margin_type(self, symbol: str, margin_type: str) -> Dict[str, Any]: ...
+
+    async def get_account(self) -> Any: ...
+
+    async def get_positions(self, symbol: str) -> list: ...
+
+
 class ExchangeProtocol(Protocol):
     """Protocol for exchange client."""
 
-    async def futures_set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]: ...
-
-    async def futures_set_margin_type(self, symbol: str, margin_type: str) -> Dict[str, Any]: ...
-
-    async def futures_get_account(self) -> Any: ...
-
-    async def futures_get_positions(self, symbol: str) -> list: ...
+    @property
+    def futures(self) -> FuturesAPIProtocol: ...
 
     async def get_ticker(self, symbol: str) -> Any: ...
 
@@ -145,7 +152,7 @@ class PositionManager:
 
         # 1. Set leverage
         try:
-            await self._exchange.futures_set_leverage(
+            await self._exchange.futures.set_leverage(
                 symbol=symbol,
                 leverage=self._leverage,
             )
@@ -155,7 +162,7 @@ class PositionManager:
 
         # 2. Set margin type to ISOLATED
         try:
-            await self._exchange.futures_set_margin_type(
+            await self._exchange.futures.set_margin_type(
                 symbol=symbol,
                 margin_type="ISOLATED",
             )
@@ -193,7 +200,7 @@ class PositionManager:
             entry_price = Decimal(str(entry_price))
 
         # Get account balance
-        account = await self._exchange.futures_get_account()
+        account = await self._exchange.futures.get_account()
         available_balance = Decimal(str(account.available_balance))
 
         # Calculate position value
@@ -371,7 +378,7 @@ class PositionManager:
             return {"status": "no_position"}
 
         try:
-            positions = await self._exchange.futures_get_positions(
+            positions = await self._exchange.futures.get_positions(
                 symbol=self._config.symbol
             )
 
@@ -408,7 +415,7 @@ class PositionManager:
         Useful for recovery after restart.
         """
         try:
-            positions = await self._exchange.futures_get_positions(
+            positions = await self._exchange.futures.get_positions(
                 symbol=self._config.symbol
             )
 

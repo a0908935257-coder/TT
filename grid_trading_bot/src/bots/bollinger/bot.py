@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from src.bots.base import BaseBot, BotStats
 from src.core import get_logger
+from src.core.models import MarketType
 from src.master.models import BotState
 
 from .indicators import BollingerCalculator
@@ -86,9 +87,9 @@ class ExchangeProtocol(Protocol):
 
     async def get_klines(self, symbol: str, interval: str, limit: int) -> List[Any]: ...
 
-    async def subscribe_klines(self, symbol: str, interval: str, callback: Callable) -> None: ...
+    async def subscribe_kline(self, symbol: str, interval: str, callback: Callable) -> None: ...
 
-    async def unsubscribe_klines(self, symbol: str, interval: str) -> None: ...
+    async def unsubscribe_kline(self, symbol: str, interval: str) -> None: ...
 
     async def subscribe_user_data(self, callback: Callable) -> None: ...
 
@@ -198,11 +199,12 @@ class BollingerBot(BaseBot):
         # 1. Initialize position manager (set leverage, margin type)
         await self._position_manager.initialize()
 
-        # 2. Get historical klines
+        # 2. Get historical klines (futures market)
         klines = await self._exchange.get_klines(
             symbol=self._config.symbol,
             interval=self._config.timeframe,
             limit=300,
+            market=MarketType.FUTURES,
         )
         self._klines = klines
 
@@ -212,11 +214,12 @@ class BollingerBot(BaseBot):
         # 4. Set current bar number
         self._current_bar = len(klines)
 
-        # 5. Subscribe to kline updates
-        await self._exchange.subscribe_klines(
+        # 5. Subscribe to kline updates (futures market)
+        await self._exchange.subscribe_kline(
             symbol=self._config.symbol,
             interval=self._config.timeframe,
             callback=self._on_kline,
+            market=MarketType.FUTURES,
         )
 
         # 6. Subscribe to user data (order updates)
@@ -253,11 +256,12 @@ class BollingerBot(BaseBot):
                 await self._order_executor.close_position_market(position)
                 await self._position_manager.close_position("Bot 停止")
 
-        # 3. Unsubscribe from klines
+        # 3. Unsubscribe from klines (futures market)
         try:
-            await self._exchange.unsubscribe_klines(
+            await self._exchange.unsubscribe_kline(
                 symbol=self._config.symbol,
                 interval=self._config.timeframe,
+                market=MarketType.FUTURES,
             )
         except Exception as e:
             logger.debug(f"Unsubscribe klines: {e}")
