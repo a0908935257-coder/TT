@@ -31,6 +31,7 @@ from .indicators import (
 )
 from .signal_generator import SignalGenerator
 from .position_manager import PositionManager, PositionExistsError, NoPositionError
+from .order_executor import OrderExecutor, OrderNotFoundError
 
 __all__ = [
     # Models
@@ -54,4 +55,7 @@ __all__ = [
     "PositionManager",
     "PositionExistsError",
     "NoPositionError",
+    # Order Executor
+    "OrderExecutor",
+    "OrderNotFoundError",
 ]
