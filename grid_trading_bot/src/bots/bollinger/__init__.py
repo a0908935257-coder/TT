@@ -29,6 +29,7 @@ from .indicators import (
     BollingerCalculator,
     InsufficientDataError,
 )
+from .signal_generator import SignalGenerator
 
 __all__ = [
     # Models
@@ -46,4 +47,6 @@ __all__ = [
     "BollingerCalculator",
     "BandPosition",
     "InsufficientDataError",
+    # Signal Generator
+    "SignalGenerator",
 ]
