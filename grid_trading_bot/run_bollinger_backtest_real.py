@@ -267,7 +267,38 @@ class BollingerBacktest:
             # Calculate based on actual interval
             result.avg_holding_time = timedelta(minutes=avg_bars * 15)
 
+        # Calculate Sharpe ratio from daily PnL
+        result.sharpe_ratio = self._calculate_sharpe_ratio()
+
         return result
+
+    def _calculate_sharpe_ratio(self) -> Decimal:
+        """Calculate annualized Sharpe ratio from daily PnL."""
+        if not self._daily_pnl or len(self._daily_pnl) < 2:
+            return Decimal("0")
+
+        returns = list(self._daily_pnl.values())
+
+        # Mean daily return
+        mean_return = sum(returns) / Decimal(len(returns))
+
+        # Standard deviation of daily returns
+        variance = sum((r - mean_return) ** 2 for r in returns) / Decimal(len(returns) - 1)
+
+        if variance <= 0:
+            return Decimal("0")
+
+        import math
+        std_dev = Decimal(str(math.sqrt(float(variance))))
+
+        if std_dev == 0:
+            return Decimal("0")
+
+        # Annualized Sharpe ratio (assuming 252 trading days)
+        # Sharpe = (mean_return / std_dev) * sqrt(252)
+        sharpe = (mean_return / std_dev) * Decimal(str(math.sqrt(252)))
+
+        return sharpe
 
 
 async def fetch_klines(
@@ -349,6 +380,7 @@ def print_result(name: str, result: BollingerBacktestResult, symbol: str, interv
     print(f"  平均獲利:        {result.avg_win:+.4f} USDT")
     print(f"  平均虧損:        {result.avg_loss:.4f} USDT")
     print(f"  獲利因子:        {result.profit_factor:.2f}")
+    print(f"  夏普率:          {result.sharpe_ratio:.2f}")
     print(f"  最大回撤:        {result.max_drawdown:.2f} USDT")
     print(f"{'='*65}")
     print(f"  出場統計:")
@@ -436,8 +468,9 @@ async def main():
             print(f"|  回測天數:       {args.days:>40}   |")
             print(f"|  總交易次數:     {result.total_trades:>40}   |")
             print(f"|  總盈虧:         {str(result.total_profit) + ' USDT':>40}   |")
-            print(f"|  勝率:           {str(result.win_rate) + '%':>40}   |")
-            print(f"|  獲利因子:       {str(result.profit_factor):>40}   |")
+            print(f"|  勝率:           {str(result.win_rate.quantize(Decimal('0.01'))) + '%':>40}   |")
+            print(f"|  獲利因子:       {str(result.profit_factor.quantize(Decimal('0.01'))):>40}   |")
+            print(f"|  夏普率:         {str(result.sharpe_ratio.quantize(Decimal('0.01'))):>40}   |")
 
             # Calculate annualized return
             if args.days > 0:
