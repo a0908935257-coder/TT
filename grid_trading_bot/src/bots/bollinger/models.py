@@ -64,7 +64,7 @@ class BollingerConfig:
         bbw_threshold_pct: BBW squeeze threshold percentile (default 20)
         stop_loss_pct: Stop loss percentage (default 1.5%, fallback if ATR disabled)
         max_hold_bars: Maximum bars to hold position (default 24)
-        leverage: Futures leverage (default 2)
+        leverage: Futures leverage (default 50, isolated margin mode)
         position_size_pct: Position size as percentage of balance (default 10%)
 
         # Trend Filter (optimized)
@@ -92,8 +92,8 @@ class BollingerConfig:
     bbw_threshold_pct: int = 20
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.015"))
     max_hold_bars: int = 24  # Optimized: longer hold time
-    leverage: int = 2
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+    leverage: int = 50  # High leverage with isolated margin mode
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
 
     # Trend Filter
     use_trend_filter: bool = True
@@ -138,8 +138,8 @@ class BollingerConfig:
         if self.max_hold_bars < 1 or self.max_hold_bars > 100:
             raise ValueError(f"max_hold_bars must be 1-100, got {self.max_hold_bars}")
 
-        if self.leverage < 1 or self.leverage > 20:
-            raise ValueError(f"leverage must be 1-20, got {self.leverage}")
+        if self.leverage < 1 or self.leverage > 125:
+            raise ValueError(f"leverage must be 1-125, got {self.leverage}")
 
         if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
             raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
