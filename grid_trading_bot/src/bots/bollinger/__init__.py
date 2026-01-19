@@ -30,6 +30,7 @@ from .indicators import (
     InsufficientDataError,
 )
 from .signal_generator import SignalGenerator
+from .position_manager import PositionManager, PositionExistsError, NoPositionError
 
 __all__ = [
     # Models
@@ -49,4 +50,8 @@ __all__ = [
     "InsufficientDataError",
     # Signal Generator
     "SignalGenerator",
+    # Position Manager
+    "PositionManager",
+    "PositionExistsError",
+    "NoPositionError",
 ]
