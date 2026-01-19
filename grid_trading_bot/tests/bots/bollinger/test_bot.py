@@ -124,9 +124,9 @@ def config() -> BollingerConfig:
         bb_period=20,
         bb_std=Decimal("2.0"),
         bbw_lookback=100,
-        bbw_threshold_pct=Decimal("0.25"),
+        bbw_threshold_pct=20,
         stop_loss_pct=Decimal("0.015"),
-        timeout_bars=16,
+        max_hold_bars=16,
     )
 
 
@@ -481,7 +481,7 @@ class TestHoldTimeout:
         bot._position_manager._current_position = position
 
         # Simulate timeout_bars + 1 passing
-        for _ in range(config.timeout_bars + 2):
+        for _ in range(config.max_hold_bars + 2):
             kline = MockKline(close=Decimal("49500"), is_closed=True)
             await bot._on_kline(kline)
 
@@ -563,7 +563,7 @@ class TestStatsUpdate:
 
         assert stats["total_trades"] == 1
         assert stats["winning_trades"] == 1
-        assert stats["total_pnl"] == Decimal("10")
+        assert Decimal(str(stats["total_pnl"])) == Decimal("10")
 
 
 # =============================================================================

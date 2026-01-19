@@ -53,9 +53,9 @@ def config() -> BollingerConfig:
         bb_period=20,
         bb_std=Decimal("2.0"),
         bbw_lookback=100,
-        bbw_threshold_pct=Decimal("0.25"),
+        bbw_threshold_pct=20,
         stop_loss_pct=Decimal("0.015"),
-        timeout_bars=16,
+        max_hold_bars=16,
     )
 
 
@@ -102,8 +102,9 @@ def create_signal(signal_type: SignalType, entry_price: float) -> Signal:
         ),
         bbw=BBWData(
             bbw=Decimal("0.04"),
-            percentile=Decimal("0.5"),
+            bbw_percentile=50,
             is_squeeze=False,
+            threshold=Decimal("0.02"),
         ),
     )
 

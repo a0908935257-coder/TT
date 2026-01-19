@@ -73,9 +73,9 @@ def config() -> BollingerConfig:
         bb_period=20,
         bb_std=Decimal("2.0"),
         bbw_lookback=100,
-        bbw_threshold_pct=Decimal("0.25"),
+        bbw_threshold_pct=20,
         stop_loss_pct=Decimal("0.015"),
-        timeout_bars=16,
+        max_hold_bars=16,
     )
 
 
@@ -121,12 +121,13 @@ def create_bands(middle: float, width: float) -> BollingerBands:
     )
 
 
-def create_bbw(is_squeeze: bool, percentile: float = 0.5) -> BBWData:
+def create_bbw(is_squeeze: bool, percentile: int = 50) -> BBWData:
     """Create BBW data."""
     return BBWData(
         bbw=Decimal("0.04"),
-        percentile=Decimal(str(percentile)),
+        bbw_percentile=percentile,
         is_squeeze=is_squeeze,
+        threshold=Decimal("0.02"),
     )
 
 
@@ -528,7 +529,7 @@ class TestExitOnTimeout:
         klines = create_klines([50000] * 20)
 
         # Hold for max_hold_bars (16) + entry_bar (1) = 17
-        current_bar = position.entry_bar + config.timeout_bars + 1
+        current_bar = position.entry_bar + config.max_hold_bars + 1
 
         should_exit, reason = signal_generator_with_mock.check_exit(
             position=position,
