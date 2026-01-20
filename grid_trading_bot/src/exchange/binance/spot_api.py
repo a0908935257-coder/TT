@@ -142,7 +142,7 @@ class BinanceSpotAPI:
         Send HTTP request to Binance API.
 
         Args:
-            method: HTTP method (GET, POST, DELETE)
+            method: HTTP method (GET, POST, PUT, DELETE)
             endpoint: API endpoint path
             params: Request parameters
             signed: Whether to sign the request
@@ -188,6 +188,9 @@ class BinanceSpotAPI:
                     return await self._handle_response(resp)
             elif method == "POST":
                 async with self._session.post(url, params=params, headers=headers) as resp:
+                    return await self._handle_response(resp)
+            elif method == "PUT":
+                async with self._session.put(url, params=params, headers=headers) as resp:
                     return await self._handle_response(resp)
             elif method == "DELETE":
                 async with self._session.delete(url, params=params, headers=headers) as resp:

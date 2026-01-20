@@ -261,7 +261,7 @@ class KlineManager:
 
             # Subscribe to WebSocket kline stream
             async def on_kline(data: dict):
-                kline = Kline.from_binance(
+                kline = Kline.from_binance_ws(
                     data["k"],
                     symbol,
                     KlineInterval(interval_str),

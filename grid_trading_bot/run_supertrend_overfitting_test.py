@@ -229,7 +229,7 @@ async def main():
     config = {
         'leverage': 10,
         'position_size': 0.1,
-        'atr_period': 25,
+        'atr_period': 30,  # 優化後配置
         'atr_multiplier': 3.0,
         'use_trailing_stop': True,
         'trailing_stop_pct': 0.03,

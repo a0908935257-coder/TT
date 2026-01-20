@@ -110,6 +110,7 @@ class Kline(TradingBaseModel):
     close_time: datetime
     quote_volume: Decimal = Decimal("0")
     trades_count: int = 0
+    is_closed: bool = True  # Whether the kline is closed (final)
 
     @computed_field
     @property
@@ -146,7 +147,7 @@ class Kline(TradingBaseModel):
     @classmethod
     def from_binance(cls, data: list, symbol: str, interval: KlineInterval) -> "Kline":
         """
-        Create Kline from Binance API kline data.
+        Create Kline from Binance REST API kline data.
 
         Args:
             data: Binance kline array [open_time, open, high, low, close, volume, ...]
@@ -168,6 +169,35 @@ class Kline(TradingBaseModel):
             close_time=timestamp_to_datetime(data[6]),
             quote_volume=Decimal(str(data[7])) if len(data) > 7 else Decimal("0"),
             trades_count=int(data[8]) if len(data) > 8 else 0,
+            is_closed=True,  # REST API returns closed klines
+        )
+
+    @classmethod
+    def from_binance_ws(cls, data: dict, symbol: str, interval: KlineInterval) -> "Kline":
+        """
+        Create Kline from Binance WebSocket kline data.
+
+        Args:
+            data: Binance WebSocket kline dict with keys: t, T, o, h, l, c, v, q, n, x
+            symbol: Trading pair symbol
+            interval: Kline interval
+
+        Returns:
+            Kline instance
+        """
+        return cls(
+            symbol=symbol,
+            interval=interval,
+            open_time=timestamp_to_datetime(data["t"]),
+            open=Decimal(str(data["o"])),
+            high=Decimal(str(data["h"])),
+            low=Decimal(str(data["l"])),
+            close=Decimal(str(data["c"])),
+            volume=Decimal(str(data["v"])),
+            close_time=timestamp_to_datetime(data["T"]),
+            quote_volume=Decimal(str(data.get("q", "0"))),
+            trades_count=int(data.get("n", 0)),
+            is_closed=data.get("x", False),  # WebSocket provides is_closed status
         )
 
 
