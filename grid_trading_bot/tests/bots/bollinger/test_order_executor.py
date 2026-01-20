@@ -65,6 +65,7 @@ def mock_exchange() -> Mock:
     mock = Mock()
     mock.futures_create_order = AsyncMock(return_value=MockOrder(order_id="order_001"))
     mock.futures_cancel_order = AsyncMock(return_value={})
+    mock.futures_cancel_algo_order = AsyncMock(return_value={})  # For stop loss (Algo orders)
     mock.futures_get_order = AsyncMock(return_value=MockOrder(order_id="order_001"))
     return mock
 
@@ -370,8 +371,9 @@ class TestCancelExitOrders:
         # Cancel them
         await order_executor.cancel_exit_orders()
 
-        # Should have called cancel twice
-        assert mock_exchange.futures_cancel_order.call_count == 2
+        # Should have called regular cancel for TP, algo cancel for SL
+        assert mock_exchange.futures_cancel_order.call_count == 1  # TP only
+        assert mock_exchange.futures_cancel_algo_order.call_count == 1  # SL only
         assert order_executor.take_profit_order is None
         assert order_executor.stop_loss_order is None
 
@@ -444,8 +446,9 @@ class TestMarketClosePosition:
         # Market close
         await order_executor.close_position_market(position)
 
-        # Should have cancelled exit orders
-        assert mock_exchange.futures_cancel_order.call_count == 2
+        # Should have cancelled exit orders (TP: regular, SL: algo)
+        assert mock_exchange.futures_cancel_order.call_count == 1  # TP only
+        assert mock_exchange.futures_cancel_algo_order.call_count == 1  # SL only
 
 
 # =============================================================================
@@ -522,8 +525,8 @@ class TestOnTakeProfitFilled:
 
         assert result == "take_profit_filled"
         assert order_executor.take_profit_order is None
-        # Should cancel stop loss
-        mock_exchange.futures_cancel_order.assert_called()
+        # Should cancel stop loss (Algo order)
+        mock_exchange.futures_cancel_algo_order.assert_called()
 
 
 # =============================================================================

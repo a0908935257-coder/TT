@@ -168,6 +168,11 @@ FUTURES_PRIVATE_ENDPOINTS = {
     "USER_TRADES": {"path": "/fapi/v1/userTrades", "method": "GET"},
     "LEVERAGE_BRACKET": {"path": "/fapi/v1/leverageBracket", "method": "GET"},
     "CANCEL_ALL_ORDERS": {"path": "/fapi/v1/allOpenOrders", "method": "DELETE"},
+    # Algo Order API (for STOP_MARKET, TAKE_PROFIT_MARKET, etc. since 2025-12-09)
+    "ALGO_ORDER": {"path": "/fapi/v1/algoOrder", "method": "POST"},
+    "ALGO_ORDER_GET": {"path": "/fapi/v1/algoOrder", "method": "GET"},
+    "ALGO_ORDER_DELETE": {"path": "/fapi/v1/algoOrder", "method": "DELETE"},
+    "ALGO_OPEN_ORDERS": {"path": "/fapi/v1/algoOrder/openOrders", "method": "GET"},
 }
 
 

@@ -412,6 +412,103 @@ class ExchangeClient:
         return await api.get_open_orders(symbol)
 
     # =========================================================================
+    # Futures Order Wrapper Methods (for OrderExecutor Protocol)
+    # =========================================================================
+
+    async def futures_create_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: Decimal | str,
+        price: Optional[Decimal] = None,
+        stop_price: Optional[Decimal] = None,
+        time_in_force: Optional[str] = None,
+        reduce_only: bool = False,
+    ) -> Order:
+        """
+        Create a futures order (wrapper for OrderExecutor).
+
+        Args:
+            symbol: Trading pair
+            side: Order side (BUY/SELL)
+            order_type: Order type (LIMIT/MARKET/STOP_MARKET/etc.)
+            quantity: Order quantity
+            price: Limit price (for LIMIT orders)
+            stop_price: Stop price (for STOP orders)
+            time_in_force: Time in force (GTC, IOC, etc.)
+            reduce_only: Whether order is reduce-only
+
+        Returns:
+            Created Order object
+        """
+        return await self._futures.create_order(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            stop_price=stop_price,
+            time_in_force=time_in_force,
+            reduce_only=reduce_only,
+        )
+
+    async def futures_cancel_order(
+        self,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """
+        Cancel a futures order (wrapper for OrderExecutor).
+
+        Note: For Algo orders (STOP_MARKET, etc.), use futures_cancel_algo_order instead.
+
+        Args:
+            symbol: Trading pair
+            order_id: Exchange order ID
+
+        Returns:
+            Cancelled Order object
+        """
+        return await self._futures.cancel_order(symbol, order_id=order_id)
+
+    async def futures_cancel_algo_order(
+        self,
+        symbol: str,
+        algo_id: str,
+    ) -> dict:
+        """
+        Cancel a futures Algo order (STOP_MARKET, TAKE_PROFIT_MARKET, etc.).
+
+        Since 2025-12-09, conditional orders use Algo Order API.
+
+        Args:
+            symbol: Trading pair
+            algo_id: Algo order ID (same as order_id from create_order)
+
+        Returns:
+            Cancellation response
+        """
+        return await self._futures.cancel_algo_order(symbol, algo_id=algo_id)
+
+    async def futures_get_order(
+        self,
+        symbol: str,
+        order_id: str,
+    ) -> Order:
+        """
+        Get futures order status (wrapper for OrderExecutor).
+
+        Args:
+            symbol: Trading pair
+            order_id: Exchange order ID
+
+        Returns:
+            Order object
+        """
+        return await self._futures.get_order(symbol, order_id=order_id)
+
+    # =========================================================================
     # Convenience Order Methods
     # =========================================================================
 

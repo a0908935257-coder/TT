@@ -217,11 +217,13 @@ class BinanceFuturesAPI:
                 raise ExchangeError(f"HTTP {status}: {text}")
             return {}
 
-        # Check for Binance error
+        # Check for Binance error (but not success codes)
         if isinstance(data, dict) and "code" in data and "msg" in data:
             code = data["code"]
             msg = data["msg"]
-            self._raise_exception(code, msg)
+            # Success codes: 200, 0 (check both int and str formats)
+            if code not in (0, 200, "0", "200"):
+                self._raise_exception(int(code) if isinstance(code, str) else code, msg)
 
         # Check HTTP status
         if status >= 400:
@@ -682,6 +684,15 @@ class BinanceFuturesAPI:
     # Private API - Orders
     # =========================================================================
 
+    # Conditional order types that require Algo Order API (since 2025-12-09)
+    ALGO_ORDER_TYPES = {
+        "STOP_MARKET",
+        "TAKE_PROFIT_MARKET",
+        "STOP",
+        "TAKE_PROFIT",
+        "TRAILING_STOP_MARKET",
+    }
+
     async def create_order(
         self,
         symbol: str,
@@ -698,6 +709,9 @@ class BinanceFuturesAPI:
         """
         Create a new futures order.
 
+        Automatically routes conditional orders (STOP_MARKET, TAKE_PROFIT_MARKET, etc.)
+        to the Algo Order API as required by Binance since 2025-12-09.
+
         Args:
             symbol: Trading pair
             side: Order side (BUY/SELL)
@@ -706,7 +720,7 @@ class BinanceFuturesAPI:
             price: Limit price (required for LIMIT orders)
             position_side: Position side (BOTH for one-way, LONG/SHORT for hedge)
             reduce_only: Only reduce position, no reverse (default False)
-            stop_price: Stop price for stop orders
+            stop_price: Stop price for stop orders (trigger price)
             time_in_force: Time in force (GTC, IOC, FOK)
             client_order_id: Custom order ID
 
@@ -717,6 +731,21 @@ class BinanceFuturesAPI:
         type_str = order_type.value if isinstance(order_type, OrderType) else order_type
         pos_side_str = position_side.value if isinstance(position_side, PositionSide) else position_side
 
+        # Route conditional orders to Algo Order API
+        if type_str in self.ALGO_ORDER_TYPES:
+            return await self._create_algo_order(
+                symbol=symbol,
+                side=side_str,
+                order_type=type_str,
+                quantity=quantity,
+                price=price,
+                position_side=pos_side_str,
+                reduce_only=reduce_only,
+                trigger_price=stop_price,
+                client_order_id=client_order_id,
+            )
+
+        # Standard order flow for LIMIT/MARKET orders
         params = {
             "symbol": symbol,
             "side": side_str,
@@ -730,12 +759,8 @@ class BinanceFuturesAPI:
             params["price"] = str(price)
 
         # Add timeInForce for limit orders
-        if type_str in ("LIMIT", "STOP", "TAKE_PROFIT"):
+        if type_str == "LIMIT":
             params["timeInForce"] = time_in_force
-
-        # Add stop price
-        if stop_price is not None:
-            params["stopPrice"] = str(stop_price)
 
         # Add reduce_only
         if reduce_only:
@@ -755,6 +780,100 @@ class BinanceFuturesAPI:
             signed=True,
         )
         return Order.from_binance(data)
+
+    async def _create_algo_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: Decimal | str,
+        price: Decimal | str | None = None,
+        position_side: str = "BOTH",
+        reduce_only: bool = False,
+        trigger_price: Decimal | str | None = None,
+        client_order_id: str | None = None,
+    ) -> Order:
+        """
+        Create an Algo Order (for conditional orders like STOP_MARKET, TAKE_PROFIT_MARKET).
+
+        Required by Binance since 2025-12-09 for conditional order types.
+
+        Args:
+            symbol: Trading pair
+            side: Order side (BUY/SELL)
+            order_type: Order type (STOP_MARKET/TAKE_PROFIT_MARKET/etc.)
+            quantity: Order quantity
+            price: Limit price (for STOP/TAKE_PROFIT limit orders)
+            position_side: Position side (BOTH/LONG/SHORT)
+            reduce_only: Only reduce position
+            trigger_price: Price that triggers the order
+            client_order_id: Custom order ID
+
+        Returns:
+            Created Order object
+        """
+        if trigger_price is None:
+            raise OrderError("trigger_price (stop_price) is required for conditional orders")
+
+        params = {
+            "symbol": symbol,
+            "side": side,
+            "type": order_type,
+            "algoType": "CONDITIONAL",
+            "triggerPrice": str(trigger_price),
+            "quantity": str(quantity),
+            "positionSide": position_side,
+        }
+
+        # Add price for limit-type conditional orders (STOP, TAKE_PROFIT)
+        if price is not None:
+            params["price"] = str(price)
+
+        # Add reduce_only
+        if reduce_only:
+            params["reduceOnly"] = "true"
+
+        # Add client order ID
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        data = await self._request(
+            "POST",
+            FUTURES_PRIVATE_ENDPOINTS["ALGO_ORDER"]["path"],
+            params,
+            signed=True,
+        )
+
+        # Convert Algo Order response to Order object
+        return self._algo_response_to_order(data, symbol, side, order_type, quantity, trigger_price)
+
+    def _algo_response_to_order(
+        self,
+        data: dict,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: Decimal | str,
+        trigger_price: Decimal | str,
+    ) -> Order:
+        """Convert Algo Order API response to Order object."""
+        from src.core.models import OrderStatus
+
+        # Algo Order API returns different fields
+        return Order(
+            order_id=str(data.get("algoId", data.get("orderId", ""))),
+            client_order_id=data.get("clientOrderId", ""),
+            symbol=symbol,
+            side=OrderSide(side),
+            order_type=OrderType(order_type) if order_type in [e.value for e in OrderType] else OrderType.LIMIT,
+            status=OrderStatus.NEW,  # Algo orders start as NEW
+            price=Decimal(str(trigger_price)),  # Use trigger price as reference
+            quantity=Decimal(str(quantity)),
+            filled_qty=Decimal("0"),
+            avg_price=None,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
 
     async def cancel_order(
         self,
@@ -789,6 +908,34 @@ class BinanceFuturesAPI:
             signed=True,
         )
         return Order.from_binance(data)
+
+    async def cancel_algo_order(
+        self,
+        symbol: str,
+        algo_id: str,
+    ) -> dict:
+        """
+        Cancel an Algo Order (conditional order).
+
+        Args:
+            symbol: Trading pair
+            algo_id: Algo order ID (returned as algoId from create_algo_order)
+
+        Returns:
+            Cancellation response dict
+        """
+        params = {
+            "symbol": symbol,
+            "algoId": algo_id,
+        }
+
+        data = await self._request(
+            "DELETE",
+            FUTURES_PRIVATE_ENDPOINTS["ALGO_ORDER_DELETE"]["path"],
+            params,
+            signed=True,
+        )
+        return data
 
     async def get_order(
         self,

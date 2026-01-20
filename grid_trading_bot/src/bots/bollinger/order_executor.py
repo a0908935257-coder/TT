@@ -82,6 +82,8 @@ class ExchangeProtocol(Protocol):
 
     async def futures_cancel_order(self, symbol: str, order_id: str) -> Any: ...
 
+    async def futures_cancel_algo_order(self, symbol: str, algo_id: str) -> Any: ...
+
     async def futures_get_order(self, symbol: str, order_id: str) -> Any: ...
 
 
@@ -286,7 +288,7 @@ class OrderExecutor:
 
     async def cancel_exit_orders(self) -> None:
         """Cancel all exit orders (TP and SL)."""
-        # Cancel take profit
+        # Cancel take profit (regular limit order)
         if self._take_profit_order is not None:
             try:
                 await self._exchange.futures_cancel_order(
@@ -298,12 +300,12 @@ class OrderExecutor:
                 logger.debug(f"Cancel TP order: {e}")
             self._take_profit_order = None
 
-        # Cancel stop loss
+        # Cancel stop loss (Algo order since 2025-12-09)
         if self._stop_loss_order is not None:
             try:
-                await self._exchange.futures_cancel_order(
+                await self._exchange.futures_cancel_algo_order(
                     symbol=self._config.symbol,
-                    order_id=self._stop_loss_order,
+                    algo_id=self._stop_loss_order,
                 )
                 logger.info(f"Stop loss order cancelled: {self._stop_loss_order}")
             except Exception as e:
@@ -445,8 +447,8 @@ class OrderExecutor:
             # Take profit filled
             self._take_profit_order = None
 
-            # Cancel stop loss
-            await self._cancel_order_safe(self._stop_loss_order)
+            # Cancel stop loss (Algo order)
+            await self._cancel_algo_order_safe(self._stop_loss_order)
             self._stop_loss_order = None
 
             logger.info(f"Take profit filled: {order.filled_quantity} @ {order.avg_price}")
@@ -457,7 +459,7 @@ class OrderExecutor:
             # Stop loss filled
             self._stop_loss_order = None
 
-            # Cancel take profit
+            # Cancel take profit (regular order)
             await self._cancel_order_safe(self._take_profit_order)
             self._take_profit_order = None
 
@@ -468,7 +470,7 @@ class OrderExecutor:
         return None
 
     async def _cancel_order_safe(self, order_id: Optional[str]) -> None:
-        """Cancel order without raising exception."""
+        """Cancel regular order without raising exception."""
         if order_id is None:
             return
 
@@ -479,6 +481,19 @@ class OrderExecutor:
             )
         except Exception as e:
             logger.debug(f"Cancel order {order_id}: {e}")
+
+    async def _cancel_algo_order_safe(self, order_id: Optional[str]) -> None:
+        """Cancel Algo order (stop loss) without raising exception."""
+        if order_id is None:
+            return
+
+        try:
+            await self._exchange.futures_cancel_algo_order(
+                symbol=self._config.symbol,
+                algo_id=order_id,
+            )
+        except Exception as e:
+            logger.debug(f"Cancel algo order {order_id}: {e}")
 
     # =========================================================================
     # Utility Methods
