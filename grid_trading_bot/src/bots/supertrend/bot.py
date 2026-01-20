@@ -10,11 +10,12 @@ Trend-following strategy based on Supertrend indicator.
 import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from src.core import get_logger
-from src.core.models import Kline, KlineInterval
-from src.bots.base import BaseBot, BotState
+from src.core.models import Kline, KlineInterval, OrderType, OrderSide
+from src.bots.base import BaseBot
+from src.master.models import BotState
 from src.exchange import ExchangeClient
 from src.data import MarketDataManager
 from src.notification import NotificationManager
@@ -52,11 +53,15 @@ class SupertrendBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
     ):
-        super().__init__(bot_id)
-        self._config = config
-        self._exchange = exchange
-        self._data_manager = data_manager
-        self._notifier = notifier
+        # Call BaseBot.__init__ with all required parameters
+        super().__init__(
+            bot_id=bot_id,
+            config=config,
+            exchange=exchange,
+            data_manager=data_manager,
+            notifier=notifier,
+            heartbeat_callback=None,
+        )
 
         # Indicator
         self._indicator = SupertrendIndicator(
@@ -76,105 +81,213 @@ class SupertrendBot(BaseBot):
         # Statistics
         self._total_pnl = Decimal("0")
 
-    async def start(self) -> bool:
-        """Start the trading bot."""
-        try:
-            self._state = BotState.STARTING
-            logger.info(f"Starting Supertrend Bot for {self._config.symbol}")
+        # Kline callback reference for unsubscribe
+        self._kline_callback = None
 
-            # Set margin type (ISOLATED for risk control)
-            await self._exchange.set_margin_type(
+    # =========================================================================
+    # Abstract Properties (Required by BaseBot)
+    # =========================================================================
+
+    @property
+    def bot_type(self) -> str:
+        """Return bot type identifier."""
+        return "supertrend"
+
+    @property
+    def symbol(self) -> str:
+        """Return trading symbol."""
+        return self._config.symbol
+
+    # =========================================================================
+    # Abstract Lifecycle Methods (Required by BaseBot)
+    # =========================================================================
+
+    async def _do_start(self) -> None:
+        """
+        Actual start logic for Supertrend bot.
+
+        Called by BaseBot.start() after state transition.
+        """
+        logger.info(f"Initializing Supertrend Bot for {self._config.symbol}")
+
+        # Set margin type (ISOLATED for risk control)
+        try:
+            await self._exchange.futures.set_margin_type(
                 symbol=self._config.symbol,
                 margin_type=self._config.margin_type,
             )
-
-            # Set leverage
-            await self._exchange.set_leverage(
-                symbol=self._config.symbol,
-                leverage=self._config.leverage,
-            )
-
-            # Get historical klines to initialize indicator
-            interval_map = {
-                "1m": KlineInterval.m1,
-                "5m": KlineInterval.m5,
-                "15m": KlineInterval.m15,
-                "30m": KlineInterval.m30,
-                "1h": KlineInterval.h1,
-                "4h": KlineInterval.h4,
-            }
-            interval = interval_map.get(self._config.timeframe, KlineInterval.m15)
-
-            klines = await self._exchange.get_klines(
-                symbol=self._config.symbol,
-                interval=interval,
-                limit=100,
-            )
-
-            if not klines or len(klines) < self._config.atr_period + 10:
-                logger.error("Not enough historical data to initialize indicator")
-                return False
-
-            # Initialize indicator
-            self._indicator.initialize_from_klines(klines)
-            self._prev_trend = self._indicator.trend
-
-            # Check existing position
-            await self._sync_position()
-
-            # Subscribe to kline updates
-            await self._data_manager.subscribe_klines(
-                symbol=self._config.symbol,
-                interval=self._config.timeframe,
-                callback=self._on_kline,
-            )
-
-            self._state = BotState.RUNNING
-            logger.info(f"Supertrend Bot started successfully")
-            logger.info(f"  Symbol: {self._config.symbol}")
-            logger.info(f"  Timeframe: {self._config.timeframe}")
-            logger.info(f"  ATR Period: {self._config.atr_period}")
-            logger.info(f"  ATR Multiplier: {self._config.atr_multiplier}")
-            logger.info(f"  Leverage: {self._config.leverage}x")
-            logger.info(f"  Initial Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}")
-
-            if self._notifier:
-                await self._notifier.send_notification(
-                    title="Supertrend Bot Started",
-                    message=f"Symbol: {self._config.symbol}\n"
-                            f"Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}",
-                )
-
-            return True
-
         except Exception as e:
-            logger.error(f"Failed to start bot: {e}")
-            self._state = BotState.ERROR
-            return False
+            # May fail if already set to this type
+            logger.debug(f"Set margin type: {e}")
 
-    async def stop(self, clear_position: bool = False) -> None:
-        """Stop the trading bot."""
-        logger.info("Stopping Supertrend Bot...")
-        self._state = BotState.STOPPING
+        # Set leverage
+        await self._exchange.futures.set_leverage(
+            symbol=self._config.symbol,
+            leverage=self._config.leverage,
+        )
 
-        # Unsubscribe from updates
-        await self._data_manager.unsubscribe_klines(
+        # Get historical klines to initialize indicator
+        interval_map = {
+            "1m": KlineInterval.m1,
+            "5m": KlineInterval.m5,
+            "15m": KlineInterval.m15,
+            "30m": KlineInterval.m30,
+            "1h": KlineInterval.h1,
+            "4h": KlineInterval.h4,
+        }
+        interval = interval_map.get(self._config.timeframe, KlineInterval.m15)
+
+        klines = await self._exchange.futures.get_klines(
+            symbol=self._config.symbol,
+            interval=interval,
+            limit=100,
+        )
+
+        if not klines or len(klines) < self._config.atr_period + 10:
+            raise RuntimeError("Not enough historical data to initialize indicator")
+
+        # Initialize indicator
+        self._indicator.initialize_from_klines(klines)
+        self._prev_trend = self._indicator.trend
+
+        # Check existing position
+        await self._sync_position()
+
+        # Subscribe to kline updates (sync wrapper for async callback)
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync  # Store reference for unsubscribe
+        await self._data_manager.klines.subscribe_kline(
             symbol=self._config.symbol,
             interval=self._config.timeframe,
+            callback=on_kline_sync,
         )
+
+        logger.info(f"Supertrend Bot initialized successfully")
+        logger.info(f"  Symbol: {self._config.symbol}")
+        logger.info(f"  Timeframe: {self._config.timeframe}")
+        logger.info(f"  ATR Period: {self._config.atr_period}")
+        logger.info(f"  ATR Multiplier: {self._config.atr_multiplier}")
+        logger.info(f"  Leverage: {self._config.leverage}x")
+        logger.info(f"  Initial Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}")
+
+        if self._notifier:
+            await self._notifier.send_info(
+                title="Supertrend Bot Started",
+                message=f"Symbol: {self._config.symbol}\n"
+                        f"Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}",
+            )
+
+    async def _do_stop(self, clear_position: bool = False) -> None:
+        """
+        Actual stop logic for Supertrend bot.
+
+        Called by BaseBot.stop() after state transition.
+        """
+        logger.info("Stopping Supertrend Bot...")
+
+        # Unsubscribe from updates
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe: {e}")
 
         # Clear position if requested
         if clear_position and self._position:
             await self._close_position(ExitReason.BOT_STOP)
 
-        self._state = BotState.STOPPED
         logger.info("Supertrend Bot stopped")
 
         if self._notifier:
-            await self._notifier.send_notification(
+            await self._notifier.send_info(
                 title="Supertrend Bot Stopped",
                 message=f"Total PnL: {self._total_pnl:+.2f} USDT",
             )
+
+    async def _do_pause(self) -> None:
+        """
+        Pause the bot (stop trading but keep position).
+
+        For Supertrend, we just unsubscribe from kline updates.
+        """
+        logger.info("Pausing Supertrend Bot...")
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe: {e}")
+        logger.info("Supertrend Bot paused")
+
+    async def _do_resume(self) -> None:
+        """
+        Resume the bot from paused state.
+
+        Re-subscribe to kline updates.
+        """
+        logger.info("Resuming Supertrend Bot...")
+
+        # Re-subscribe to kline updates (create new callback)
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync
+        await self._data_manager.klines.subscribe_kline(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            callback=on_kline_sync,
+        )
+
+        logger.info("Supertrend Bot resumed")
+
+    def _get_extra_status(self) -> Dict[str, Any]:
+        """Return extra status fields specific to Supertrend bot."""
+        position_info = None
+        if self._position:
+            position_info = {
+                "side": self._position.side.value,
+                "entry_price": float(self._position.entry_price),
+                "quantity": float(self._position.quantity),
+                "unrealized_pnl": float(self._position.unrealized_pnl),
+            }
+
+        indicator = self._indicator.current
+        supertrend_info = None
+        if indicator:
+            supertrend_info = {
+                "trend": "BULLISH" if indicator.is_bullish else "BEARISH",
+                "value": float(indicator.supertrend),
+                "atr": float(indicator.atr),
+            }
+
+        return {
+            "timeframe": self._config.timeframe,
+            "leverage": self._config.leverage,
+            "position": position_info,
+            "supertrend": supertrend_info,
+            "total_trades": len(self._trades),  # Override BaseBot's stats
+            "total_pnl": float(self._total_pnl),
+            "current_bar": self._current_bar,
+        }
+
+    async def _extra_health_checks(self) -> Dict[str, bool]:
+        """Perform extra health checks specific to Supertrend bot."""
+        checks = {}
+
+        # Check if indicator is initialized
+        checks["indicator_initialized"] = self._indicator.current is not None
+
+        # Check if data subscription is active
+        checks["data_subscribed"] = True  # Assume true if bot is running
+
+        return checks
 
     async def _sync_position(self) -> None:
         """Sync position with exchange."""
@@ -255,8 +368,8 @@ class SupertrendBot(BaseBot):
         """Open a new position."""
         try:
             # Calculate position size based on allocated capital
-            balance = await self._exchange.get_balance()
-            available = balance.available_balance
+            account = await self._exchange.futures.get_account()
+            available = Decimal(str(account.available_balance))
 
             # Use max_capital if configured, otherwise use available balance
             if self._config.max_capital is not None:
@@ -275,10 +388,12 @@ class SupertrendBot(BaseBot):
                 logger.warning("Insufficient balance to open position")
                 return
 
-            # Place order
-            order = await self._exchange.place_market_order(
+            # Place market order
+            order_side = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL
+            order = await self._exchange.futures.create_order(
                 symbol=self._config.symbol,
-                side="BUY" if side == PositionSide.LONG else "SELL",
+                side=order_side,
+                order_type=OrderType.MARKET,
                 quantity=quantity,
             )
 
@@ -294,7 +409,7 @@ class SupertrendBot(BaseBot):
                 logger.info(f"Opened {side.value} position: {quantity} @ {price}")
 
                 if self._notifier:
-                    await self._notifier.send_notification(
+                    await self._notifier.send_info(
                         title=f"Supertrend: {side.value}",
                         message=f"Entry: {price}\nSize: {quantity}\nLeverage: {self._config.leverage}x",
                     )
@@ -309,17 +424,18 @@ class SupertrendBot(BaseBot):
 
         try:
             # Get current price
-            ticker = await self._exchange.get_ticker(self._config.symbol)
-            exit_price = ticker.last_price
+            ticker = await self._exchange.futures.get_ticker(self._config.symbol)
+            exit_price = Decimal(str(ticker.last_price))
 
             # Place closing order
-            close_side = "SELL" if self._position.side == PositionSide.LONG else "BUY"
+            close_side = OrderSide.SELL if self._position.side == PositionSide.LONG else OrderSide.BUY
 
-            order = await self._exchange.place_market_order(
+            order = await self._exchange.futures.create_order(
                 symbol=self._config.symbol,
                 side=close_side,
+                order_type=OrderType.MARKET,
                 quantity=self._position.quantity,
-                reduce_only=True,
+                reduceOnly=True,
             )
 
             if order:
@@ -358,7 +474,7 @@ class SupertrendBot(BaseBot):
 
                 if self._notifier:
                     emoji = "✅" if net_pnl > 0 else "❌"
-                    await self._notifier.send_notification(
+                    await self._notifier.send_info(
                         title=f"{emoji} Supertrend: Close {self._position.side.value}",
                         message=f"Exit: {exit_price}\nPnL: {net_pnl:+.2f} USDT\n"
                                 f"Reason: {reason.value}\nTotal: {self._total_pnl:+.2f} USDT",
@@ -369,35 +485,3 @@ class SupertrendBot(BaseBot):
         except Exception as e:
             logger.error(f"Failed to close position: {e}")
 
-    def get_status(self) -> dict:
-        """Get bot status."""
-        position_info = None
-        if self._position:
-            position_info = {
-                "side": self._position.side.value,
-                "entry_price": float(self._position.entry_price),
-                "quantity": float(self._position.quantity),
-                "unrealized_pnl": float(self._position.unrealized_pnl),
-            }
-
-        indicator = self._indicator.current
-        supertrend_info = None
-        if indicator:
-            supertrend_info = {
-                "trend": "BULLISH" if indicator.is_bullish else "BEARISH",
-                "value": float(indicator.supertrend),
-                "atr": float(indicator.atr),
-            }
-
-        return {
-            "bot_id": self._bot_id,
-            "state": self._state.value,
-            "symbol": self._config.symbol,
-            "timeframe": self._config.timeframe,
-            "leverage": self._config.leverage,
-            "position": position_info,
-            "supertrend": supertrend_info,
-            "total_trades": len(self._trades),
-            "total_pnl": float(self._total_pnl),
-            "current_bar": self._current_bar,
-        }

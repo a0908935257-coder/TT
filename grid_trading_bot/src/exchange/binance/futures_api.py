@@ -108,6 +108,15 @@ class BinanceFuturesAPI:
             self._session = None
             logger.debug("Session closed")
 
+    async def sync_time(self) -> None:
+        """Sync local time with Binance Futures server time."""
+        if self._auth:
+            data = await self._request("GET", "/fapi/v1/time")
+            server_time_ms = data.get("serverTime", 0)
+            if server_time_ms:
+                self._auth.set_time_offset(server_time_ms)
+                logger.info(f"Futures time synced, offset: {self._auth.time_offset}ms")
+
     async def __aenter__(self) -> "BinanceFuturesAPI":
         """Async context manager entry."""
         await self.connect()
