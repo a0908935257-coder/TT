@@ -244,14 +244,22 @@ class BotFactory:
         bollinger_config = BollingerConfig(
             symbol=config["symbol"],
             timeframe=config.get("timeframe", "15m"),
-            leverage=int(config.get("leverage", 2)),
+            leverage=int(config.get("leverage", 20)),
             position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
             bb_period=int(config.get("bb_period", 20)),
-            bb_std=Decimal(str(config.get("bb_std", "2.0"))),
-            bbw_lookback=int(config.get("bbw_lookback", 100)),
-            bbw_threshold_pct=Decimal(str(config.get("bbw_threshold_pct", "0.25"))),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),
-            timeout_bars=int(config.get("timeout_bars", 10)),
+            bb_std=Decimal(str(config.get("bb_std", "3.25"))),
+            bbw_lookback=int(config.get("bbw_lookback", 200)),
+            bbw_threshold_pct=int(config.get("bbw_threshold_pct", 20)),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.015"))),
+            max_hold_bars=int(config.get("max_hold_bars", 48)),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
+            use_trend_filter=config.get("use_trend_filter", False),
+            trend_period=int(config.get("trend_period", 50)),
+            use_atr_stop=config.get("use_atr_stop", True),
+            atr_period=int(config.get("atr_period", 14)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", "2.0"))),
+            use_trailing_stop=config.get("use_trailing_stop", True),
+            trailing_atr_mult=Decimal(str(config.get("trailing_atr_mult", "2.0"))),
         )
 
         # Create bot instance
