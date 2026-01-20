@@ -79,6 +79,8 @@ class BollingerBacktester:
         use_atr_stop = c.get('use_atr_stop', True)
         atr_period = c.get('atr_period', 14)
         atr_mult = c.get('atr_mult', 2.0)
+        use_trailing_stop = c.get('use_trailing_stop', True)
+        trailing_atr_mult = c.get('trailing_atr_mult', 2.0)
 
         # State
         position = None
@@ -146,9 +148,12 @@ class BollingerBacktester:
                 bars_held = i - position['entry_bar']
                 entry_price = position['entry']
 
+                # 更新追蹤價格
                 if position['side'] == 'long':
+                    position['max_price'] = max(position.get('max_price', entry_price), price)
                     pnl_pct = (price - entry_price) / entry_price
                 else:
+                    position['min_price'] = min(position.get('min_price', entry_price), price)
                     pnl_pct = (entry_price - price) / entry_price
 
                 if use_atr_stop and atr > 0:
@@ -158,18 +163,38 @@ class BollingerBacktester:
 
                 exit_reason = None
 
+                # 1. 固定止損
                 if pnl_pct <= -stop_distance:
                     exit_reason = 'stop_loss'
-                elif pnl_pct >= take_profit_pct:
+
+                # 2. 追蹤止損 (從最高/最低點回撤)
+                elif use_trailing_stop and atr > 0:
+                    trailing_distance = atr * trailing_atr_mult / entry_price
+                    if position['side'] == 'long':
+                        max_price = position['max_price']
+                        drawdown = (max_price - price) / max_price
+                        if drawdown >= trailing_distance and pnl_pct > 0:
+                            exit_reason = 'trailing_stop'
+                    else:
+                        min_price = position['min_price']
+                        drawup = (price - min_price) / min_price
+                        if drawup >= trailing_distance and pnl_pct > 0:
+                            exit_reason = 'trailing_stop'
+
+                # 3. 止盈
+                if exit_reason is None and pnl_pct >= take_profit_pct:
                     exit_reason = 'take_profit'
-                elif bars_held >= max_hold_bars:
+                # 4. 超時
+                elif exit_reason is None and bars_held >= max_hold_bars:
                     exit_reason = 'timeout'
-                elif strategy_mode == 'mean_reversion':
+                # 5. 均值回歸目標
+                elif exit_reason is None and strategy_mode == 'mean_reversion':
                     if position['side'] == 'long' and price >= sma:
                         exit_reason = 'target'
                     elif position['side'] == 'short' and price <= sma:
                         exit_reason = 'target'
-                elif strategy_mode == 'breakout':
+                # 6. 突破反轉
+                elif exit_reason is None and strategy_mode == 'breakout':
                     if position['side'] == 'long' and price < sma:
                         exit_reason = 'reversal'
                     elif position['side'] == 'short' and price > sma:
@@ -379,6 +404,8 @@ async def main():
         'max_hold_bars': 48,
         'use_atr_stop': True,
         'atr_period': 14,
+        'use_trailing_stop': True,  # 啟用追蹤止損
+        'trailing_atr_mult': 2.0,   # 追蹤止損 ATR 乘數
         'leverage': 20,
         'position_size': 0.1,  # 每次用 10% 資金
     }
@@ -429,6 +456,16 @@ async def main():
             'bbw_lookback': 100,
             'atr_mult': 2.5,
             'leverage': 10,
+        },
+        "BB=3.25 無追蹤止損": {
+            **base_config,
+            'strategy_mode': 'breakout',
+            'bb_std': 3.25,
+            'use_trend_filter': False,
+            'trend_period': 50,
+            'bbw_lookback': 200,
+            'atr_mult': 2.0,
+            'use_trailing_stop': False,  # 關閉追蹤止損
         },
     }
 
