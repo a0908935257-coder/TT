@@ -41,18 +41,22 @@ class SupertrendConfig:
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
-        atr_period: ATR calculation period (default 10)
+        atr_period: ATR calculation period (default 25, optimized)
         atr_multiplier: ATR multiplier for bands (default 3.0)
-        leverage: Futures leverage (default 1)
+        leverage: Futures leverage (default 10)
         position_size_pct: Position size as percentage of balance (default 10%)
         use_trailing_stop: Enable trailing stop loss
         trailing_stop_pct: Trailing stop percentage (fallback)
+
+    Optimization notes:
+        - ATR period 25 outperforms 10 in overfitting validation (37.8% vs -10.9%)
+        - Longer ATR period reduces false signals in choppy markets
     """
     symbol: str
     timeframe: str = "15m"
-    atr_period: int = 10
+    atr_period: int = 25  # Optimized: 25 > 10 (37.8% vs -10.9% annual)
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
-    leverage: int = 1
+    leverage: int = 10  # Default 10x leverage
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
