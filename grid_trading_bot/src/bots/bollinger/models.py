@@ -93,6 +93,9 @@ class BollingerConfig:
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.015"))
     max_hold_bars: int = 24  # Optimized: longer hold time
     leverage: int = 50  # High leverage with isolated margin mode
+
+    # Capital allocation (資金分配)
+    max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
 
     # Trend Filter
@@ -121,6 +124,8 @@ class BollingerConfig:
             self.position_size_pct = Decimal(str(self.position_size_pct))
         if not isinstance(self.atr_multiplier, Decimal):
             self.atr_multiplier = Decimal(str(self.atr_multiplier))
+        if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
+            self.max_capital = Decimal(str(self.max_capital))
 
         self._validate()
 

@@ -54,6 +54,9 @@ class SupertrendConfig:
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
     leverage: int = 1
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
+
+    # Capital allocation (資金分配)
+    max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
 
     # Optional trailing stop
@@ -68,6 +71,8 @@ class SupertrendConfig:
             self.position_size_pct = Decimal(str(self.position_size_pct))
         if not isinstance(self.trailing_stop_pct, Decimal):
             self.trailing_stop_pct = Decimal(str(self.trailing_stop_pct))
+        if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
+            self.max_capital = Decimal(str(self.max_capital))
 
         self._validate()
 

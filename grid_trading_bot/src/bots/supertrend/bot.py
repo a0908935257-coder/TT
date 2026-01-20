@@ -254,10 +254,18 @@ class SupertrendBot(BaseBot):
     async def _open_position(self, side: PositionSide, price: Decimal) -> None:
         """Open a new position."""
         try:
-            # Calculate position size
+            # Calculate position size based on allocated capital
             balance = await self._exchange.get_balance()
             available = balance.available_balance
-            notional = available * self._config.position_size_pct
+
+            # Use max_capital if configured, otherwise use available balance
+            if self._config.max_capital is not None:
+                # 使用分配的資金上限，但不能超過實際可用餘額
+                capital = min(self._config.max_capital, available)
+            else:
+                capital = available
+
+            notional = capital * self._config.position_size_pct
             quantity = notional / price
 
             # Round quantity

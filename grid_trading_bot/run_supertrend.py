@@ -35,12 +35,19 @@ _bot: SupertrendBot | None = None
 
 def get_config_from_env() -> SupertrendConfig:
     """從環境變數讀取配置"""
+    # 資金分配：如果設定了 MAX_CAPITAL，則限制該 Bot 最大可用資金
+    max_capital_str = os.getenv('SUPERTREND_MAX_CAPITAL', '')
+    max_capital = Decimal(max_capital_str) if max_capital_str else None
+
     return SupertrendConfig(
         # 基本設定
         symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('SUPERTREND_TIMEFRAME', '15m'),
         leverage=int(os.getenv('SUPERTREND_LEVERAGE', '10')),
         margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+
+        # 資金分配
+        max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
         # Supertrend 設定 (ST1 策略 - 最佳 Sharpe)
@@ -128,7 +135,15 @@ async def main() -> None:
     print(f"  時間框架: {config.timeframe}")
     print(f"  槓桿: {config.leverage}x")
     print(f"  保證金模式: {config.margin_type} (逐倉)")
-    print(f"  單次倉位: {config.position_size_pct*100}%")
+
+    # 資金分配顯示
+    if config.max_capital:
+        print(f"  分配資金: {config.max_capital:,.0f} USDT")
+        print(f"  單次倉位: {config.position_size_pct*100}% = {config.max_capital * config.position_size_pct:,.0f} USDT")
+    else:
+        print(f"  分配資金: 全部餘額")
+        print(f"  單次倉位: {config.position_size_pct*100}%")
+
     print(f"  ATR 週期: {config.atr_period}")
     print(f"  ATR 乘數: {config.atr_multiplier}")
     print(f"  追蹤止損: {'開啟' if config.use_trailing_stop else '關閉'}")

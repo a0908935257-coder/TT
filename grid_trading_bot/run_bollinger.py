@@ -34,11 +34,16 @@ _bot: BollingerBot | None = None
 
 def get_config_from_env() -> BollingerConfig:
     """從環境變數讀取配置"""
+    # 資金分配：如果設定了 MAX_CAPITAL，則限制該 Bot 最大可用資金
+    max_capital_str = os.getenv('BOLLINGER_MAX_CAPITAL', '')
+    max_capital = Decimal(max_capital_str) if max_capital_str else None
+
     return BollingerConfig(
         # 基本設定
         symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('BOLLINGER_TIMEFRAME', '15m'),
         leverage=int(os.getenv('BOLLINGER_LEVERAGE', '1')),
+        max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
 
         # 布林帶設定
@@ -144,7 +149,15 @@ async def main() -> None:
     print(f"  交易對: {config.symbol}")
     print(f"  時間框架: {config.timeframe}")
     print(f"  槓桿: {config.leverage}x")
-    print(f"  單次倉位: {config.position_size_pct*100}%")
+
+    # 資金分配顯示
+    if config.max_capital:
+        print(f"  分配資金: {config.max_capital:,.0f} USDT")
+        print(f"  單次倉位: {config.position_size_pct*100}% = {config.max_capital * config.position_size_pct:,.0f} USDT")
+    else:
+        print(f"  分配資金: 全部餘額")
+        print(f"  單次倉位: {config.position_size_pct*100}%")
+
     print(f"  布林帶週期: {config.bb_period}")
     print(f"  布林帶標準差: {config.bb_std}")
     print(f"  BBW 過濾閾值: {config.bbw_threshold_pct}%")

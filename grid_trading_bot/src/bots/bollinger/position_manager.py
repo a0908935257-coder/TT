@@ -203,8 +203,15 @@ class PositionManager:
         account = await self._exchange.futures.get_account()
         available_balance = Decimal(str(account.available_balance))
 
+        # Use max_capital if configured, otherwise use available balance
+        if self._config.max_capital is not None:
+            # 使用分配的資金上限，但不能超過實際可用餘額
+            capital = min(self._config.max_capital, available_balance)
+        else:
+            capital = available_balance
+
         # Calculate position value
-        position_value = available_balance * self._config.position_size_pct
+        position_value = capital * self._config.position_size_pct
 
         # Calculate notional value with leverage
         notional_value = position_value * Decimal(self._leverage)
@@ -215,8 +222,9 @@ class PositionManager:
         # Adjust precision (simplified - should use exchange info)
         quantity = self._adjust_quantity_precision(quantity)
 
+        capital_source = f"max_capital={self._config.max_capital}" if self._config.max_capital else f"balance={available_balance}"
         logger.info(
-            f"Position size: balance={available_balance}, "
+            f"Position size: {capital_source}, "
             f"use={position_value} ({self._config.position_size_pct:.0%}), "
             f"leverage={self._leverage}x, quantity={quantity}"
         )
