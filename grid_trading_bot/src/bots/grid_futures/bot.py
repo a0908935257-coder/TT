@@ -62,6 +62,7 @@ class GridFuturesBot(BaseBot):
         exchange: ExchangeClient,
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
+        heartbeat_callback: Optional[callable] = None,
     ):
         super().__init__(
             bot_id=bot_id,
@@ -69,6 +70,7 @@ class GridFuturesBot(BaseBot):
             exchange=exchange,
             data_manager=data_manager,
             notifier=notifier,
+            heartbeat_callback=heartbeat_callback,
         )
         self._config = config
         self._exchange = exchange

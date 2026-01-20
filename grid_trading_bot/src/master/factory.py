@@ -316,6 +316,7 @@ class BotFactory:
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
         )
 
         return bot
@@ -373,6 +374,7 @@ class BotFactory:
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
         )
 
         return bot

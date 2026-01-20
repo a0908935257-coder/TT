@@ -52,6 +52,7 @@ class SupertrendBot(BaseBot):
         exchange: ExchangeClient,
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
+        heartbeat_callback: Optional[callable] = None,
     ):
         # Call BaseBot.__init__ with all required parameters
         super().__init__(
@@ -60,7 +61,7 @@ class SupertrendBot(BaseBot):
             exchange=exchange,
             data_manager=data_manager,
             notifier=notifier,
-            heartbeat_callback=None,
+            heartbeat_callback=heartbeat_callback,
         )
 
         # Indicator
