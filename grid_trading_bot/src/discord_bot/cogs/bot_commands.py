@@ -189,7 +189,7 @@ class ConfirmDeleteView(discord.ui.View):
         self.stop()
 
 
-class CreateBotModal(discord.ui.Modal, title="Create New Bot"):
+class CreateBotModal(discord.ui.Modal):
     """Modal for creating a new bot."""
 
     symbol = discord.ui.TextInput(
@@ -199,48 +199,113 @@ class CreateBotModal(discord.ui.Modal, title="Create New Bot"):
         max_length=20,
     )
 
-    investment = discord.ui.TextInput(
-        label="Investment (USDT)",
+    max_capital = discord.ui.TextInput(
+        label="Max Capital (USDT)",
         placeholder="e.g., 100",
         default="100",
         max_length=10,
     )
 
-    risk_level = discord.ui.TextInput(
-        label="Risk Level",
-        placeholder="conservative / moderate / aggressive",
-        default="moderate",
-        max_length=20,
-    )
-
-    def __init__(self, master):
-        super().__init__()
+    def __init__(self, master, bot_type: str):
+        self.bot_type_str = bot_type
+        # Set title based on bot type
+        titles = {
+            "bollinger": "Create Bollinger Bot",
+            "supertrend": "Create Supertrend Bot",
+            "grid_futures": "Create Grid Futures Bot",
+            "grid": "Create Grid Bot (Spot)",
+        }
+        super().__init__(title=titles.get(bot_type, "Create Bot"))
         self.master = master
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         try:
+            import os
             from src.master import BotType
 
-            bot_config = {
-                "symbol": self.symbol.value.upper(),
-                "market_type": "spot",
-                "total_investment": self.investment.value,
-                "risk_level": self.risk_level.value.lower(),
-            }
+            symbol = self.symbol.value.upper()
+            max_capital = self.max_capital.value
 
-            result = await self.master.create_bot(BotType.GRID, bot_config)
+            # Build config based on bot type
+            if self.bot_type_str == "bollinger":
+                bot_type = BotType.BOLLINGER
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '15m'),
+                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '20')),
+                    "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
+                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
+                    "bb_std": os.getenv('BOLLINGER_BB_STD', '3.25'),
+                    "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
+                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
+                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015'),
+                    "timeout_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),
+                    "max_capital": max_capital,
+                }
+                type_info = f"Leverage: 20x | Timeframe: 15m"
+
+            elif self.bot_type_str == "supertrend":
+                bot_type = BotType.SUPERTREND
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
+                    "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '30')),
+                    "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),
+                    "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '10')),
+                    "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+                    "max_capital": max_capital,
+                    "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
+                    "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'true').lower() == 'true',
+                    "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.03'),
+                }
+                type_info = f"Leverage: 10x | Timeframe: 15m"
+
+            elif self.bot_type_str == "grid_futures":
+                bot_type = BotType.GRID_FUTURES
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
+                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '3')),
+                    "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
+                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '12')),
+                    "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
+                    "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
+                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),
+                    "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
+                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
+                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '2.0'),
+                    "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
+                    "max_capital": max_capital,
+                    "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
+                    "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
+                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.05'),
+                    "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
+                }
+                type_info = f"Leverage: 3x | Grids: 12"
+
+            else:  # grid (spot)
+                bot_type = BotType.GRID
+                bot_config = {
+                    "symbol": symbol,
+                    "market_type": "spot",
+                    "total_investment": max_capital,
+                    "risk_level": "moderate",
+                }
+                type_info = "Spot | Risk: Moderate"
+
+            result = await self.master.create_bot(bot_type, bot_config)
 
             if result.success:
                 embed = discord.Embed(
-                    title="✅ Bot Created",
+                    title=f"✅ {self.bot_type_str.replace('_', ' ').title()} Bot Created",
                     description=f"Bot `{result.bot_id}` created successfully",
                     color=discord.Color.green(),
                 )
-                embed.add_field(name="Symbol", value=self.symbol.value.upper(), inline=True)
-                embed.add_field(name="Investment", value=f"{self.investment.value} USDT", inline=True)
-                embed.add_field(name="Risk Level", value=self.risk_level.value, inline=True)
+                embed.add_field(name="Symbol", value=symbol, inline=True)
+                embed.add_field(name="Max Capital", value=f"{max_capital} USDT", inline=True)
+                embed.add_field(name="Settings", value=type_info, inline=True)
                 embed.add_field(
                     name="Next Step",
                     value=f"Use `/bot start {result.bot_id}` to start trading",
@@ -334,14 +399,25 @@ class BotCommands(commands.Cog):
     # =========================================================================
 
     @trading_group.command(name="create", description="Create a new trading bot")
+    @app_commands.describe(bot_type="Type of bot to create")
+    @app_commands.choices(bot_type=[
+        app_commands.Choice(name="🔷 Bollinger Bot (合約 20x)", value="bollinger"),
+        app_commands.Choice(name="📈 Supertrend Bot (合約 10x)", value="supertrend"),
+        app_commands.Choice(name="📊 Grid Futures Bot (合約 3x)", value="grid_futures"),
+        app_commands.Choice(name="🟢 Grid Bot (現貨)", value="grid"),
+    ])
     @is_admin()
-    async def bot_create(self, interaction: discord.Interaction):
+    async def bot_create(
+        self,
+        interaction: discord.Interaction,
+        bot_type: app_commands.Choice[str],
+    ):
         """Create a new trading bot."""
         if not self.master:
             await interaction.response.send_message("Master not connected", ephemeral=True)
             return
 
-        modal = CreateBotModal(self.master)
+        modal = CreateBotModal(self.master, bot_type.value)
         await interaction.response.send_modal(modal)
 
     # =========================================================================
