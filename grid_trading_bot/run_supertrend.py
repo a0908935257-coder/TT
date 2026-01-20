@@ -3,8 +3,8 @@
 Supertrend Bot Runner.
 
 啟動 Supertrend 趨勢跟蹤交易機器人。
-策略：ST1 (ATR 10, 乘數 3.0) @ 50x 逐倉
-2年回測: Sharpe 2.45, 總盈虧 +90,423 USDT
+策略：ST1 (ATR 10, 乘數 3.0) @ 10x 逐倉
+2年回測: 爆倉率 2.1%, 實際盈虧 +13,961 USDT, 年化 698%
 """
 
 import asyncio
@@ -39,7 +39,7 @@ def get_config_from_env() -> SupertrendConfig:
         # 基本設定
         symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '50')),
+        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '10')),
         margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
@@ -134,7 +134,7 @@ async def main() -> None:
     print(f"  追蹤止損: {'開啟' if config.use_trailing_stop else '關閉'}")
     if config.use_trailing_stop:
         print(f"  追蹤止損比例: {config.trailing_stop_pct*100}%")
-    print(f"\n  策略: ST1 @ {config.leverage}x (2年回測 Sharpe 2.45)")
+    print(f"\n  策略: ST1 @ {config.leverage}x (爆倉率 2.1%, 年化 698%)")
     print(f"  預期交易頻率: ~95 次/年 (~2 次/週)")
     print()
 
