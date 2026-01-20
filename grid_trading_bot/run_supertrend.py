@@ -3,8 +3,8 @@
 Supertrend Bot Runner.
 
 啟動 Supertrend 趨勢跟蹤交易機器人。
-策略：ST1 (ATR 10, 乘數 3.0) @ 10x 逐倉
-2年回測: 爆倉率 2.1%, 實際盈虧 +13,961 USDT, 年化 698%
+策略：優化版 (ATR 25, 乘數 3.0) @ 10x 逐倉
+過度擬合驗證: 年化 37.7%, Sharpe 0.64
 """
 
 import asyncio
@@ -50,8 +50,8 @@ def get_config_from_env() -> SupertrendConfig:
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
-        # Supertrend 設定 (ST1 策略 - 最佳 Sharpe)
-        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '10')),
+        # Supertrend 設定 (優化版 - 通過過度擬合驗證)
+        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '25')),
         atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0')),
 
         # 可選：追蹤止損
