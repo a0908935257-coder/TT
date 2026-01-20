@@ -307,6 +307,8 @@ class BotFactory:
             position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
             use_trailing_stop=config.get("use_trailing_stop", False),
             trailing_stop_pct=Decimal(str(config.get("trailing_stop_pct", "0.02"))),
+            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),
         )
 
         # Create bot instance

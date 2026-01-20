@@ -201,6 +201,9 @@ class SupertrendBot(BaseBot):
         # Clear position if requested
         if clear_position and self._position:
             await self._close_position(ExitReason.BOT_STOP)
+        elif self._position and self._position.stop_loss_order_id:
+            # Cancel stop loss order but keep position
+            await self._cancel_stop_loss_order()
 
         logger.info("Supertrend Bot stopped")
 
@@ -257,6 +260,8 @@ class SupertrendBot(BaseBot):
                 "entry_price": float(self._position.entry_price),
                 "quantity": float(self._position.quantity),
                 "unrealized_pnl": float(self._position.unrealized_pnl),
+                "stop_loss_price": float(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "stop_loss_order_id": self._position.stop_loss_order_id,
             }
 
         indicator = self._indicator.current
@@ -406,20 +411,34 @@ class SupertrendBot(BaseBot):
             )
 
             if order:
+                # Calculate stop loss price
+                if side == PositionSide.LONG:
+                    stop_loss_price = price * (Decimal("1") - self._config.stop_loss_pct)
+                else:
+                    stop_loss_price = price * (Decimal("1") + self._config.stop_loss_pct)
+
+                # Round to tick size
+                stop_loss_price = stop_loss_price.quantize(Decimal("0.1"))
+
                 self._position = Position(
                     side=side,
                     entry_price=price,
                     quantity=quantity,
                     entry_time=datetime.now(timezone.utc),
+                    stop_loss_price=stop_loss_price,
                 )
                 self._entry_bar = self._current_bar
 
-                logger.info(f"Opened {side.value} position: {quantity} @ {price}")
+                # Place exchange stop loss order if enabled
+                if self._config.use_exchange_stop_loss:
+                    await self._place_stop_loss_order()
+
+                logger.info(f"Opened {side.value} position: {quantity} @ {price}, SL @ {stop_loss_price}")
 
                 if self._notifier:
                     await self._notifier.send_info(
                         title=f"Supertrend: {side.value}",
-                        message=f"Entry: {price}\nSize: {quantity}\nLeverage: {self._config.leverage}x",
+                        message=f"Entry: {price}\nSize: {quantity}\nLeverage: {self._config.leverage}x\nStop Loss: {stop_loss_price}",
                     )
 
         except Exception as e:
@@ -460,12 +479,65 @@ class SupertrendBot(BaseBot):
 
         return False
 
+    async def _place_stop_loss_order(self) -> None:
+        """Place stop loss order on exchange using Algo Order API."""
+        if not self._position or not self._position.stop_loss_price:
+            return
+
+        try:
+            # Determine close side (opposite of position)
+            if self._position.side == PositionSide.LONG:
+                close_side = OrderSide.SELL
+            else:
+                close_side = OrderSide.BUY
+
+            # Place STOP_MARKET order (uses Algo Order API since 2025-12-09)
+            sl_order = await self._exchange.futures.create_order(
+                symbol=self._config.symbol,
+                side=close_side,
+                order_type="STOP_MARKET",
+                quantity=self._position.quantity,
+                stop_price=self._position.stop_loss_price,
+                reduce_only=True,
+            )
+
+            if sl_order:
+                self._position.stop_loss_order_id = str(sl_order.order_id)
+                logger.info(
+                    f"Stop loss order placed: {close_side.value} {self._position.quantity} "
+                    f"@ {self._position.stop_loss_price}, ID={sl_order.order_id}"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to place stop loss order: {e}")
+
+    async def _cancel_stop_loss_order(self) -> None:
+        """Cancel stop loss order on exchange using Algo Order API."""
+        if not self._position or not self._position.stop_loss_order_id:
+            return
+
+        try:
+            # Cancel using Algo Order API (required since 2025-12-09)
+            await self._exchange.futures.cancel_algo_order(
+                symbol=self._config.symbol,
+                algo_id=self._position.stop_loss_order_id,
+            )
+            logger.info(f"Stop loss order cancelled: {self._position.stop_loss_order_id}")
+            self._position.stop_loss_order_id = None
+
+        except Exception as e:
+            logger.debug(f"Failed to cancel stop loss order: {e}")
+
     async def _close_position(self, reason: ExitReason) -> None:
         """Close current position."""
         if not self._position:
             return
 
         try:
+            # Cancel stop loss order first (if any)
+            if self._position.stop_loss_order_id:
+                await self._cancel_stop_loss_order()
+
             # Get current price
             ticker = await self._exchange.futures.get_ticker(self._config.symbol)
             exit_price = Decimal(str(ticker.last_price))

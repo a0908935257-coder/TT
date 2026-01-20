@@ -63,9 +63,13 @@ class SupertrendConfig:
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
 
-    # Optional trailing stop
+    # Optional trailing stop (software-based)
     use_trailing_stop: bool = False
     trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
+
+    # Exchange-based stop loss (recommended for safety)
+    use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 2% default
 
     def __post_init__(self):
         """Validate and normalize configuration."""
@@ -75,6 +79,8 @@ class SupertrendConfig:
             self.position_size_pct = Decimal(str(self.position_size_pct))
         if not isinstance(self.trailing_stop_pct, Decimal):
             self.trailing_stop_pct = Decimal(str(self.trailing_stop_pct))
+        if not isinstance(self.stop_loss_pct, Decimal):
+            self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
 
@@ -124,6 +130,18 @@ class Position:
     unrealized_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
     highest_price: Decimal = field(default_factory=lambda: Decimal("0"))
     lowest_price: Decimal = field(default_factory=lambda: Decimal("0"))
+    stop_loss_order_id: Optional[str] = None  # Exchange stop loss order ID
+    stop_loss_price: Optional[Decimal] = None  # Stop loss trigger price
+
+    @property
+    def max_price(self) -> Optional[Decimal]:
+        """Alias for highest_price."""
+        return self.highest_price if self.highest_price != Decimal("0") else None
+
+    @property
+    def min_price(self) -> Optional[Decimal]:
+        """Alias for lowest_price."""
+        return self.lowest_price if self.lowest_price != Decimal("0") else None
 
     def update_extremes(self, current_price: Decimal) -> None:
         """Update highest/lowest prices for trailing stop."""
