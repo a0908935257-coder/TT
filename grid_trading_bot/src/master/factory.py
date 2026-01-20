@@ -367,6 +367,7 @@ class BotFactory:
             max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
             stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),
             rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", "0.02"))),
+            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
         )
 
         # Create bot instance

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
 from src.core import get_logger
-from src.core.models import Kline
+from src.core.models import Kline, OrderSide
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master.models import BotState
@@ -160,6 +160,9 @@ class GridFuturesBot(BaseBot):
         if clear_position and self._position:
             current_price = await self._get_current_price()
             await self._close_position(current_price, ExitReason.BOT_STOP)
+        elif self._position and self._position.stop_loss_order_id:
+            # Cancel stop loss order but keep position
+            await self._cancel_stop_loss_order()
 
         # Cancel monitor task
         if self._monitor_task:
@@ -225,6 +228,8 @@ class GridFuturesBot(BaseBot):
                 "entry_price": str(self._position.entry_price),
                 "quantity": str(self._position.quantity),
                 "unrealized_pnl": str(self._position.unrealized_pnl),
+                "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "stop_loss_order_id": self._position.stop_loss_order_id,
             }
 
         status["stats"] = self._grid_stats.to_dict()
@@ -521,13 +526,17 @@ class GridFuturesBot(BaseBot):
 
                 # Update position
                 if self._position and self._position.side == side:
-                    # Add to position
+                    # Add to position (DCA)
                     total_value = (
                         self._position.quantity * self._position.entry_price +
                         fill_qty * fill_price
                     )
                     self._position.quantity += fill_qty
                     self._position.entry_price = total_value / self._position.quantity
+
+                    # Update stop loss order with new quantity and average price
+                    if self._config.use_exchange_stop_loss:
+                        await self._update_stop_loss_order()
                 else:
                     # New position (or flip)
                     if self._position:
@@ -541,6 +550,10 @@ class GridFuturesBot(BaseBot):
                         leverage=self._config.leverage,
                         entry_time=datetime.now(timezone.utc),
                     )
+
+                    # Place exchange stop loss order
+                    if self._config.use_exchange_stop_loss:
+                        await self._place_stop_loss_order()
 
                 logger.info(f"Opened {side.value} position: {fill_qty} @ {fill_price}")
                 return True
@@ -564,6 +577,11 @@ class GridFuturesBot(BaseBot):
             close_qty = quantity or self._position.quantity
             # Round to exchange precision
             close_qty = close_qty.quantize(Decimal("0.001"))
+
+            # Cancel stop loss order if closing full position
+            is_full_close = (quantity is None or quantity >= self._position.quantity)
+            if is_full_close and self._position.stop_loss_order_id:
+                await self._cancel_stop_loss_order()
 
             # Place closing order (reduce_only)
             if self._position.side == PositionSide.LONG:
@@ -611,6 +629,9 @@ class GridFuturesBot(BaseBot):
                 # Update position
                 if quantity and quantity < self._position.quantity:
                     self._position.quantity -= close_qty
+                    # Update stop loss for reduced position
+                    if self._config.use_exchange_stop_loss and self._position.stop_loss_order_id:
+                        await self._update_stop_loss_order()
                 else:
                     self._position = None
 
@@ -708,6 +729,87 @@ class GridFuturesBot(BaseBot):
             return True
 
         return False
+
+    # =========================================================================
+    # Exchange Stop Loss
+    # =========================================================================
+
+    def _calculate_stop_loss_price(self, entry_price: Decimal, side: PositionSide) -> Decimal:
+        """Calculate stop loss price based on entry and config."""
+        if side == PositionSide.LONG:
+            stop_price = entry_price * (Decimal("1") - self._config.stop_loss_pct)
+        else:
+            stop_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
+        # Round to tick size
+        return stop_price.quantize(Decimal("0.1"))
+
+    async def _place_stop_loss_order(self) -> None:
+        """Place stop loss order on exchange using Algo Order API."""
+        if not self._position:
+            return
+
+        try:
+            # Calculate stop loss price
+            stop_price = self._calculate_stop_loss_price(
+                self._position.entry_price,
+                self._position.side
+            )
+
+            # Determine close side (opposite of position)
+            if self._position.side == PositionSide.LONG:
+                close_side = OrderSide.SELL
+            else:
+                close_side = OrderSide.BUY
+
+            # Place STOP_MARKET order (uses Algo Order API since 2025-12-09)
+            sl_order = await self._exchange.futures.create_order(
+                symbol=self._config.symbol,
+                side=close_side,
+                order_type="STOP_MARKET",
+                quantity=self._position.quantity,
+                stop_price=stop_price,
+                reduce_only=True,
+            )
+
+            if sl_order:
+                self._position.stop_loss_order_id = str(sl_order.order_id)
+                self._position.stop_loss_price = stop_price
+                logger.info(
+                    f"Stop loss order placed: {close_side.value} {self._position.quantity} "
+                    f"@ {stop_price}, ID={sl_order.order_id}"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to place stop loss order: {e}")
+
+    async def _update_stop_loss_order(self) -> None:
+        """Update stop loss order when position changes (e.g., DCA)."""
+        if not self._position or not self._config.use_exchange_stop_loss:
+            return
+
+        # Cancel existing stop loss
+        await self._cancel_stop_loss_order()
+
+        # Place new stop loss with updated entry price
+        await self._place_stop_loss_order()
+
+    async def _cancel_stop_loss_order(self) -> None:
+        """Cancel stop loss order on exchange using Algo Order API."""
+        if not self._position or not self._position.stop_loss_order_id:
+            return
+
+        try:
+            # Cancel using Algo Order API (required since 2025-12-09)
+            await self._exchange.futures.cancel_algo_order(
+                symbol=self._config.symbol,
+                algo_id=self._position.stop_loss_order_id,
+            )
+            logger.info(f"Stop loss order cancelled: {self._position.stop_loss_order_id}")
+            self._position.stop_loss_order_id = None
+            self._position.stop_loss_price = None
+
+        except Exception as e:
+            logger.debug(f"Failed to cancel stop loss order: {e}")
 
     # =========================================================================
     # Main Loop

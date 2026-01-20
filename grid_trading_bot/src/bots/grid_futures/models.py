@@ -140,6 +140,9 @@ class GridFuturesConfig:
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
     rebuild_threshold_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
 
+    # Exchange-based stop loss (recommended for safety)
+    use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
+
     # Fee rate (Binance Futures: 0.04% maker/taker)
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
@@ -259,6 +262,8 @@ class FuturesPosition:
     unrealized_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
     entry_time: Optional[datetime] = None
     liquidation_price: Optional[Decimal] = None
+    stop_loss_order_id: Optional[str] = None  # Exchange stop loss order ID
+    stop_loss_price: Optional[Decimal] = None  # Stop loss trigger price
 
     def __post_init__(self):
         for attr in ['entry_price', 'quantity', 'unrealized_pnl']:
@@ -267,6 +272,8 @@ class FuturesPosition:
                 setattr(self, attr, Decimal(str(value)))
         if self.liquidation_price is not None and not isinstance(self.liquidation_price, Decimal):
             self.liquidation_price = Decimal(str(self.liquidation_price))
+        if self.stop_loss_price is not None and not isinstance(self.stop_loss_price, Decimal):
+            self.stop_loss_price = Decimal(str(self.stop_loss_price))
 
     @property
     def notional_value(self) -> Decimal:
