@@ -239,10 +239,20 @@ class CreateBotModal(discord.ui.Modal):
                     "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
                     "bb_std": os.getenv('BOLLINGER_BB_STD', '3.25'),
                     "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
+                    "bbw_threshold_pct": int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
                     "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015'),
-                    "timeout_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),
+                    "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),
                     "max_capital": max_capital,
+                    # Trend filter settings
+                    "use_trend_filter": os.getenv('BOLLINGER_USE_TREND_FILTER', 'false').lower() == 'true',
+                    "trend_period": int(os.getenv('BOLLINGER_TREND_PERIOD', '50')),
+                    # ATR stop loss settings
+                    "use_atr_stop": os.getenv('BOLLINGER_USE_ATR_STOP', 'true').lower() == 'true',
+                    "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '14')),
+                    "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.0'),
+                    # Trailing stop settings
+                    "use_trailing_stop": os.getenv('BOLLINGER_USE_TRAILING_STOP', 'true').lower() == 'true',
+                    "trailing_atr_mult": os.getenv('BOLLINGER_TRAILING_ATR_MULT', '2.0'),
                 }
                 type_info = f"Leverage: 20x | Timeframe: 15m"
 
