@@ -1,15 +1,17 @@
 """
-Bollinger Band Mean Reversion Bot.
+Bollinger Band Trading Bot.
 
-A futures trading bot that uses Bollinger Bands for mean reversion strategy.
-Enters positions when price touches bands and exits when price returns to middle.
+A futures trading bot that uses Bollinger Bands for trading.
+Supports two strategy modes:
+- MEAN_REVERSION: Enters positions when price touches bands, exits when returns to middle
+- BREAKOUT: Enters positions when price breaks through bands, follows the trend
 
 Features:
 - Bollinger Bands calculation with configurable period and multiplier
-- BBW (Bollinger Band Width) filter to avoid squeeze conditions
+- BBW (Bollinger Band Width) filter
 - Futures trading with leverage support
-- Limit orders for entry/take-profit (lower fees)
-- Stop market orders for stop-loss (guaranteed execution)
+- Trailing stop for breakout mode
+- ATR-based dynamic stop loss
 """
 
 from .models import (
@@ -22,6 +24,7 @@ from .models import (
     PositionSide,
     Signal,
     SignalType,
+    StrategyMode,
     TradeRecord,
 )
 from .indicators import (
@@ -40,6 +43,7 @@ __all__ = [
     "BollingerBands",
     "BBWData",
     "SignalType",
+    "StrategyMode",
     "Signal",
     "PositionSide",
     "Position",

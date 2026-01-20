@@ -19,6 +19,13 @@ from typing import Optional
 # =============================================================================
 
 
+class StrategyMode(str, Enum):
+    """Trading strategy mode."""
+
+    MEAN_REVERSION = "mean_reversion"  # Buy at lower band, sell at upper band
+    BREAKOUT = "breakout"              # Buy above upper band, sell below lower band
+
+
 class SignalType(str, Enum):
     """Trading signal type."""
 
@@ -57,53 +64,66 @@ class BollingerConfig:
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "1h")
-        bb_period: Bollinger Band period (default 15)
-        bb_std: Standard deviation multiplier (default 2.0)
+        timeframe: Kline timeframe (default "15m")
+        strategy_mode: Trading strategy mode (MEAN_REVERSION or BREAKOUT)
+        bb_period: Bollinger Band period (default 20)
+        bb_std: Standard deviation multiplier (default 3.0 for breakout)
         bbw_lookback: BBW history lookback period (default 200)
-        bbw_threshold_pct: BBW squeeze threshold percentile (default 20)
+        bbw_threshold_pct: BBW threshold percentile (default 20 for breakout)
         stop_loss_pct: Stop loss percentage (default 1.5%, fallback if ATR disabled)
-        max_hold_bars: Maximum bars to hold position (default 24)
-        leverage: Futures leverage (default 50, isolated margin mode)
+        max_hold_bars: Maximum bars to hold position (default 48 for breakout)
+        leverage: Futures leverage (default 30, isolated margin mode)
         position_size_pct: Position size as percentage of balance (default 10%)
 
-        # Trend Filter (optimized)
-        use_trend_filter: Enable trend filter (default True)
+        # Trend Filter
+        use_trend_filter: Enable trend filter (default False for breakout)
         trend_period: SMA period for trend detection (default 50)
 
-        # ATR Stop Loss (optimized)
+        # RSI Filter
+        use_rsi_filter: Enable RSI filter (default False for breakout)
+        rsi_period: RSI calculation period (default 14)
+        rsi_oversold: RSI oversold threshold (default 30)
+        rsi_overbought: RSI overbought threshold (default 70)
+
+        # ATR Stop Loss
         use_atr_stop: Use ATR-based dynamic stop loss (default True)
         atr_period: ATR calculation period (default 14)
-        atr_multiplier: ATR multiplier for stop distance (default 2.5)
+        atr_multiplier: ATR multiplier for stop distance (default 2.0)
+
+        # Breakout-specific settings
+        use_trailing_stop: Enable trailing stop (default True for breakout)
+        trailing_atr_mult: Trailing stop ATR multiplier (default 2.0)
 
     Example:
         >>> config = BollingerConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=3,
-        ...     use_trend_filter=True,
+        ...     strategy_mode=StrategyMode.BREAKOUT,
+        ...     leverage=30,
+        ...     bb_std=Decimal("3.0"),
         ... )
     """
 
     symbol: str
-    timeframe: str = "1h"  # Optimized: 1h has better signal quality
-    bb_period: int = 15  # Optimized: shorter period is more responsive
-    bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    timeframe: str = "15m"  # 15m for breakout strategy
+    strategy_mode: StrategyMode = StrategyMode.BREAKOUT  # Default to breakout (higher returns)
+    bb_period: int = 20  # Standard period
+    bb_std: Decimal = field(default_factory=lambda: Decimal("3.0"))  # Wide bands for breakout
     bbw_lookback: int = 200
-    bbw_threshold_pct: int = 20
+    bbw_threshold_pct: int = 20  # BBW expansion threshold for breakout
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.015"))
-    max_hold_bars: int = 24  # Optimized: longer hold time
-    leverage: int = 50  # High leverage with isolated margin mode
+    max_hold_bars: int = 48  # Longer hold for breakout trends
+    leverage: int = 30  # Optimized leverage from backtest
 
     # Capital allocation (資金分配)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
 
-    # Trend Filter
-    use_trend_filter: bool = True
+    # Trend Filter (disabled for breakout by default)
+    use_trend_filter: bool = False
     trend_period: int = 50
 
-    # RSI Filter (optimized for Sharpe > 1)
-    use_rsi_filter: bool = True
+    # RSI Filter (disabled for breakout by default)
+    use_rsi_filter: bool = False
     rsi_period: int = 14
     rsi_oversold: int = 30
     rsi_overbought: int = 70
@@ -111,7 +131,11 @@ class BollingerConfig:
     # ATR Stop Loss
     use_atr_stop: bool = True
     atr_period: int = 14
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.5"))
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
+
+    # Breakout-specific: Trailing Stop
+    use_trailing_stop: bool = True  # Enable trailing stop for breakout
+    trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))  # Trailing stop multiplier
 
     def __post_init__(self):
         """Validate and normalize configuration."""
@@ -124,8 +148,14 @@ class BollingerConfig:
             self.position_size_pct = Decimal(str(self.position_size_pct))
         if not isinstance(self.atr_multiplier, Decimal):
             self.atr_multiplier = Decimal(str(self.atr_multiplier))
+        if not isinstance(self.trailing_atr_mult, Decimal):
+            self.trailing_atr_mult = Decimal(str(self.trailing_atr_mult))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+
+        # Convert strategy_mode from string if needed
+        if isinstance(self.strategy_mode, str):
+            self.strategy_mode = StrategyMode(self.strategy_mode)
 
         self._validate()
 
@@ -146,8 +176,8 @@ class BollingerConfig:
         if self.stop_loss_pct < Decimal("0.005") or self.stop_loss_pct > Decimal("0.10"):
             raise ValueError(f"stop_loss_pct must be 0.5%-10%, got {self.stop_loss_pct}")
 
-        if self.max_hold_bars < 1 or self.max_hold_bars > 100:
-            raise ValueError(f"max_hold_bars must be 1-100, got {self.max_hold_bars}")
+        if self.max_hold_bars < 1 or self.max_hold_bars > 200:
+            raise ValueError(f"max_hold_bars must be 1-200, got {self.max_hold_bars}")
 
         if self.leverage < 1 or self.leverage > 125:
             raise ValueError(f"leverage must be 1-125, got {self.leverage}")
@@ -327,6 +357,8 @@ class Position:
         entry_bar: K-line bar number at entry
         take_profit_price: Take profit price
         stop_loss_price: Stop loss price
+        max_price: Maximum price since entry (for trailing stop)
+        min_price: Minimum price since entry (for trailing stop)
     """
 
     symbol: str
@@ -339,6 +371,8 @@ class Position:
     entry_bar: int = 0
     take_profit_price: Optional[Decimal] = None
     stop_loss_price: Optional[Decimal] = None
+    max_price: Optional[Decimal] = None  # Track max price for trailing stop
+    min_price: Optional[Decimal] = None  # Track min price for trailing stop
 
     def __post_init__(self):
         """Ensure Decimal types."""
@@ -351,6 +385,25 @@ class Position:
             self.take_profit_price = Decimal(str(self.take_profit_price))
         if self.stop_loss_price is not None and not isinstance(self.stop_loss_price, Decimal):
             self.stop_loss_price = Decimal(str(self.stop_loss_price))
+        if self.max_price is not None and not isinstance(self.max_price, Decimal):
+            self.max_price = Decimal(str(self.max_price))
+        if self.min_price is not None and not isinstance(self.min_price, Decimal):
+            self.min_price = Decimal(str(self.min_price))
+
+        # Initialize max/min price from entry price if not set
+        if self.max_price is None:
+            self.max_price = self.entry_price
+        if self.min_price is None:
+            self.min_price = self.entry_price
+
+    def update_extremes(self, current_price: Decimal) -> None:
+        """Update max/min price tracking for trailing stop."""
+        if not isinstance(current_price, Decimal):
+            current_price = Decimal(str(current_price))
+        if self.max_price is None or current_price > self.max_price:
+            self.max_price = current_price
+        if self.min_price is None or current_price < self.min_price:
+            self.min_price = current_price
 
     @property
     def notional_value(self) -> Decimal:
