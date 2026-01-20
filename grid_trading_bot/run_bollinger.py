@@ -36,7 +36,7 @@ def get_config_from_env() -> BollingerConfig:
     """從環境變數讀取配置"""
     return BollingerConfig(
         # 基本設定
-        symbol=os.getenv('BOLLINGER_SYMBOL', 'ETHUSDT'),
+        symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('BOLLINGER_TIMEFRAME', '15m'),
         leverage=int(os.getenv('BOLLINGER_LEVERAGE', '1')),
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
@@ -152,7 +152,7 @@ async def main() -> None:
     print(f"  RSI 過濾: {'開啟' if config.use_rsi_filter else '關閉'} ({config.rsi_oversold}/{config.rsi_overbought})")
     print(f"  ATR 止損: {'開啟' if config.use_atr_stop else '關閉'} ({config.atr_multiplier}x ATR)")
     print(f"  最大持倉: {config.max_hold_bars} 根 K 線")
-    print(f"\n  策略: S4 雙重過濾 (Sharpe 9.68)")
+    print(f"\n  策略: S4 雙重過濾 (2年回測 Sharpe 2.05)")
     print()
 
     try:
