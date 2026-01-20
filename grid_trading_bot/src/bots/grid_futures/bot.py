@@ -63,7 +63,13 @@ class GridFuturesBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
     ):
-        super().__init__(bot_id)
+        super().__init__(
+            bot_id=bot_id,
+            config=config,
+            exchange=exchange,
+            data_manager=data_manager,
+            notifier=notifier,
+        )
         self._config = config
         self._exchange = exchange
         self._data_manager = data_manager
@@ -116,6 +122,14 @@ class GridFuturesBot(BaseBot):
 
         logger.info(f"Initial capital: {self._capital} USDT")
 
+        # Check minimum capital requirement (need at least ~$100 for 0.001 BTC)
+        min_trade_value = Decimal("100")  # Approximate for 0.001 BTC at ~$90k
+        if self._capital < min_trade_value:
+            logger.warning(
+                f"Capital ({self._capital} USDT) may be too low to trade. "
+                f"Minimum recommended: {min_trade_value} USDT"
+            )
+
         # Load historical data for indicators
         await self._load_historical_data()
 
@@ -131,9 +145,19 @@ class GridFuturesBot(BaseBot):
 
         logger.info("Grid Futures Bot started successfully")
 
-    async def _do_stop(self) -> None:
-        """Stop the bot."""
+    async def _do_stop(self, clear_position: bool = False) -> None:
+        """
+        Stop the bot.
+
+        Args:
+            clear_position: If True, close any open position before stopping
+        """
         logger.info("Stopping Grid Futures Bot")
+
+        # Close position if requested
+        if clear_position and self._position:
+            current_price = await self._get_current_price()
+            await self._close_position(current_price, ExitReason.BOT_STOP)
 
         # Cancel monitor task
         if self._monitor_task:
@@ -237,8 +261,9 @@ class GridFuturesBot(BaseBot):
     async def _update_capital(self) -> None:
         """Update available capital."""
         try:
-            balance = await self._exchange.futures.get_balance()
-            available = Decimal(str(balance.get('availableBalance', 0)))
+            # Use direct futures API get_balance method
+            balance = await self._exchange.futures.get_balance("USDT")
+            available = balance.free if balance else Decimal("0")
 
             if self._config.max_capital:
                 self._capital = min(available, self._config.max_capital)
@@ -277,7 +302,7 @@ class GridFuturesBot(BaseBot):
         """Get current market price."""
         try:
             ticker = await self._exchange.futures.get_ticker(self._config.symbol)
-            return Decimal(str(ticker.get('lastPrice', 0)))
+            return ticker.price if ticker else Decimal("0")
         except Exception as e:
             logger.error(f"Failed to get price: {e}")
             return Decimal("0")
@@ -436,18 +461,16 @@ class GridFuturesBot(BaseBot):
             positions = await self._exchange.futures.get_positions(self._config.symbol)
 
             for pos in positions:
-                amt = Decimal(str(pos.get('positionAmt', 0)))
-                if amt != 0:
-                    side = PositionSide.LONG if amt > 0 else PositionSide.SHORT
+                if pos.quantity > 0:
                     self._position = FuturesPosition(
                         symbol=self._config.symbol,
-                        side=side,
-                        entry_price=Decimal(str(pos.get('entryPrice', 0))),
-                        quantity=abs(amt),
+                        side=pos.side,
+                        entry_price=pos.entry_price,
+                        quantity=pos.quantity,
                         leverage=self._config.leverage,
-                        unrealized_pnl=Decimal(str(pos.get('unrealizedProfit', 0))),
+                        unrealized_pnl=pos.unrealized_pnl,
                     )
-                    logger.info(f"Synced existing position: {side.value} {abs(amt)}")
+                    logger.info(f"Synced existing position: {pos.side.value} {pos.quantity}")
                     return
 
             self._position = None
@@ -462,6 +485,15 @@ class GridFuturesBot(BaseBot):
             trade_value = self._capital * self._config.position_size_pct
             quantity = trade_value / price
 
+            # Round quantity to exchange precision (0.001 for BTCUSDT)
+            quantity = quantity.quantize(Decimal("0.001"))
+
+            # Minimum order for BTCUSDT is 0.001 BTC
+            min_quantity = Decimal("0.001")
+            if quantity < min_quantity:
+                # Don't log repeatedly - capital is simply too low
+                return False
+
             # Check max position limit
             if self._position:
                 current_value = self._position.quantity * price
@@ -469,19 +501,21 @@ class GridFuturesBot(BaseBot):
                     logger.debug("Max position reached, skipping")
                     return False
 
-            # Place order
-            order_side = "BUY" if side == PositionSide.LONG else "SELL"
-
-            order = await self._exchange.futures.place_order(
-                symbol=self._config.symbol,
-                side=order_side,
-                order_type="MARKET",
-                quantity=float(quantity),
-            )
+            # Place market order using convenience methods
+            if side == PositionSide.LONG:
+                order = await self._exchange.futures.market_buy(
+                    symbol=self._config.symbol,
+                    quantity=quantity,
+                )
+            else:
+                order = await self._exchange.futures.market_sell(
+                    symbol=self._config.symbol,
+                    quantity=quantity,
+                )
 
             if order:
-                fill_price = Decimal(str(order.get('avgPrice', price)))
-                fill_qty = Decimal(str(order.get('executedQty', quantity)))
+                fill_price = order.avg_price if order.avg_price else price
+                fill_qty = order.filled_qty
 
                 # Update position
                 if self._position and self._position.side == side:
@@ -526,20 +560,25 @@ class GridFuturesBot(BaseBot):
 
         try:
             close_qty = quantity or self._position.quantity
+            # Round to exchange precision
+            close_qty = close_qty.quantize(Decimal("0.001"))
 
-            # Place closing order
-            order_side = "SELL" if self._position.side == PositionSide.LONG else "BUY"
-
-            order = await self._exchange.futures.place_order(
-                symbol=self._config.symbol,
-                side=order_side,
-                order_type="MARKET",
-                quantity=float(close_qty),
-                reduce_only=True,
-            )
+            # Place closing order (reduce_only)
+            if self._position.side == PositionSide.LONG:
+                order = await self._exchange.futures.market_sell(
+                    symbol=self._config.symbol,
+                    quantity=close_qty,
+                    reduce_only=True,
+                )
+            else:
+                order = await self._exchange.futures.market_buy(
+                    symbol=self._config.symbol,
+                    quantity=close_qty,
+                    reduce_only=True,
+                )
 
             if order:
-                fill_price = Decimal(str(order.get('avgPrice', current_price)))
+                fill_price = order.avg_price if order.avg_price else current_price
 
                 # Calculate PnL
                 if self._position.side == PositionSide.LONG:
@@ -690,10 +729,7 @@ class GridFuturesBot(BaseBot):
                 if self._position:
                     self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
 
-                # Heartbeat
-                await self._heartbeat()
-
-                # Wait for next tick
+                # Wait for next tick (heartbeat is handled by BaseBot)
                 await asyncio.sleep(1)
 
             except asyncio.CancelledError:
@@ -705,18 +741,55 @@ class GridFuturesBot(BaseBot):
         logger.info("Monitor loop stopped")
 
     # =========================================================================
-    # Stop with Position Clear
+    # BaseBot Abstract Methods - Extra Status and Health Checks
     # =========================================================================
 
-    async def stop(self, clear_position: bool = False) -> bool:
-        """
-        Stop the bot.
+    def _get_extra_status(self) -> Dict[str, Any]:
+        """Return extra status fields specific to Grid Futures bot."""
+        extra = {
+            "grid": None,
+            "position": None,
+            "stats": self._grid_stats.to_dict(),
+        }
 
-        Args:
-            clear_position: If True, close any open position before stopping
-        """
-        if clear_position and self._position:
-            current_price = await self._get_current_price()
-            await self._close_position(current_price, ExitReason.BOT_STOP)
+        if self._grid:
+            extra["grid"] = {
+                "center": str(self._grid.center_price),
+                "upper": str(self._grid.upper_price),
+                "lower": str(self._grid.lower_price),
+                "count": self._grid.grid_count,
+                "version": self._grid.version,
+            }
 
-        return await super().stop()
+        if self._position:
+            extra["position"] = {
+                "side": self._position.side.value,
+                "entry_price": str(self._position.entry_price),
+                "quantity": str(self._position.quantity),
+                "unrealized_pnl": str(self._position.unrealized_pnl),
+            }
+
+        return extra
+
+    async def _extra_health_checks(self) -> Dict[str, bool]:
+        """Perform extra health checks specific to Grid Futures bot."""
+        checks = {}
+
+        # Check if grid is valid
+        checks["grid_valid"] = self._grid is not None
+
+        # Check price is reasonable
+        try:
+            price = await self._get_current_price()
+            checks["price_available"] = price > 0
+        except Exception:
+            checks["price_available"] = False
+
+        # Check position sync
+        if self._position:
+            checks["position_synced"] = self._position.quantity > 0
+        else:
+            checks["position_synced"] = True  # No position is valid
+
+        return checks
+

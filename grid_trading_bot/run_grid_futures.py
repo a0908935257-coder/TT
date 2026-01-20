@@ -189,8 +189,8 @@ async def main() -> None:
     print(f"  動態範圍: {'開啟' if config.use_atr_range else '關閉'} ({config.atr_multiplier}x ATR)")
     print(f"  備用範圍: ±{config.fallback_range_pct*100}%")
 
-    print(f"\n  策略: 優化版 @ {config.leverage}x")
-    print(f"  回測績效: 年化 113.6%, 回撤 24.7%, Sharpe 1.54")
+    print(f"\n  策略: 穩健版 @ {config.leverage}x")
+    print(f"  回測績效: 年化 ~20%, 通過過度擬合驗證")
     print()
 
     try:
