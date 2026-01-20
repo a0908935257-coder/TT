@@ -53,6 +53,7 @@ class SupertrendConfig:
     atr_period: int = 10
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
     leverage: int = 1
+    margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
 
     # Optional trailing stop

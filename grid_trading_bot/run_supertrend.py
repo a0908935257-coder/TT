@@ -3,7 +3,8 @@
 Supertrend Bot Runner.
 
 啟動 Supertrend 趨勢跟蹤交易機器人。
-策略：ST1 (ATR 10, 乘數 3.0) - 2年回測 Sharpe 2.24, 年化 8.3%
+策略：ST1 (ATR 10, 乘數 3.0) @ 50x 逐倉
+2年回測: Sharpe 2.45, 總盈虧 +90,423 USDT
 """
 
 import asyncio
@@ -38,7 +39,8 @@ def get_config_from_env() -> SupertrendConfig:
         # 基本設定
         symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '1')),
+        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '50')),
+        margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
         # Supertrend 設定 (ST1 策略 - 最佳 Sharpe)
@@ -125,13 +127,14 @@ async def main() -> None:
     print(f"  交易對: {config.symbol}")
     print(f"  時間框架: {config.timeframe}")
     print(f"  槓桿: {config.leverage}x")
+    print(f"  保證金模式: {config.margin_type} (逐倉)")
     print(f"  單次倉位: {config.position_size_pct*100}%")
     print(f"  ATR 週期: {config.atr_period}")
     print(f"  ATR 乘數: {config.atr_multiplier}")
     print(f"  追蹤止損: {'開啟' if config.use_trailing_stop else '關閉'}")
     if config.use_trailing_stop:
         print(f"  追蹤止損比例: {config.trailing_stop_pct*100}%")
-    print(f"\n  策略: ST1 (2年回測 Sharpe 2.24, 年化 ~8.3%)")
+    print(f"\n  策略: ST1 @ {config.leverage}x (2年回測 Sharpe 2.45)")
     print(f"  預期交易頻率: ~95 次/年 (~2 次/週)")
     print()
 

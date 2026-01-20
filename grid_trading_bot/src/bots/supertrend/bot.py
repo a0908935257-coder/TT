@@ -82,6 +82,12 @@ class SupertrendBot(BaseBot):
             self._state = BotState.STARTING
             logger.info(f"Starting Supertrend Bot for {self._config.symbol}")
 
+            # Set margin type (ISOLATED for risk control)
+            await self._exchange.set_margin_type(
+                symbol=self._config.symbol,
+                margin_type=self._config.margin_type,
+            )
+
             # Set leverage
             await self._exchange.set_leverage(
                 symbol=self._config.symbol,
