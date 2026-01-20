@@ -678,6 +678,36 @@ class GridFuturesBot(BaseBot):
                 level.state = GridLevelState.EMPTY
 
     # =========================================================================
+    # Stop Loss Check
+    # =========================================================================
+
+    async def _check_stop_loss(self, current_price: Decimal) -> bool:
+        """
+        Check if stop loss should be triggered.
+
+        Returns:
+            True if position was closed due to stop loss
+        """
+        if not self._position:
+            return False
+
+        # Calculate PnL percentage
+        if self._position.side == PositionSide.LONG:
+            pnl_pct = (current_price - self._position.entry_price) / self._position.entry_price
+        else:
+            pnl_pct = (self._position.entry_price - current_price) / self._position.entry_price
+
+        # Check if loss exceeds stop loss threshold
+        if pnl_pct < -self._config.stop_loss_pct:
+            logger.warning(
+                f"Stop loss triggered: PnL {pnl_pct*100:.2f}% < -{self._config.stop_loss_pct*100:.1f}%"
+            )
+            await self._close_position(current_price, ExitReason.STOP_LOSS)
+            return True
+
+        return False
+
+    # =========================================================================
     # Main Loop
     # =========================================================================
 
@@ -725,9 +755,13 @@ class GridFuturesBot(BaseBot):
                 await self._update_capital()
                 self._grid_stats.update_drawdown(self._capital, self._initial_capital)
 
-                # Update position PnL
+                # Update position PnL and check stop loss
                 if self._position:
                     self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
+
+                    # Check stop loss
+                    if await self._check_stop_loss(current_price):
+                        logger.warning(f"Stop loss triggered at {current_price}")
 
                 # Wait for next tick (heartbeat is handled by BaseBot)
                 await asyncio.sleep(1)

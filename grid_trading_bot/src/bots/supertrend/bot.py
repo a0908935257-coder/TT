@@ -342,6 +342,13 @@ class SupertrendBot(BaseBot):
                         Decimal(self._config.leverage)
                     )
 
+                # Check trailing stop
+                if self._config.use_trailing_stop:
+                    if self._check_trailing_stop(current_price):
+                        logger.warning(f"Trailing stop triggered at {current_price}")
+                        await self._close_position(ExitReason.STOP_LOSS)
+                        return  # Don't open new position after stop loss
+
             # Check for trend flip
             if current_trend != self._prev_trend and self._prev_trend != 0:
                 logger.info(
@@ -416,6 +423,41 @@ class SupertrendBot(BaseBot):
 
         except Exception as e:
             logger.error(f"Failed to open position: {e}")
+
+    def _check_trailing_stop(self, current_price: Decimal) -> bool:
+        """
+        Check if trailing stop should be triggered.
+
+        Returns:
+            True if stop loss should trigger
+        """
+        if not self._position:
+            return False
+
+        stop_pct = self._config.trailing_stop_pct
+
+        if self._position.side == PositionSide.LONG:
+            # For long: stop if price drops stop_pct below max price
+            if self._position.max_price is not None:
+                stop_price = self._position.max_price * (Decimal("1") - stop_pct)
+                if current_price <= stop_price:
+                    logger.info(
+                        f"Trailing stop: price {current_price:.2f} <= "
+                        f"stop {stop_price:.2f} (max: {self._position.max_price:.2f})"
+                    )
+                    return True
+        else:
+            # For short: stop if price rises stop_pct above min price
+            if self._position.min_price is not None:
+                stop_price = self._position.min_price * (Decimal("1") + stop_pct)
+                if current_price >= stop_price:
+                    logger.info(
+                        f"Trailing stop: price {current_price:.2f} >= "
+                        f"stop {stop_price:.2f} (min: {self._position.min_price:.2f})"
+                    )
+                    return True
+
+        return False
 
     async def _close_position(self, reason: ExitReason) -> None:
         """Close current position."""
