@@ -649,27 +649,31 @@ async def main():
         print("K 線數量不足")
         return
 
-    # === Run Basic Strategy ===
-    print("\n正在運行基礎策略...")
+    # === Run Basic Strategy (as baseline) ===
+    print("\n正在運行基礎策略（作為對照）...")
 
-    # Import basic backtest
-    from run_bollinger_backtest_real import BollingerBacktest, BollingerBacktestResult
-    from src.bots.bollinger.models import BollingerConfig
-
-    basic_config = BollingerConfig(
+    basic_config = OptimizedConfig(
         symbol=args.symbol,
-        timeframe=args.interval,
         bb_period=20,
         bb_std=Decimal("2.0"),
-        bbw_lookback=100,
-        bbw_threshold_pct=20,
-        stop_loss_pct=Decimal("0.015"),
+        trend_period=50,
+        use_trend_filter=False,  # 基礎版無趨勢過濾
+        rsi_period=14,
+        rsi_oversold=30,
+        rsi_overbought=70,
+        use_rsi_filter=False,  # 基礎版無 RSI 過濾
+        atr_period=14,
+        atr_multiplier=Decimal("2.0"),
+        use_atr_stop=False,  # 基礎版用固定止損
+        use_opposite_band_tp=False,
         max_hold_bars=16,
         leverage=2,
         position_size_pct=Decimal("0.1"),
+        bbw_lookback=100,
+        bbw_threshold_pct=20,
     )
 
-    basic_backtest = BollingerBacktest(klines=klines, config=basic_config)
+    basic_backtest = OptimizedBollingerBacktest(klines=klines, config=basic_config)
     basic_result = basic_backtest.run()
 
     print_result("基礎策略", basic_result, args.symbol, args.interval)
@@ -677,92 +681,33 @@ async def main():
     # === Run Optimized Strategy ===
     print("\n正在運行優化策略...")
 
-    # Try multiple configurations - focus on practical improvements
+    # Optimized configurations targeting Sharpe > 1
     configs = [
-        ("v1: 趨勢過濾+寬鬆RSI", OptimizedConfig(
+        # === 高 Sharpe 策略 (目標 Sharpe > 1) ===
+        ("S1: 嚴格趨勢+RSI", OptimizedConfig(
             symbol=args.symbol,
             bb_period=20,
             bb_std=Decimal("2.0"),
-            trend_period=50,
+            trend_period=100,  # 更長趨勢週期，減少假信號
             use_trend_filter=True,
             rsi_period=14,
-            rsi_oversold=35,  # More relaxed
-            rsi_overbought=65,  # More relaxed
+            rsi_oversold=25,  # 更嚴格
+            rsi_overbought=75,
             use_rsi_filter=True,
             atr_period=14,
             atr_multiplier=Decimal("2.0"),
             use_atr_stop=True,
-            use_opposite_band_tp=False,  # Use middle band
-            max_hold_bars=24,
-            leverage=2,
-            position_size_pct=Decimal("0.1"),
-            bbw_lookback=100,
-            bbw_threshold_pct=20,  # Same as basic
-        )),
-        ("v2: 只趨勢過濾", OptimizedConfig(
-            symbol=args.symbol,
-            bb_period=20,
-            bb_std=Decimal("2.0"),
-            trend_period=50,
-            use_trend_filter=True,
-            rsi_period=14,
-            rsi_oversold=30,
-            rsi_overbought=70,
-            use_rsi_filter=False,  # No RSI
-            atr_period=14,
-            atr_multiplier=Decimal("2.0"),
-            use_atr_stop=True,
             use_opposite_band_tp=False,
             max_hold_bars=24,
-            leverage=2,
+            leverage=1,  # 低槓桿提高 Sharpe
             position_size_pct=Decimal("0.1"),
             bbw_lookback=100,
-            bbw_threshold_pct=20,
+            bbw_threshold_pct=25,
         )),
-        ("v3: ATR止損+中軌止盈", OptimizedConfig(
+        ("S2: 極端進場+中軌出場", OptimizedConfig(
             symbol=args.symbol,
             bb_period=20,
-            bb_std=Decimal("2.0"),
-            trend_period=50,
-            use_trend_filter=False,
-            rsi_period=14,
-            rsi_oversold=30,
-            rsi_overbought=70,
-            use_rsi_filter=False,
-            atr_period=14,
-            atr_multiplier=Decimal("2.5"),  # Wider ATR stop
-            use_atr_stop=True,
-            use_opposite_band_tp=False,
-            max_hold_bars=24,
-            leverage=2,
-            position_size_pct=Decimal("0.1"),
-            bbw_lookback=100,
-            bbw_threshold_pct=20,
-        )),
-        ("v4: 趨勢+ATR寬止損", OptimizedConfig(
-            symbol=args.symbol,
-            bb_period=20,
-            bb_std=Decimal("2.0"),
-            trend_period=50,
-            use_trend_filter=True,
-            rsi_period=14,
-            rsi_oversold=30,
-            rsi_overbought=70,
-            use_rsi_filter=False,
-            atr_period=14,
-            atr_multiplier=Decimal("3.0"),  # Even wider
-            use_atr_stop=True,
-            use_opposite_band_tp=False,
-            max_hold_bars=32,  # Longer hold time
-            leverage=2,
-            position_size_pct=Decimal("0.1"),
-            bbw_lookback=100,
-            bbw_threshold_pct=20,
-        )),
-        ("v5: 較短BB週期", OptimizedConfig(
-            symbol=args.symbol,
-            bb_period=15,  # Shorter period
-            bb_std=Decimal("2.0"),
+            bb_std=Decimal("2.5"),  # 2.5倍標準差，只在極端進場
             trend_period=50,
             use_trend_filter=True,
             rsi_period=14,
@@ -772,70 +717,90 @@ async def main():
             atr_period=14,
             atr_multiplier=Decimal("2.5"),
             use_atr_stop=True,
-            use_opposite_band_tp=False,
-            max_hold_bars=24,
-            leverage=2,
+            use_opposite_band_tp=False,  # 中軌出場更快獲利
+            max_hold_bars=16,
+            leverage=1,
             position_size_pct=Decimal("0.1"),
             bbw_lookback=100,
             bbw_threshold_pct=20,
         )),
-        ("v6: 低槓桿+緊帶", OptimizedConfig(
+        ("S3: 長趨勢+寬ATR止損", OptimizedConfig(
             symbol=args.symbol,
             bb_period=20,
-            bb_std=Decimal("2.5"),  # Tighter bands - only extreme entries
-            trend_period=50,
+            bb_std=Decimal("2.0"),
+            trend_period=100,
             use_trend_filter=True,
             rsi_period=14,
-            rsi_oversold=30,
-            rsi_overbought=70,
-            use_rsi_filter=False,
+            rsi_oversold=35,
+            rsi_overbought=65,
+            use_rsi_filter=True,
             atr_period=14,
-            atr_multiplier=Decimal("2.0"),
+            atr_multiplier=Decimal("3.0"),  # 寬止損避免過早止損
             use_atr_stop=True,
-            use_opposite_band_tp=True,  # Use opposite band for more profit
+            use_opposite_band_tp=False,
             max_hold_bars=32,
-            leverage=1,  # Lower leverage for better Sharpe
+            leverage=1,
             position_size_pct=Decimal("0.1"),
             bbw_lookback=100,
-            bbw_threshold_pct=25,  # Only trade when BBW is higher
+            bbw_threshold_pct=20,
         )),
-        ("v7: 趨勢+RSI嚴格", OptimizedConfig(
+        ("S4: 雙重過濾(趨勢+RSI+BBW)", OptimizedConfig(
             symbol=args.symbol,
             bb_period=20,
             bb_std=Decimal("2.0"),
             trend_period=50,
             use_trend_filter=True,
             rsi_period=14,
-            rsi_oversold=25,  # Very strict RSI
-            rsi_overbought=75,  # Very strict RSI
+            rsi_oversold=30,
+            rsi_overbought=70,
             use_rsi_filter=True,
             atr_period=14,
-            atr_multiplier=Decimal("1.5"),  # Tighter stop
+            atr_multiplier=Decimal("2.0"),
             use_atr_stop=True,
             use_opposite_band_tp=False,
-            max_hold_bars=16,  # Shorter hold
+            max_hold_bars=24,
             leverage=1,
             position_size_pct=Decimal("0.1"),
             bbw_lookback=100,
-            bbw_threshold_pct=30,  # Skip squeeze entirely
+            bbw_threshold_pct=35,  # 更嚴格的 BBW 過濾
         )),
-        ("v8: 保守設定", OptimizedConfig(
+        ("S5: 短週期BB+嚴格過濾", OptimizedConfig(
             symbol=args.symbol,
-            bb_period=20,
-            bb_std=Decimal("2.2"),  # Slightly tighter
-            trend_period=100,  # Longer trend filter
+            bb_period=15,
+            bb_std=Decimal("2.2"),
+            trend_period=50,
             use_trend_filter=True,
             rsi_period=14,
-            rsi_oversold=30,
-            rsi_overbought=70,
-            use_rsi_filter=False,
+            rsi_oversold=28,
+            rsi_overbought=72,
+            use_rsi_filter=True,
             atr_period=14,
-            atr_multiplier=Decimal("1.5"),  # Tighter stop = smaller losses
+            atr_multiplier=Decimal("2.0"),
             use_atr_stop=True,
-            use_opposite_band_tp=False,  # Middle band = faster exit
-            max_hold_bars=12,  # Very short hold
+            use_opposite_band_tp=False,
+            max_hold_bars=20,
             leverage=1,
-            position_size_pct=Decimal("0.05"),  # Smaller position
+            position_size_pct=Decimal("0.1"),
+            bbw_lookback=100,
+            bbw_threshold_pct=25,
+        )),
+        ("S6: 超嚴格進場", OptimizedConfig(
+            symbol=args.symbol,
+            bb_period=20,
+            bb_std=Decimal("2.8"),  # 非常極端才進場
+            trend_period=100,
+            use_trend_filter=True,
+            rsi_period=14,
+            rsi_oversold=20,
+            rsi_overbought=80,
+            use_rsi_filter=True,
+            atr_period=14,
+            atr_multiplier=Decimal("2.0"),
+            use_atr_stop=True,
+            use_opposite_band_tp=False,
+            max_hold_bars=24,
+            leverage=1,
+            position_size_pct=Decimal("0.1"),
             bbw_lookback=100,
             bbw_threshold_pct=30,
         )),

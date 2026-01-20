@@ -99,6 +99,12 @@ class BollingerConfig:
     use_trend_filter: bool = True
     trend_period: int = 50
 
+    # RSI Filter (optimized for Sharpe > 1)
+    use_rsi_filter: bool = True
+    rsi_period: int = 14
+    rsi_oversold: int = 30
+    rsi_overbought: int = 70
+
     # ATR Stop Loss
     use_atr_stop: bool = True
     atr_period: int = 14

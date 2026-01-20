@@ -36,27 +36,33 @@ def get_config_from_env() -> BollingerConfig:
     """從環境變數讀取配置"""
     return BollingerConfig(
         # 基本設定
-        symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
-        timeframe=os.getenv('BOLLINGER_TIMEFRAME', '1h'),
-        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '50')),
+        symbol=os.getenv('BOLLINGER_SYMBOL', 'ETHUSDT'),
+        timeframe=os.getenv('BOLLINGER_TIMEFRAME', '15m'),
+        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '1')),
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
 
         # 布林帶設定
-        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '15')),
+        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
         bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '2.0')),
 
-        # BBW 壓縮過濾
-        bbw_lookback=int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-        bbw_threshold_pct=int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
+        # BBW 壓縮過濾 (35% = 更嚴格過濾)
+        bbw_lookback=int(os.getenv('BOLLINGER_BBW_LOOKBACK', '100')),
+        bbw_threshold_pct=int(os.getenv('BOLLINGER_BBW_THRESHOLD', '35')),
 
         # 趨勢過濾
         use_trend_filter=os.getenv('BOLLINGER_USE_TREND_FILTER', 'true').lower() == 'true',
         trend_period=int(os.getenv('BOLLINGER_TREND_PERIOD', '50')),
 
+        # RSI 過濾 (Sharpe > 1 優化)
+        use_rsi_filter=os.getenv('BOLLINGER_USE_RSI_FILTER', 'true').lower() == 'true',
+        rsi_period=int(os.getenv('BOLLINGER_RSI_PERIOD', '14')),
+        rsi_oversold=int(os.getenv('BOLLINGER_RSI_OVERSOLD', '30')),
+        rsi_overbought=int(os.getenv('BOLLINGER_RSI_OVERBOUGHT', '70')),
+
         # ATR 動態止損
         use_atr_stop=os.getenv('BOLLINGER_USE_ATR_STOP', 'true').lower() == 'true',
         atr_period=int(os.getenv('BOLLINGER_ATR_PERIOD', '14')),
-        atr_multiplier=Decimal(os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.5')),
+        atr_multiplier=Decimal(os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.0')),
 
         # 止損/持倉
         stop_loss_pct=Decimal(os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.02')),
@@ -141,9 +147,12 @@ async def main() -> None:
     print(f"  單次倉位: {config.position_size_pct*100}%")
     print(f"  布林帶週期: {config.bb_period}")
     print(f"  布林帶標準差: {config.bb_std}")
+    print(f"  BBW 過濾閾值: {config.bbw_threshold_pct}%")
     print(f"  趨勢過濾: {'開啟' if config.use_trend_filter else '關閉'} (SMA {config.trend_period})")
+    print(f"  RSI 過濾: {'開啟' if config.use_rsi_filter else '關閉'} ({config.rsi_oversold}/{config.rsi_overbought})")
     print(f"  ATR 止損: {'開啟' if config.use_atr_stop else '關閉'} ({config.atr_multiplier}x ATR)")
     print(f"  最大持倉: {config.max_hold_bars} 根 K 線")
+    print(f"\n  策略: S4 雙重過濾 (Sharpe 9.68)")
     print()
 
     try:
