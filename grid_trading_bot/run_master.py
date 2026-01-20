@@ -103,16 +103,25 @@ def print_help():
 可用指令:
   list          - 列出所有機器人
   status        - 顯示 Dashboard 摘要
-  create <symbol> [investment] - 建立新的 GridBot
-  start <bot_id>  - 啟動機器人
-  stop <bot_id>   - 停止機器人
-  pause <bot_id>  - 暫停機器人
-  resume <bot_id> - 恢復機器人
-  delete <bot_id> - 刪除機器人
-  info <bot_id>   - 顯示機器人詳情
-  health          - 健康檢查
-  help            - 顯示此幫助
-  quit / exit     - 退出程式
+
+  建立機器人:
+    create grid <symbol> [investment]         - 建立 Grid Bot (現貨)
+    create bollinger <symbol>                 - 建立 Bollinger Bot (合約)
+    create supertrend <symbol>                - 建立 Supertrend Bot (合約)
+    create grid_futures <symbol>              - 建立 Grid Futures Bot (合約)
+
+  機器人控制:
+    start <bot_id>  - 啟動機器人
+    stop <bot_id>   - 停止機器人
+    pause <bot_id>  - 暫停機器人
+    resume <bot_id> - 恢復機器人
+    delete <bot_id> - 刪除機器人
+
+  其他:
+    info <bot_id>   - 顯示機器人詳情
+    health          - 健康檢查
+    help            - 顯示此幫助
+    quit / exit     - 退出程式
 """)
 
 
@@ -163,25 +172,90 @@ Dashboard 摘要:
 """)
 
         elif command == 'create':
-            if len(parts) < 2:
-                print("用法: create <symbol> [investment]")
-                print("例如: create BTCUSDT 100")
+            if len(parts) < 3:
+                print("用法: create <type> <symbol> [options]")
+                print("類型: grid, bollinger, supertrend, grid_futures")
+                print("例如: create grid BTCUSDT 100")
+                print("      create bollinger BTCUSDT")
+                print("      create supertrend BTCUSDT")
+                print("      create grid_futures BTCUSDT")
                 return True
 
-            symbol = parts[1].upper()
-            investment = parts[2] if len(parts) > 2 else os.getenv('GRID_INVESTMENT', '70')
-            risk_level = os.getenv('GRID_RISK_LEVEL', 'medium')
-            if risk_level == 'medium':
-                risk_level = 'moderate'
+            bot_type_str = parts[1].lower()
+            symbol = parts[2].upper()
 
-            bot_config = {
-                "symbol": symbol,
-                "market_type": "spot",
-                "total_investment": investment,
-                "risk_level": risk_level,
-            }
+            # Parse bot type
+            if bot_type_str == 'grid':
+                bot_type = BotType.GRID
+                investment = parts[3] if len(parts) > 3 else os.getenv('GRID_INVESTMENT', '70')
+                risk_level = os.getenv('GRID_RISK_LEVEL', 'medium')
+                if risk_level == 'medium':
+                    risk_level = 'moderate'
+                bot_config = {
+                    "symbol": symbol,
+                    "market_type": "spot",
+                    "total_investment": investment,
+                    "risk_level": risk_level,
+                }
 
-            result = await master.create_bot(BotType.GRID, bot_config)
+            elif bot_type_str == 'bollinger':
+                bot_type = BotType.BOLLINGER
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '15m'),
+                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '20')),
+                    "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
+                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
+                    "bb_std": os.getenv('BOLLINGER_BB_STD', '3.25'),
+                    "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
+                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
+                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015'),
+                    "timeout_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),
+                }
+
+            elif bot_type_str == 'supertrend':
+                bot_type = BotType.SUPERTREND
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
+                    "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '30')),
+                    "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),
+                    "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '10')),
+                    "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+                    "max_capital": os.getenv('SUPERTREND_MAX_CAPITAL'),
+                    "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
+                    "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'true').lower() == 'true',
+                    "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.03'),
+                }
+
+            elif bot_type_str in ('grid_futures', 'gridfutures'):
+                bot_type = BotType.GRID_FUTURES
+                bot_config = {
+                    "symbol": symbol,
+                    "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
+                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '3')),
+                    "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
+                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '12')),
+                    "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
+                    "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
+                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),
+                    "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
+                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
+                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '2.0'),
+                    "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
+                    "max_capital": os.getenv('GRID_FUTURES_MAX_CAPITAL'),
+                    "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
+                    "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
+                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.05'),
+                    "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
+                }
+
+            else:
+                print(f"未知的機器人類型: {bot_type_str}")
+                print("支援類型: grid, bollinger, supertrend, grid_futures")
+                return True
+
+            result = await master.create_bot(bot_type, bot_config)
             if result.success:
                 print(f"✓ 機器人建立成功: {result.bot_id}")
             else:

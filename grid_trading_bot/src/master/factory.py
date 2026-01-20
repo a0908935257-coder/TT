@@ -103,6 +103,8 @@ class BotFactory:
         self._creators: dict[BotType, callable] = {
             BotType.GRID: self._create_grid_bot,
             BotType.BOLLINGER: self._create_bollinger_bot,
+            BotType.SUPERTREND: self._create_supertrend_bot,
+            BotType.GRID_FUTURES: self._create_grid_futures_bot,
             BotType.DCA: self._create_dca_bot,
             BotType.TRAILING_STOP: self._create_trailing_stop_bot,
             BotType.SIGNAL: self._create_signal_bot,
@@ -260,6 +262,109 @@ class BotFactory:
             data_manager=self._data_manager,
             notifier=self._notifier,
             heartbeat_callback=self._heartbeat_callback,
+        )
+
+        return bot
+
+    def _create_supertrend_bot(
+        self,
+        bot_id: str,
+        config: dict[str, Any],
+    ) -> BotProtocol:
+        """
+        Create a SupertrendBot instance.
+
+        Args:
+            bot_id: Bot identifier
+            config: Supertrend bot configuration
+
+        Returns:
+            SupertrendBot instance
+        """
+        # Import here to avoid circular imports
+        from decimal import Decimal
+
+        from src.bots.supertrend.bot import SupertrendBot
+        from src.bots.supertrend.models import SupertrendConfig
+
+        # Build SupertrendConfig from dict
+        supertrend_config = SupertrendConfig(
+            symbol=config["symbol"],
+            timeframe=config.get("timeframe", "15m"),
+            atr_period=int(config.get("atr_period", 25)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", "3.0"))),
+            leverage=int(config.get("leverage", 10)),
+            margin_type=config.get("margin_type", "ISOLATED"),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
+            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            use_trailing_stop=config.get("use_trailing_stop", False),
+            trailing_stop_pct=Decimal(str(config.get("trailing_stop_pct", "0.02"))),
+        )
+
+        # Create bot instance
+        bot = SupertrendBot(
+            bot_id=bot_id,
+            config=supertrend_config,
+            exchange=self._exchange,
+            data_manager=self._data_manager,
+            notifier=self._notifier,
+        )
+
+        return bot
+
+    def _create_grid_futures_bot(
+        self,
+        bot_id: str,
+        config: dict[str, Any],
+    ) -> BotProtocol:
+        """
+        Create a GridFuturesBot instance.
+
+        Args:
+            bot_id: Bot identifier
+            config: Grid Futures bot configuration
+
+        Returns:
+            GridFuturesBot instance
+        """
+        # Import here to avoid circular imports
+        from decimal import Decimal
+
+        from src.bots.grid_futures.bot import GridFuturesBot
+        from src.bots.grid_futures.models import GridFuturesConfig, GridDirection
+
+        # Parse direction
+        direction_str = config.get("direction", "neutral")
+        direction = GridDirection(direction_str)
+
+        # Build GridFuturesConfig from dict
+        grid_futures_config = GridFuturesConfig(
+            symbol=config["symbol"],
+            timeframe=config.get("timeframe", "1h"),
+            leverage=int(config.get("leverage", 3)),
+            margin_type=config.get("margin_type", "ISOLATED"),
+            grid_count=int(config.get("grid_count", 15)),
+            direction=direction,
+            use_trend_filter=config.get("use_trend_filter", True),
+            trend_period=int(config.get("trend_period", 30)),
+            use_atr_range=config.get("use_atr_range", True),
+            atr_period=int(config.get("atr_period", 14)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", "2.0"))),
+            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", "0.08"))),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
+            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),
+            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", "0.02"))),
+        )
+
+        # Create bot instance
+        bot = GridFuturesBot(
+            bot_id=bot_id,
+            config=grid_futures_config,
+            exchange=self._exchange,
+            data_manager=self._data_manager,
+            notifier=self._notifier,
         )
 
         return bot
