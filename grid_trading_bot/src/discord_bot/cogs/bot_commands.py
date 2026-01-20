@@ -211,7 +211,7 @@ class CreateBotModal(discord.ui.Modal):
         # Set title based on bot type
         titles = {
             "bollinger": "Create Bollinger Bot",
-            "supertrend": "Create Supertrend Bot",
+            "rsi": "Create RSI Bot",
             "grid_futures": "Create Grid Futures Bot",
             "grid": "Create Grid Bot (Spot)",
         }
@@ -256,21 +256,23 @@ class CreateBotModal(discord.ui.Modal):
                 }
                 type_info = f"Leverage: 20x | Timeframe: 15m"
 
-            elif self.bot_type_str == "supertrend":
-                bot_type = BotType.SUPERTREND
+            elif self.bot_type_str == "rsi":
+                bot_type = BotType.RSI
                 bot_config = {
                     "symbol": symbol,
-                    "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-                    "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '30')),
-                    "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),
-                    "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '10')),
-                    "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+                    "timeframe": os.getenv('RSI_TIMEFRAME', '15m'),
+                    "rsi_period": int(os.getenv('RSI_PERIOD', '14')),
+                    "oversold": int(os.getenv('RSI_OVERSOLD', '20')),
+                    "overbought": int(os.getenv('RSI_OVERBOUGHT', '80')),
+                    "exit_level": int(os.getenv('RSI_EXIT_LEVEL', '50')),
+                    "leverage": int(os.getenv('RSI_LEVERAGE', '7')),
+                    "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
                     "max_capital": max_capital,
-                    "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
-                    "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'true').lower() == 'true',
-                    "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.03'),
+                    "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
+                    "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.02'),
+                    "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.03'),
                 }
-                type_info = f"Leverage: 10x | Timeframe: 15m"
+                type_info = f"Leverage: 7x | RSI: 20/80"
 
             elif self.bot_type_str == "grid_futures":
                 bot_type = BotType.GRID_FUTURES
@@ -412,7 +414,7 @@ class BotCommands(commands.Cog):
     @app_commands.describe(bot_type="Type of bot to create")
     @app_commands.choices(bot_type=[
         app_commands.Choice(name="🔷 Bollinger Bot (合約 20x)", value="bollinger"),
-        app_commands.Choice(name="📈 Supertrend Bot (合約 10x)", value="supertrend"),
+        app_commands.Choice(name="📉 RSI Bot (合約 7x)", value="rsi"),
         app_commands.Choice(name="📊 Grid Futures Bot (合約 3x)", value="grid_futures"),
         app_commands.Choice(name="🟢 Grid Bot (現貨)", value="grid"),
     ])

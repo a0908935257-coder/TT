@@ -104,6 +104,7 @@ class BotFactory:
             BotType.GRID: self._create_grid_bot,
             BotType.BOLLINGER: self._create_bollinger_bot,
             BotType.SUPERTREND: self._create_supertrend_bot,
+            BotType.RSI: self._create_rsi_bot,
             BotType.GRID_FUTURES: self._create_grid_futures_bot,
             BotType.DCA: self._create_dca_bot,
             BotType.TRAILING_STOP: self._create_trailing_stop_bot,
@@ -374,6 +375,56 @@ class BotFactory:
         bot = GridFuturesBot(
             bot_id=bot_id,
             config=grid_futures_config,
+            exchange=self._exchange,
+            data_manager=self._data_manager,
+            notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
+        )
+
+        return bot
+
+    def _create_rsi_bot(
+        self,
+        bot_id: str,
+        config: dict[str, Any],
+    ) -> BotProtocol:
+        """
+        Create a RSI Mean Reversion Bot instance.
+
+        Args:
+            bot_id: Bot identifier
+            config: RSI bot configuration
+
+        Returns:
+            RSIBot instance
+        """
+        # Import here to avoid circular imports
+        from decimal import Decimal
+
+        from src.bots.rsi.bot import RSIBot
+        from src.bots.rsi.models import RSIConfig
+
+        # Build RSIConfig from dict
+        rsi_config = RSIConfig(
+            symbol=config["symbol"],
+            timeframe=config.get("timeframe", "15m"),
+            rsi_period=int(config.get("rsi_period", 14)),
+            oversold=int(config.get("oversold", 20)),
+            overbought=int(config.get("overbought", 80)),
+            exit_level=int(config.get("exit_level", 50)),
+            leverage=int(config.get("leverage", 7)),
+            margin_type=config.get("margin_type", "ISOLATED"),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
+            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),
+            take_profit_pct=Decimal(str(config.get("take_profit_pct", "0.03"))),
+            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
+        )
+
+        # Create bot instance
+        bot = RSIBot(
+            bot_id=bot_id,
+            config=rsi_config,
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,

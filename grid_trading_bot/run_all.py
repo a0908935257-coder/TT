@@ -53,7 +53,7 @@ def print_banner():
 啟動項目:
   ✓ Master 主控台
   ✓ Bollinger Bot (合約 20x)
-  ✓ Supertrend Bot (合約 10x)
+  ✓ RSI Bot (合約 7x) - 取代 Supertrend
   ✓ Grid Futures Bot (合約 3x)
   ✓ Discord Bot (遠端管理)
 
@@ -139,19 +139,21 @@ def get_bollinger_config() -> dict:
     }
 
 
-def get_supertrend_config() -> dict:
-    """Get Supertrend Bot config from .env."""
+def get_rsi_config() -> dict:
+    """Get RSI Bot config from .env."""
     return {
-        "symbol": os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
-        "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '30')),
-        "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),
-        "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '10')),
-        "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
-        "max_capital": os.getenv('SUPERTREND_MAX_CAPITAL', '7'),
-        "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
-        "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'true').lower() == 'true',
-        "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.03'),
+        "symbol": os.getenv('RSI_SYMBOL', 'BTCUSDT'),
+        "timeframe": os.getenv('RSI_TIMEFRAME', '15m'),
+        "rsi_period": int(os.getenv('RSI_PERIOD', '14')),
+        "oversold": int(os.getenv('RSI_OVERSOLD', '20')),
+        "overbought": int(os.getenv('RSI_OVERBOUGHT', '80')),
+        "exit_level": int(os.getenv('RSI_EXIT_LEVEL', '50')),
+        "leverage": int(os.getenv('RSI_LEVERAGE', '7')),
+        "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
+        "max_capital": os.getenv('RSI_MAX_CAPITAL', '7'),
+        "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
+        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.02'),
+        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.03'),
     }
 
 
@@ -198,10 +200,10 @@ async def create_and_start_bots(master: Master) -> list[str]:
     else:
         print(f"    ✗ 創建失敗: {result.message}")
 
-    # 2. Create Supertrend Bot
-    print("  創建 Supertrend Bot...")
-    supertrend_config = get_supertrend_config()
-    result = await master.create_bot(BotType.SUPERTREND, supertrend_config)
+    # 2. Create RSI Bot (replaces Supertrend)
+    print("  創建 RSI Bot...")
+    rsi_config = get_rsi_config()
+    result = await master.create_bot(BotType.RSI, rsi_config)
     if result.success:
         bot_ids.append(result.bot_id)
         print(f"    ✓ 已創建: {result.bot_id}")
