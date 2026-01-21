@@ -7,12 +7,13 @@ Strategy: RSI crossover (trend following, not mean reversion)
 - Long when RSI crosses above entry_level + threshold
 - Short when RSI crosses below entry_level - threshold
 
-Optimized configuration based on backtesting (1 year):
+預設參數 (需要重新驗證):
 - RSI Period: 21
 - Entry Level: 50, Momentum Threshold: 5
 - Leverage: 5x
-- Walk-Forward 一致性: 67%
-- Sharpe: 1.03
+
+注意：歷史驗證記錄 (2024) 與當前市場條件不符，
+2026-01 回測顯示 1 年 Sharpe -1.20，建議重新優化參數。
 """
 
 from dataclasses import dataclass, field
@@ -55,14 +56,13 @@ class RSIConfig:
     - Short when RSI crosses below entry_level - momentum_threshold
     - Exit on opposite RSI crossover or SL/TP
 
-    Optimized defaults based on 1 year backtesting (67% walk-forward):
+    預設參數:
     - RSI Period: 21
     - Entry Level: 50
     - Momentum Threshold: 5
     - Leverage: 5x
     - Stop Loss: 2%
     - Take Profit: 4%
-    - Sharpe: 1.03, Max DD: 6.9%
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")

@@ -62,29 +62,32 @@ class BollingerConfig:
     """
     Bollinger Bot configuration.
 
-    Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 5.45):
+    預設參數 (需要重新驗證):
     - bb_period: 15
     - bb_std: 1.5
     - leverage: 2x
+    - strategy_mode: BREAKOUT
     - use_trend_filter: True
     - max_hold_bars: 24
-    - 預期年化: ~109%, 最大回撤: 5.3%
+
+    注意：歷史驗證記錄 (2024) 與當前市場條件不符，
+    2026-01 回測顯示 Sharpe -1.37，建議重新優化參數。
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
         strategy_mode: Trading strategy mode (MEAN_REVERSION or BREAKOUT)
-        bb_period: Bollinger Band period (default 15, validated)
-        bb_std: Standard deviation multiplier (default 1.5, validated)
+        bb_period: Bollinger Band period (default 15)
+        bb_std: Standard deviation multiplier (default 1.5)
         bbw_lookback: BBW history lookback period (default 200)
         bbw_threshold_pct: BBW threshold percentile (default 20 for breakout)
         stop_loss_pct: Stop loss percentage (default 2%, fallback if ATR disabled)
-        max_hold_bars: Maximum bars to hold position (default 24, validated)
-        leverage: Futures leverage (default 2, validated)
+        max_hold_bars: Maximum bars to hold position (default 24)
+        leverage: Futures leverage (default 2)
         position_size_pct: Position size as percentage of balance (default 10%)
 
-        # Trend Filter (enabled for validated config)
-        use_trend_filter: Enable trend filter (default True, validated)
+        # Trend Filter
+        use_trend_filter: Enable trend filter (default True)
         trend_period: SMA period for trend detection (default 50)
 
         # RSI Filter
@@ -98,36 +101,36 @@ class BollingerConfig:
         atr_period: ATR calculation period (default 14)
         atr_multiplier: ATR multiplier for stop distance (default 2.0)
 
-        # Trailing Stop (disabled for validated config)
-        use_trailing_stop: Enable trailing stop (default False, validated)
+        # Trailing Stop
+        use_trailing_stop: Enable trailing stop (default False)
         trailing_atr_mult: Trailing stop ATR multiplier (default 2.0)
 
     Example:
         >>> config = BollingerConfig(
         ...     symbol="BTCUSDT",
         ...     strategy_mode=StrategyMode.BREAKOUT,
-        ...     leverage=2,  # Walk-forward validated
-        ...     bb_std=Decimal("1.5"),  # Walk-forward validated
+        ...     leverage=2,
+        ...     bb_std=Decimal("1.5"),
         ... )
     """
 
     symbol: str
     timeframe: str = "15m"  # 15m for breakout strategy
     strategy_mode: StrategyMode = StrategyMode.BREAKOUT  # Default to breakout
-    bb_period: int = 15  # Walk-forward validated: 15
-    bb_std: Decimal = field(default_factory=lambda: Decimal("1.5"))  # Walk-forward validated: 1.5
+    bb_period: int = 15
+    bb_std: Decimal = field(default_factory=lambda: Decimal("1.5"))
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20  # BBW expansion threshold for breakout
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 2% fallback
-    max_hold_bars: int = 24  # Walk-forward validated: 24
-    leverage: int = 2  # Walk-forward validated: 2x (83% consistency)
+    max_hold_bars: int = 24
+    leverage: int = 2
 
     # Capital allocation (資金分配)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
 
-    # Trend Filter (enabled for validated config)
-    use_trend_filter: bool = True  # Walk-forward validated: enabled
+    # Trend Filter
+    use_trend_filter: bool = True
     trend_period: int = 50
 
     # RSI Filter (disabled)
@@ -141,8 +144,8 @@ class BollingerConfig:
     atr_period: int = 14
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Trailing Stop (disabled for validated config)
-    use_trailing_stop: bool = False  # Walk-forward validated: disabled
+    # Trailing Stop
+    use_trailing_stop: bool = False
     trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
     def __post_init__(self):
