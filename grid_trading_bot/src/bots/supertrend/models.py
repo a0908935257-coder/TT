@@ -49,10 +49,9 @@ class SupertrendConfig:
         trailing_stop_pct: Trailing stop percentage (fallback)
 
     Walk-Forward 驗證 (2 年數據, 2024-01 ~ 2026-01):
-        - ATR=20, M=3.5: Sharpe 4.34, 報酬 +47.3%, 最大回撤 41.1%
+        - ATR=20, M=3.5: Sharpe 4.34, 報酬 +47.3%, 最大回撤 41.1% (預設)
         - ATR=25, M=3.0: Sharpe 3.80, 報酬 +45.3%, 最大回撤 38.0%
-        - ATR=14, M=2.5: Sharpe 3.44, 報酬 +48.6%, 最大回撤 29.4% (較低回撤)
-        - ATR=10, M=3.0: Sharpe 1.01, 報酬 -4.6% (舊配置，不建議)
+        - ATR=14, M=2.5: Sharpe 3.44, 報酬 +48.6%, 最大回撤 29.4% (低回撤)
     """
     symbol: str
     timeframe: str = "15m"
