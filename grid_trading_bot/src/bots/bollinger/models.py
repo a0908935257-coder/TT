@@ -62,16 +62,22 @@ class BollingerConfig:
     """
     Bollinger Bot configuration.
 
-    預設參數 (需要重新驗證):
-    - bb_period: 15
-    - bb_std: 1.5
-    - leverage: 2x
-    - strategy_mode: BREAKOUT
-    - use_trend_filter: True
-    - max_hold_bars: 24
+    ⚠️ 警告：不建議使用此策略 (2026-01 驗證結果)
+    ============================================
+    Walk-Forward 驗證結果 (1 年數據, 10+ 參數組合):
+    - 所有配置都是虧損的 (-1.6% ~ -99.9%)
+    - Walk-Forward 一致性: 0% (0/6 時段獲利)
+    - 最佳配置 (MR+trend L3): -1.6%, Sharpe -0.18
 
-    注意：歷史驗證記錄 (2024) 與當前市場條件不符，
-    2026-01 回測顯示 Sharpe -1.37，建議重新優化參數。
+    結論：Bollinger 策略在當前 BTC 市場完全無效。
+    建議使用 Supertrend Bot (Sharpe 4.34) 替代。
+
+    預設參數 (僅供參考，不建議實盤使用):
+    - bb_period: 20
+    - bb_std: 2.0
+    - leverage: 3
+    - strategy_mode: MEAN_REVERSION
+    - use_trend_filter: True
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
@@ -115,22 +121,22 @@ class BollingerConfig:
     """
 
     symbol: str
-    timeframe: str = "15m"  # 15m for breakout strategy
-    strategy_mode: StrategyMode = StrategyMode.BREAKOUT  # Default to breakout
-    bb_period: int = 15
-    bb_std: Decimal = field(default_factory=lambda: Decimal("1.5"))
+    timeframe: str = "15m"
+    strategy_mode: StrategyMode = StrategyMode.MEAN_REVERSION  # MR slightly better than BRK
+    bb_period: int = 20
+    bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
     bbw_lookback: int = 200
-    bbw_threshold_pct: int = 20  # BBW expansion threshold for breakout
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 2% fallback
-    max_hold_bars: int = 24
-    leverage: int = 2
+    bbw_threshold_pct: int = 20
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
+    max_hold_bars: int = 48
+    leverage: int = 3  # Low leverage to reduce loss
 
     # Capital allocation (資金分配)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
 
-    # Trend Filter
-    use_trend_filter: bool = True
+    # Trend Filter (reduces losses when enabled)
+    use_trend_filter: bool = True  # Must be True to minimize loss
     trend_period: int = 50
 
     # RSI Filter (disabled)
@@ -144,8 +150,8 @@ class BollingerConfig:
     atr_period: int = 14
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Trailing Stop
-    use_trailing_stop: bool = False
+    # Trailing Stop (disabled for MR strategy)
+    use_trailing_stop: bool = False  # Not used in mean reversion
     trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
     def __post_init__(self):
