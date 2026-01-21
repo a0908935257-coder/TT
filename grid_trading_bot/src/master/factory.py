@@ -228,6 +228,14 @@ class BotFactory:
         """
         Create a BollingerBot instance.
 
+        Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 5.45):
+        - bb_period: 15
+        - bb_std: 1.5
+        - leverage: 2x
+        - use_trend_filter: True
+        - max_hold_bars: 24
+        - 預期年化: ~109%, 最大回撤: 5.3%
+
         Args:
             bot_id: Bot identifier
             config: Bollinger bot configuration
@@ -241,25 +249,25 @@ class BotFactory:
         from src.bots.bollinger.bot import BollingerBot
         from src.bots.bollinger.models import BollingerConfig
 
-        # Build BollingerConfig from dict
+        # Build BollingerConfig from dict with walk-forward validated defaults
         bollinger_config = BollingerConfig(
             symbol=config["symbol"],
             timeframe=config.get("timeframe", "15m"),
-            leverage=int(config.get("leverage", 20)),
+            leverage=int(config.get("leverage", 2)),  # Validated: 2x
             position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            bb_period=int(config.get("bb_period", 20)),
-            bb_std=Decimal(str(config.get("bb_std", "3.25"))),
+            bb_period=int(config.get("bb_period", 15)),  # Validated: 15
+            bb_std=Decimal(str(config.get("bb_std", "1.5"))),  # Validated: 1.5
             bbw_lookback=int(config.get("bbw_lookback", 200)),
             bbw_threshold_pct=int(config.get("bbw_threshold_pct", 20)),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.015"))),
-            max_hold_bars=int(config.get("max_hold_bars", 48)),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),  # 2%
+            max_hold_bars=int(config.get("max_hold_bars", 24)),  # Validated: 24
             max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            use_trend_filter=config.get("use_trend_filter", False),
+            use_trend_filter=config.get("use_trend_filter", True),  # Validated: enabled
             trend_period=int(config.get("trend_period", 50)),
             use_atr_stop=config.get("use_atr_stop", True),
             atr_period=int(config.get("atr_period", 14)),
             atr_multiplier=Decimal(str(config.get("atr_multiplier", "2.0"))),
-            use_trailing_stop=config.get("use_trailing_stop", True),
+            use_trailing_stop=config.get("use_trailing_stop", False),  # Validated: disabled
             trailing_atr_mult=Decimal(str(config.get("trailing_atr_mult", "2.0"))),
         )
 
