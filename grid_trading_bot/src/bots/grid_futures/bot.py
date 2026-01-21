@@ -509,15 +509,18 @@ class GridFuturesBot(BaseBot):
                     return False
 
             # Place market order using convenience methods
+            # Use position_side=BOTH for one-way mode (default Binance futures mode)
             if side == PositionSide.LONG:
                 order = await self._exchange.futures.market_buy(
                     symbol=self._config.symbol,
                     quantity=quantity,
+                    position_side="BOTH",  # One-way mode
                 )
             else:
                 order = await self._exchange.futures.market_sell(
                     symbol=self._config.symbol,
                     quantity=quantity,
+                    position_side="BOTH",  # One-way mode
                 )
 
             if order:
@@ -584,16 +587,19 @@ class GridFuturesBot(BaseBot):
                 await self._cancel_stop_loss_order()
 
             # Place closing order (reduce_only)
+            # Use position_side=BOTH for one-way mode
             if self._position.side == PositionSide.LONG:
                 order = await self._exchange.futures.market_sell(
                     symbol=self._config.symbol,
                     quantity=close_qty,
+                    position_side="BOTH",  # One-way mode
                     reduce_only=True,
                 )
             else:
                 order = await self._exchange.futures.market_buy(
                     symbol=self._config.symbol,
                     quantity=close_qty,
+                    position_side="BOTH",  # One-way mode
                     reduce_only=True,
                 )
 
@@ -681,7 +687,12 @@ class GridFuturesBot(BaseBot):
             # Long exit: price at or above grid level
             elif current_price >= grid_price and level.state == GridLevelState.LONG_FILLED:
                 if self._position and self._position.side == PositionSide.LONG:
-                    partial_qty = self._position.quantity / Decimal(self._config.grid_count)
+                    # Calculate partial quantity based on filled grid levels, not total grid count
+                    filled_long_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.LONG_FILLED)
+                    if filled_long_count > 0:
+                        partial_qty = self._position.quantity / Decimal(filled_long_count)
+                    else:
+                        partial_qty = self._position.quantity
                     await self._close_position(current_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
 
@@ -696,7 +707,12 @@ class GridFuturesBot(BaseBot):
             # Short exit: price at or below grid level
             elif current_price <= grid_price and level.state == GridLevelState.SHORT_FILLED:
                 if self._position and self._position.side == PositionSide.SHORT:
-                    partial_qty = self._position.quantity / Decimal(self._config.grid_count)
+                    # Calculate partial quantity based on filled grid levels, not total grid count
+                    filled_short_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.SHORT_FILLED)
+                    if filled_short_count > 0:
+                        partial_qty = self._position.quantity / Decimal(filled_short_count)
+                    else:
+                        partial_qty = self._position.quantity
                     await self._close_position(current_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
 

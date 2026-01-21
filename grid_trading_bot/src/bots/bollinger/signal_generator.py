@@ -249,8 +249,8 @@ class SignalGenerator:
             take_profit = bands.middle
             stop_loss = self._calculate_stop_loss(entry_price, signal_type, atr)
 
-        # Set cooldown
-        self._signal_cooldown = 1
+        # Set cooldown (increased from 1 to 3 to prevent rapid consecutive entries)
+        self._signal_cooldown = 3
 
         signal = Signal(
             signal_type=signal_type,

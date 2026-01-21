@@ -141,8 +141,8 @@ class OrderExecutor:
         self._take_profit_order: Optional[str] = None
         self._stop_loss_order: Optional[str] = None
 
-        # Entry timeout
-        self._entry_timeout_bars: int = 3
+        # Entry timeout (increased from 3 to 5 for better fill rate)
+        self._entry_timeout_bars: int = 5
 
     @property
     def pending_entry_order(self) -> Optional[str]:

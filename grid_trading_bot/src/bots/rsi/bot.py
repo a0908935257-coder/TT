@@ -77,6 +77,10 @@ class RSIBot(BaseBot):
         # RSI tracking for crossover detection
         self._prev_rsi: Decimal = Decimal("50")
 
+        # Signal cooldown to prevent rapid consecutive entries
+        self._signal_cooldown_bars: int = 0
+        self._cooldown_period: int = 3  # Wait 3 bars after entry/exit before new signal
+
         # Statistics
         self._total_pnl = Decimal("0")
         self._win_count = 0
@@ -222,11 +226,17 @@ class RSIBot(BaseBot):
         current_price = Decimal(str(kline.close))
         rsi = result.rsi
 
+        # Decrement cooldown counter
+        if self._signal_cooldown_bars > 0:
+            self._signal_cooldown_bars -= 1
+
         # Check position management
         if self._position:
             await self._check_exit(current_price, rsi)
         else:
-            await self._check_entry(current_price, rsi)
+            # Only check entry if not in cooldown
+            if self._signal_cooldown_bars == 0:
+                await self._check_entry(current_price, rsi)
 
         # Track previous RSI for crossover detection
         self._prev_rsi = rsi
@@ -322,28 +332,35 @@ class RSIBot(BaseBot):
             )
 
             if order:
+                # Use actual fill price from order, fallback to kline close
+                fill_price = Decimal(str(order.avg_price or order.price or price))
+                fill_qty = Decimal(str(order.executed_qty or quantity))
+
                 self._position = Position(
                     side=side,
-                    entry_price=price,
-                    quantity=quantity,
+                    entry_price=fill_price,
+                    quantity=fill_qty,
                     entry_time=datetime.now(timezone.utc),
                     entry_rsi=rsi,
                 )
 
-                logger.info(f"Opened {side.value} position: {quantity} @ {price}, RSI={rsi:.1f}")
+                # Set cooldown after entry
+                self._signal_cooldown_bars = self._cooldown_period
 
-                # Place exchange stop loss
+                logger.info(f"Opened {side.value} position: {fill_qty} @ {fill_price}, RSI={rsi:.1f}")
+
+                # Place exchange stop loss using actual fill price
                 if self._config.use_exchange_stop_loss:
-                    await self._place_stop_loss_order(price)
+                    await self._place_stop_loss_order(fill_price)
 
                 # Send notification
                 if self._notifier:
                     await self._notifier.send_info(
                         title=f"RSI Bot: {side.value} Entry",
                         message=f"Symbol: {self._config.symbol}\n"
-                               f"Price: {price}\n"
+                               f"Price: {fill_price}\n"
                                f"RSI: {rsi:.1f}\n"
-                               f"Quantity: {quantity}",
+                               f"Quantity: {fill_qty}",
                     )
 
         except Exception as e:
@@ -371,20 +388,34 @@ class RSIBot(BaseBot):
             )
 
             if order:
-                # Calculate PnL
-                pnl_pct = self._position.calculate_pnl_pct(price)
-                gross_pnl = pnl_pct * self._position.quantity * price
-                fee = self._position.quantity * price * self._fee_rate * 2
-                net_pnl = gross_pnl - fee
+                # Use actual fill price from order
+                exit_price = Decimal(str(order.avg_price or order.price or price))
+
+                # Calculate PnL correctly: (exit - entry) * quantity for LONG
+                entry_price = self._position.entry_price
+                quantity = self._position.quantity
+
+                if self._position.side == PositionSide.LONG:
+                    gross_pnl = (exit_price - entry_price) * quantity
+                else:
+                    gross_pnl = (entry_price - exit_price) * quantity
+
+                # Calculate fees: entry fee + exit fee
+                entry_fee = entry_price * quantity * self._fee_rate
+                exit_fee = exit_price * quantity * self._fee_rate
+                total_fee = entry_fee + exit_fee
+
+                net_pnl = gross_pnl - total_fee
+                pnl_pct = net_pnl / (entry_price * quantity) if entry_price > 0 else Decimal("0")
 
                 # Record trade
                 trade = Trade(
                     side=self._position.side,
-                    entry_price=self._position.entry_price,
-                    exit_price=price,
-                    quantity=self._position.quantity,
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    quantity=quantity,
                     pnl=net_pnl,
-                    fee=fee,
+                    fee=total_fee,
                     entry_time=self._position.entry_time,
                     exit_time=datetime.now(timezone.utc),
                     exit_reason=reason,
@@ -400,8 +431,12 @@ class RSIBot(BaseBot):
                 else:
                     self._loss_count += 1
 
+                # Set cooldown after exit
+                self._signal_cooldown_bars = self._cooldown_period
+
                 logger.info(
                     f"Closed {self._position.side.value} position: "
+                    f"Entry={entry_price}, Exit={exit_price}, "
                     f"PnL={net_pnl:.4f} USDT ({pnl_pct*100:.2f}%), "
                     f"Reason={reason.value}, RSI={rsi:.1f}"
                 )
@@ -412,6 +447,7 @@ class RSIBot(BaseBot):
                     await self._notifier.send_info(
                         title=f"RSI Bot: Position Closed ({reason.value})",
                         message=f"Symbol: {self._config.symbol}\n"
+                               f"Entry: {entry_price} → Exit: {exit_price}\n"
                                f"PnL: {pnl_emoji}{net_pnl:.4f} USDT ({pnl_pct*100:.2f}%)\n"
                                f"Exit RSI: {rsi:.1f}\n"
                                f"Total PnL: {self._total_pnl:.4f} USDT",
