@@ -91,7 +91,7 @@ class ExchangeProtocol(Protocol):
 
     async def unsubscribe_kline(self, symbol: str, interval: str) -> None: ...
 
-    async def subscribe_user_data(self, callback: Callable) -> None: ...
+    async def subscribe_user_data(self, callback: Callable, market: MarketType = ...) -> None: ...
 
     async def get_account(self) -> Any: ...
 
@@ -222,9 +222,10 @@ class BollingerBot(BaseBot):
             market=MarketType.FUTURES,
         )
 
-        # 6. Subscribe to user data (order updates)
+        # 6. Subscribe to user data (order updates) - Futures market
         await self._exchange.subscribe_user_data(
             callback=self._on_order_update,
+            market=MarketType.FUTURES,
         )
 
         # 7. Send notification

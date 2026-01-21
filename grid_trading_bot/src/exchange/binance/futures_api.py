@@ -1316,3 +1316,66 @@ class BinanceFuturesAPI:
             time_in_force=time_in_force,
             client_order_id=client_order_id,
         )
+
+    # =========================================================================
+    # User Data Stream
+    # =========================================================================
+
+    async def create_listen_key(self) -> str:
+        """
+        Create a new listen key for Futures User Data Stream.
+
+        The listen key is used to subscribe to real-time order/account updates
+        via WebSocket. It expires after 60 minutes if not kept alive.
+
+        Returns:
+            Listen key string
+        """
+        data = await self._request(
+            "POST",
+            FUTURES_PRIVATE_ENDPOINTS["USER_DATA_STREAM"]["path"],
+            api_key_required=True,
+        )
+        return data["listenKey"]
+
+    async def keep_alive_listen_key(self, listen_key: str) -> bool:
+        """
+        Keep alive a listen key (should be called every 30 minutes).
+
+        Binance listen keys expire after 60 minutes of inactivity.
+        Call this method periodically to keep the stream alive.
+
+        Args:
+            listen_key: The listen key to keep alive
+
+        Returns:
+            True if successful
+        """
+        await self._request(
+            "PUT",
+            FUTURES_PRIVATE_ENDPOINTS["USER_DATA_STREAM_KEEPALIVE"]["path"],
+            params={"listenKey": listen_key},
+            api_key_required=True,
+        )
+        return True
+
+    async def delete_listen_key(self, listen_key: str) -> bool:
+        """
+        Delete a listen key.
+
+        Call this when unsubscribing from the User Data Stream
+        to clean up resources on Binance's side.
+
+        Args:
+            listen_key: The listen key to delete
+
+        Returns:
+            True if successful
+        """
+        await self._request(
+            "DELETE",
+            FUTURES_PRIVATE_ENDPOINTS["USER_DATA_STREAM_DELETE"]["path"],
+            params={"listenKey": listen_key},
+            api_key_required=True,
+        )
+        return True

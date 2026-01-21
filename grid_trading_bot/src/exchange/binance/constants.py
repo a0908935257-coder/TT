@@ -173,6 +173,10 @@ FUTURES_PRIVATE_ENDPOINTS = {
     "ALGO_ORDER_GET": {"path": "/fapi/v1/algoOrder", "method": "GET"},
     "ALGO_ORDER_DELETE": {"path": "/fapi/v1/algoOrder", "method": "DELETE"},
     "ALGO_OPEN_ORDERS": {"path": "/fapi/v1/algoOrder/openOrders", "method": "GET"},
+    # User Data Stream (for order/account updates via WebSocket)
+    "USER_DATA_STREAM": {"path": "/fapi/v1/listenKey", "method": "POST"},
+    "USER_DATA_STREAM_KEEPALIVE": {"path": "/fapi/v1/listenKey", "method": "PUT"},
+    "USER_DATA_STREAM_DELETE": {"path": "/fapi/v1/listenKey", "method": "DELETE"},
 }
 
 
