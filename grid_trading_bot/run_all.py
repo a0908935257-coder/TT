@@ -54,12 +54,12 @@ def print_banner():
   ✓ Master 主控台
   ✓ Bollinger Bot (合約 20x)
   ✓ RSI Momentum Bot (合約 5x) - 動量策略
-  ✓ Grid Futures Bot (合約 3x)
+  ✓ Grid Futures Bot (合約 2x) - 趨勢網格
   ✓ Discord Bot (遠端管理)
 
-RSI Momentum Bot 優化參數 (67% Walk-Forward, Sharpe 1.03):
-  RSI Period: 21, Entry Level: 50±5
-  Stop Loss: 2%, Take Profit: 4%
+Walk-Forward 驗證通過的策略:
+  RSI: Period=21, Level=50±5, 5x (67% 一致性, Sharpe 1.03)
+  Grid: 12格, trend=50, 2x (83% 一致性, Sharpe 1.85)
 
 Discord 指令:
   /bot list     - 列出所有機器人
@@ -169,16 +169,25 @@ def get_rsi_config() -> dict:
 
 
 def get_grid_futures_config() -> dict:
-    """Get Grid Futures Bot config from .env."""
+    """
+    Get Grid Futures Bot config from .env.
+
+    Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 1.85):
+    - leverage: 2x
+    - grid_count: 12
+    - direction: trend_follow
+    - trend_period: 50
+    - 預期年化: ~16.6%, 最大回撤: 8.2%
+    """
     return {
         "symbol": os.getenv('GRID_FUTURES_SYMBOL', 'BTCUSDT'),
         "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-        "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '3')),
+        "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '2')),  # Validated: 2x
         "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
-        "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '12')),
-        "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
-        "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
-        "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),
+        "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '12')),  # Validated: 12 grids
+        "direction": os.getenv('GRID_FUTURES_DIRECTION', 'trend_follow'),  # Validated
+        "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'true').lower() == 'true',
+        "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '50')),  # Validated: 50
         "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
         "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
         "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '2.0'),

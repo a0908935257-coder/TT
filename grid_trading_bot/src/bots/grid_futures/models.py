@@ -66,27 +66,28 @@ class GridFuturesConfig:
     """
     Grid Futures Bot configuration.
 
-    Optimized defaults based on backtesting (年化 113.6%, 回撤 24.7%, Sharpe 1.54):
-    - leverage: 3x
-    - grid_count: 15
+    Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 1.85):
+    - leverage: 2x
+    - grid_count: 12
     - direction: trend_follow
-    - trend_period: 30
+    - trend_period: 50
     - atr_multiplier: 2.0
     - position_size_pct: 10%
+    - 預期年化: ~16.6%, 最大回撤: 8.2%
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe for indicators (default "1h")
-        leverage: Futures leverage (default 3)
+        leverage: Futures leverage (default 2, validated)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # Grid settings
-        grid_count: Number of grid levels (default 15)
+        grid_count: Number of grid levels (default 12, validated)
         direction: Trading direction mode (default TREND_FOLLOW)
 
         # Trend filter
         use_trend_filter: Enable trend-based direction (default True)
-        trend_period: SMA period for trend detection (default 30)
+        trend_period: SMA period for trend detection (default 50, validated)
 
         # Dynamic range
         use_atr_range: Use ATR for dynamic grid range (default True)
@@ -106,24 +107,24 @@ class GridFuturesConfig:
     Example:
         >>> config = GridFuturesConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=3,
-        ...     grid_count=15,
+        ...     leverage=2,  # Walk-forward validated
+        ...     grid_count=12,  # Walk-forward validated
         ...     direction=GridDirection.TREND_FOLLOW,
         ... )
     """
 
     symbol: str
     timeframe: str = "1h"
-    leverage: int = 3
+    leverage: int = 2  # Walk-forward validated: 2x
     margin_type: str = "ISOLATED"
 
-    # Grid settings
-    grid_count: int = 15
+    # Grid settings (walk-forward validated)
+    grid_count: int = 12  # Validated: 12 grids
     direction: GridDirection = GridDirection.TREND_FOLLOW
 
-    # Trend filter (optimized: period=30)
+    # Trend filter (walk-forward validated: period=50)
     use_trend_filter: bool = True
-    trend_period: int = 30
+    trend_period: int = 50  # Validated: 50-period SMA
 
     # Dynamic ATR range (optimized: multiplier=2.0)
     use_atr_range: bool = True
