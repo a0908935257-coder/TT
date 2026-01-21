@@ -1,13 +1,18 @@
 """
-RSI Mean Reversion Bot Data Models.
+RSI Momentum Bot Data Models.
 
-Provides data models for RSI-based mean reversion trading strategy.
+Provides data models for RSI-based momentum trading strategy.
 
-Optimized configuration based on backtesting:
-- RSI Period: 14
-- Oversold: 20, Overbought: 80
-- Leverage: 7x
-- Walk-Forward 一致性: 83%
+Strategy: RSI crossover (trend following, not mean reversion)
+- Long when RSI crosses above entry_level + threshold
+- Short when RSI crosses below entry_level - threshold
+
+Optimized configuration based on backtesting (1 year):
+- RSI Period: 21
+- Entry Level: 50, Momentum Threshold: 5
+- Leverage: 5x
+- Walk-Forward 一致性: 67%
+- Sharpe: 1.03
 """
 
 from dataclasses import dataclass, field
@@ -33,7 +38,7 @@ class SignalType(str, Enum):
 
 class ExitReason(str, Enum):
     """Reason for exiting a position."""
-    RSI_EXIT = "rsi_exit"      # RSI returned to neutral
+    RSI_EXIT = "rsi_exit"      # RSI reversal signal
     STOP_LOSS = "stop_loss"    # Stop loss triggered
     TAKE_PROFIT = "take_profit"  # Take profit reached
     MANUAL = "manual"
@@ -43,36 +48,44 @@ class ExitReason(str, Enum):
 @dataclass
 class RSIConfig:
     """
-    RSI Mean Reversion Bot configuration.
+    RSI Momentum Bot configuration.
 
-    Optimized defaults based on backtesting (83% walk-forward consistency):
-    - RSI Period: 14
-    - Oversold: 20
-    - Overbought: 80
-    - Leverage: 7x
+    Uses momentum strategy (trend following) instead of mean reversion:
+    - Long when RSI crosses above entry_level + momentum_threshold
+    - Short when RSI crosses below entry_level - momentum_threshold
+    - Exit on opposite RSI crossover or SL/TP
+
+    Optimized defaults based on 1 year backtesting (67% walk-forward):
+    - RSI Period: 21
+    - Entry Level: 50
+    - Momentum Threshold: 5
+    - Leverage: 5x
     - Stop Loss: 2%
-    - Take Profit: 3%
+    - Take Profit: 4%
+    - Sharpe: 1.03, Max DD: 6.9%
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
-        rsi_period: RSI calculation period (default 14)
-        oversold: RSI level to trigger long entry (default 20)
-        overbought: RSI level to trigger short entry (default 80)
-        exit_level: RSI level to exit positions (default 50)
-        leverage: Futures leverage (default 7)
+        rsi_period: RSI calculation period (default 21)
+        entry_level: RSI center level for crossover detection (default 50)
+        momentum_threshold: RSI must cross by this amount to trigger (default 5)
+        leverage: Futures leverage (default 5)
         position_size_pct: Position size as percentage of balance (default 10%)
         stop_loss_pct: Stop loss percentage (default 2%)
-        take_profit_pct: Take profit percentage (default 3%)
+        take_profit_pct: Take profit percentage (default 4%)
     """
     symbol: str
     timeframe: str = "15m"
-    rsi_period: int = 14
-    oversold: int = 20
-    overbought: int = 80
-    exit_level: int = 50
-    leverage: int = 7
+    rsi_period: int = 21
+    entry_level: int = 50  # Center level for RSI crossover
+    momentum_threshold: int = 5  # RSI must cross entry_level by this amount
+    leverage: int = 5
     margin_type: str = "ISOLATED"
+
+    # Deprecated but kept for backwards compatibility
+    oversold: int = 30  # Used as entry_level - momentum_threshold fallback
+    overbought: int = 70  # Used as entry_level + momentum_threshold fallback
 
     # Capital allocation
     max_capital: Optional[Decimal] = None
@@ -80,7 +93,7 @@ class RSIConfig:
 
     # Risk management
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
-    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
+    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True
@@ -103,11 +116,11 @@ class RSIConfig:
         if self.rsi_period < 5 or self.rsi_period > 50:
             raise ValueError(f"rsi_period must be 5-50, got {self.rsi_period}")
 
-        if self.oversold < 10 or self.oversold > 40:
-            raise ValueError(f"oversold must be 10-40, got {self.oversold}")
+        if self.entry_level < 30 or self.entry_level > 70:
+            raise ValueError(f"entry_level must be 30-70, got {self.entry_level}")
 
-        if self.overbought < 60 or self.overbought > 90:
-            raise ValueError(f"overbought must be 60-90, got {self.overbought}")
+        if self.momentum_threshold < 1 or self.momentum_threshold > 20:
+            raise ValueError(f"momentum_threshold must be 1-20, got {self.momentum_threshold}")
 
         if self.leverage < 1 or self.leverage > 125:
             raise ValueError(f"leverage must be 1-125, got {self.leverage}")
@@ -121,14 +134,27 @@ class RSIData:
     """RSI indicator data."""
     timestamp: datetime
     rsi: Decimal
-    is_oversold: bool
-    is_overbought: bool
+    prev_rsi: Decimal = field(default_factory=lambda: Decimal("50"))
+    entry_level: int = 50
+    momentum_threshold: int = 5
+
+    @property
+    def is_bullish_crossover(self) -> bool:
+        """RSI crossed above entry_level + threshold (bullish momentum)."""
+        threshold = self.entry_level + self.momentum_threshold
+        return float(self.prev_rsi) <= self.entry_level and float(self.rsi) > threshold
+
+    @property
+    def is_bearish_crossover(self) -> bool:
+        """RSI crossed below entry_level - threshold (bearish momentum)."""
+        threshold = self.entry_level - self.momentum_threshold
+        return float(self.prev_rsi) >= self.entry_level and float(self.rsi) < threshold
 
     @property
     def signal(self) -> SignalType:
-        if self.is_oversold:
+        if self.is_bullish_crossover:
             return SignalType.LONG
-        elif self.is_overbought:
+        elif self.is_bearish_crossover:
             return SignalType.SHORT
         return SignalType.NONE
 

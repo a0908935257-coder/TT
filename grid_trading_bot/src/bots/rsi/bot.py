@@ -1,10 +1,16 @@
 """
-RSI Mean Reversion Bot.
+RSI Momentum Bot.
 
-A futures trading bot using RSI for mean reversion entries.
-- Buy when RSI < oversold (20)
-- Sell when RSI > overbought (80)
-- Exit when RSI returns to neutral (50) or stop loss/take profit hit
+A futures trading bot using RSI momentum (trend following) strategy.
+- Long when RSI crosses above entry_level + momentum_threshold (bullish momentum)
+- Short when RSI crosses below entry_level - momentum_threshold (bearish momentum)
+- Exit on opposite RSI crossover, stop loss, or take profit
+
+Optimized parameters (67% walk-forward consistency, Sharpe 1.03):
+- RSI Period: 21
+- Entry Level: 50, Momentum Threshold: 5
+- Leverage: 5x
+- Stop Loss: 2%, Take Profit: 4%
 """
 
 import asyncio
@@ -29,16 +35,18 @@ logger = get_logger(__name__)
 
 class RSIBot(BaseBot):
     """
-    RSI Mean Reversion Trading Bot.
+    RSI Momentum Trading Bot.
 
-    Uses RSI indicator to identify oversold/overbought conditions
-    and trades mean reversion with proper risk management.
+    Uses RSI momentum strategy (trend following) instead of mean reversion:
+    - Long when RSI crosses above entry_level + momentum_threshold
+    - Short when RSI crosses below entry_level - momentum_threshold
+    - Exit on opposite RSI crossover or SL/TP
 
-    Optimized configuration (83% walk-forward consistency):
-    - RSI Period: 14
-    - Oversold: 20, Overbought: 80
-    - Leverage: 7x
-    - Stop Loss: 2%, Take Profit: 3%
+    Optimized configuration (67% walk-forward consistency, Sharpe 1.03):
+    - RSI Period: 21
+    - Entry Level: 50, Momentum Threshold: 5
+    - Leverage: 5x
+    - Stop Loss: 2%, Take Profit: 4%
     """
 
     def __init__(
@@ -66,6 +74,9 @@ class RSIBot(BaseBot):
         self._kline_task: Optional[asyncio.Task] = None
         self._fee_rate = Decimal("0.0004")
 
+        # RSI tracking for crossover detection
+        self._prev_rsi: Decimal = Decimal("50")
+
         # Statistics
         self._total_pnl = Decimal("0")
         self._win_count = 0
@@ -89,8 +100,8 @@ class RSIBot(BaseBot):
             # Initialize RSI calculator
             self._rsi_calc = RSICalculator(
                 period=self._config.rsi_period,
-                oversold=self._config.oversold,
-                overbought=self._config.overbought,
+                oversold=self._config.entry_level - self._config.momentum_threshold,
+                overbought=self._config.entry_level + self._config.momentum_threshold,
             )
 
             # Get historical klines for initialization
@@ -116,13 +127,13 @@ class RSIBot(BaseBot):
             # Start kline monitoring
             self._kline_task = asyncio.create_task(self._kline_loop())
 
-            logger.info(f"RSI Bot initialized successfully")
+            logger.info(f"RSI Momentum Bot initialized successfully")
             logger.info(f"  Symbol: {self._config.symbol}")
             logger.info(f"  Timeframe: {self._config.timeframe}")
             logger.info(f"  RSI Period: {self._config.rsi_period}")
-            logger.info(f"  Oversold: {self._config.oversold}")
-            logger.info(f"  Overbought: {self._config.overbought}")
+            logger.info(f"  Entry Level: {self._config.entry_level} ± {self._config.momentum_threshold}")
             logger.info(f"  Leverage: {self._config.leverage}x")
+            logger.info(f"  SL: {self._config.stop_loss_pct*100:.1f}%, TP: {self._config.take_profit_pct*100:.1f}%")
             logger.info(f"  Initial RSI: {result.rsi:.2f}")
 
             return True
@@ -217,22 +228,44 @@ class RSIBot(BaseBot):
         else:
             await self._check_entry(current_price, rsi)
 
+        # Track previous RSI for crossover detection
+        self._prev_rsi = rsi
+
     async def _check_entry(self, price: Decimal, rsi: Decimal):
-        """Check for entry signals."""
-        if rsi < self._config.oversold:
-            # Oversold - go long
+        """
+        Check for entry signals using RSI momentum crossover.
+
+        - Long: RSI crosses above entry_level + momentum_threshold (bullish momentum)
+        - Short: RSI crosses below entry_level - momentum_threshold (bearish momentum)
+        """
+        entry_level = self._config.entry_level
+        threshold = self._config.momentum_threshold
+
+        # Bullish momentum: prev_rsi was at/below entry_level, now above upper threshold
+        if float(self._prev_rsi) <= entry_level and float(rsi) > entry_level + threshold:
             await self._open_position(PositionSide.LONG, price, rsi)
-        elif rsi > self._config.overbought:
-            # Overbought - go short
+
+        # Bearish momentum: prev_rsi was at/above entry_level, now below lower threshold
+        elif float(self._prev_rsi) >= entry_level and float(rsi) < entry_level - threshold:
             await self._open_position(PositionSide.SHORT, price, rsi)
 
     async def _check_exit(self, price: Decimal, rsi: Decimal):
-        """Check for exit conditions."""
+        """
+        Check for exit conditions.
+
+        Exit triggers:
+        - Stop loss: PnL drops below configured stop loss percentage
+        - Take profit: PnL exceeds configured take profit percentage
+        - RSI reversal: Opposite momentum signal detected
+        """
         if not self._position:
             return
 
         pnl_pct = self._position.calculate_pnl_pct(price)
         exit_reason = None
+
+        entry_level = self._config.entry_level
+        threshold = self._config.momentum_threshold
 
         # Check stop loss
         if pnl_pct < -self._config.stop_loss_pct:
@@ -242,11 +275,15 @@ class RSIBot(BaseBot):
         elif pnl_pct > self._config.take_profit_pct:
             exit_reason = ExitReason.TAKE_PROFIT
 
-        # Check RSI exit (return to neutral)
-        elif self._position.side == PositionSide.LONG and rsi > self._config.exit_level:
-            exit_reason = ExitReason.RSI_EXIT
-        elif self._position.side == PositionSide.SHORT and rsi < self._config.exit_level:
-            exit_reason = ExitReason.RSI_EXIT
+        # Check RSI reversal (opposite momentum signal)
+        elif self._position.side == PositionSide.LONG:
+            # Exit long when RSI shows bearish momentum (drops below entry_level - threshold)
+            if float(rsi) < entry_level - threshold:
+                exit_reason = ExitReason.RSI_EXIT
+        elif self._position.side == PositionSide.SHORT:
+            # Exit short when RSI shows bullish momentum (rises above entry_level + threshold)
+            if float(rsi) > entry_level + threshold:
+                exit_reason = ExitReason.RSI_EXIT
 
         if exit_reason:
             await self._close_position(price, rsi, exit_reason)
@@ -480,13 +517,26 @@ class RSIBot(BaseBot):
     def get_status(self) -> dict:
         """Get current bot status."""
         rsi_state = self._rsi_calc.get_state() if self._rsi_calc else {}
+        current_rsi = rsi_state.get("rsi")
+
+        # Determine momentum signal
+        entry_level = self._config.entry_level
+        threshold = self._config.momentum_threshold
+        signal = "NEUTRAL"
+        if current_rsi:
+            if current_rsi > entry_level + threshold:
+                signal = "BULLISH"
+            elif current_rsi < entry_level - threshold:
+                signal = "BEARISH"
 
         return {
             "symbol": self._config.symbol,
             "timeframe": self._config.timeframe,
             "leverage": self._config.leverage,
-            "rsi": rsi_state.get("rsi"),
-            "rsi_signal": rsi_state.get("signal"),
+            "rsi_period": self._config.rsi_period,
+            "entry_level": f"{entry_level} ± {threshold}",
+            "rsi": current_rsi,
+            "rsi_signal": signal,
             "position": {
                 "side": self._position.side.value if self._position else None,
                 "entry_price": float(self._position.entry_price) if self._position else None,

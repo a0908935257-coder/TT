@@ -53,9 +53,13 @@ def print_banner():
 啟動項目:
   ✓ Master 主控台
   ✓ Bollinger Bot (合約 20x)
-  ✓ RSI Bot (合約 7x) - 取代 Supertrend
+  ✓ RSI Momentum Bot (合約 5x) - 動量策略
   ✓ Grid Futures Bot (合約 3x)
   ✓ Discord Bot (遠端管理)
+
+RSI Momentum Bot 優化參數 (67% Walk-Forward, Sharpe 1.03):
+  RSI Period: 21, Entry Level: 50±5
+  Stop Loss: 2%, Take Profit: 4%
 
 Discord 指令:
   /bot list     - 列出所有機器人
@@ -140,20 +144,27 @@ def get_bollinger_config() -> dict:
 
 
 def get_rsi_config() -> dict:
-    """Get RSI Bot config from .env."""
+    """
+    Get RSI Momentum Bot config from .env.
+
+    Optimized parameters (67% walk-forward consistency, Sharpe 1.03):
+    - RSI Period: 21
+    - Entry Level: 50, Momentum Threshold: 5
+    - Leverage: 5x
+    - Stop Loss: 2%, Take Profit: 4%
+    """
     return {
         "symbol": os.getenv('RSI_SYMBOL', 'BTCUSDT'),
         "timeframe": os.getenv('RSI_TIMEFRAME', '15m'),
-        "rsi_period": int(os.getenv('RSI_PERIOD', '14')),
-        "oversold": int(os.getenv('RSI_OVERSOLD', '20')),
-        "overbought": int(os.getenv('RSI_OVERBOUGHT', '80')),
-        "exit_level": int(os.getenv('RSI_EXIT_LEVEL', '50')),
-        "leverage": int(os.getenv('RSI_LEVERAGE', '7')),
+        "rsi_period": int(os.getenv('RSI_PERIOD', '21')),  # Optimized: 21
+        "entry_level": int(os.getenv('RSI_ENTRY_LEVEL', '50')),  # Momentum crossover level
+        "momentum_threshold": int(os.getenv('RSI_MOMENTUM_THRESHOLD', '5')),  # Crossover threshold
+        "leverage": int(os.getenv('RSI_LEVERAGE', '5')),  # Optimized: 5x
         "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
         "max_capital": os.getenv('RSI_MAX_CAPITAL', '7'),
         "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
-        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.02'),
-        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.03'),
+        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.02'),  # 2%
+        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.04'),  # 4%
     }
 
 
@@ -200,8 +211,8 @@ async def create_and_start_bots(master: Master) -> list[str]:
     else:
         print(f"    ✗ 創建失敗: {result.message}")
 
-    # 2. Create RSI Bot (replaces Supertrend)
-    print("  創建 RSI Bot...")
+    # 2. Create RSI Momentum Bot
+    print("  創建 RSI Momentum Bot...")
     rsi_config = get_rsi_config()
     result = await master.create_bot(BotType.RSI, rsi_config)
     if result.success:
