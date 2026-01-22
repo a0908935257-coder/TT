@@ -30,12 +30,13 @@ from src.core import get_logger
 from src.core.models import MarketType
 from src.master.models import BotState
 
-from .indicators import BollingerCalculator
+from .indicators import BollingerCalculator, SupertrendCalculator
 from .models import (
     BollingerBotStats,
     BollingerConfig,
     PositionSide,
     SignalType,
+    StrategyMode,
     TradeRecord,
 )
 from .order_executor import OrderExecutor
@@ -164,7 +165,16 @@ class BollingerBot(BaseBot):
             bbw_lookback=config.bbw_lookback,
             bbw_threshold_pct=config.bbw_threshold_pct,
         )
-        self._signal_generator = SignalGenerator(config, self._calculator)
+
+        # Initialize Supertrend calculator for BOLLINGER_TREND mode
+        self._supertrend: Optional[SupertrendCalculator] = None
+        if config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+            self._supertrend = SupertrendCalculator(
+                atr_period=config.st_atr_period,
+                atr_multiplier=config.st_atr_multiplier,
+            )
+
+        self._signal_generator = SignalGenerator(config, self._calculator, self._supertrend)
         self._position_manager = PositionManager(config, exchange, data_manager)
         self._order_executor = OrderExecutor(config, exchange, notifier)
 
@@ -211,10 +221,14 @@ class BollingerBot(BaseBot):
         # 3. Initialize indicator calculator (build BBW history)
         self._calculator.initialize(klines)
 
-        # 4. Set current bar number
+        # 4. Initialize Supertrend (for BOLLINGER_TREND mode)
+        if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+            self._signal_generator.initialize_supertrend(klines)
+
+        # 5. Set current bar number
         self._current_bar = len(klines)
 
-        # 5. Subscribe to kline updates (futures market)
+        # 6. Subscribe to kline updates (futures market)
         await self._exchange.subscribe_kline(
             symbol=self._config.symbol,
             interval=self._config.timeframe,
@@ -222,13 +236,13 @@ class BollingerBot(BaseBot):
             market=MarketType.FUTURES,
         )
 
-        # 6. Subscribe to user data (order updates) - Futures market
+        # 7. Subscribe to user data (order updates) - Futures market
         await self._exchange.subscribe_user_data(
             callback=self._on_order_update,
             market=MarketType.FUTURES,
         )
 
-        # 7. Send notification
+        # 8. Send notification
         if self._notifier:
             await self._notifier.send(
                 title="🟢 BollingerBot 已啟動",
@@ -302,9 +316,10 @@ class BollingerBot(BaseBot):
         """Return extra status fields for this bot type."""
         position = self._position_manager.get_position()
 
-        return {
+        status = {
             "timeframe": self._config.timeframe,
             "leverage": self._config.leverage,
+            "strategy_mode": self._config.strategy_mode.value,
             "bb_period": self._config.bb_period,
             "bb_std": str(self._config.bb_std),
             "current_bar": self._current_bar,
@@ -316,6 +331,15 @@ class BollingerBot(BaseBot):
             "signals_generated": self._bollinger_stats.signals_generated,
             "signals_filtered": self._bollinger_stats.signals_filtered,
         }
+
+        # Add Supertrend info for BOLLINGER_TREND mode
+        if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND and self._supertrend:
+            st = self._supertrend.current
+            status["supertrend_trend"] = "BULL" if self._supertrend.is_bullish else "BEAR"
+            if st:
+                status["supertrend_value"] = str(st.supertrend)
+
+        return status
 
     async def _extra_health_checks(self) -> Dict[str, bool]:
         """Perform extra health checks for this bot type."""

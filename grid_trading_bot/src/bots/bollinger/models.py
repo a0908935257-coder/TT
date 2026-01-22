@@ -22,8 +22,9 @@ from typing import Optional
 class StrategyMode(str, Enum):
     """Trading strategy mode."""
 
-    MEAN_REVERSION = "mean_reversion"  # Buy at lower band, sell at upper band
-    BREAKOUT = "breakout"              # Buy above upper band, sell below lower band
+    MEAN_REVERSION = "mean_reversion"  # [DEPRECATED] Buy at lower band, sell at upper band
+    BREAKOUT = "breakout"              # [DEPRECATED] Buy above upper band, sell below lower band
+    BOLLINGER_TREND = "bollinger_trend"  # Supertrend + BB combination (recommended)
 
 
 class SignalType(str, Enum):
@@ -50,6 +51,7 @@ class ExitReason(str, Enum):
     TIMEOUT = "timeout"          # Max hold bars exceeded
     MANUAL = "manual"            # Manual exit
     BOT_STOP = "bot_stop"        # Bot stopped
+    TREND_FLIP = "trend_flip"    # Supertrend flipped (BOLLINGER_TREND mode)
 
 
 # =============================================================================
@@ -62,96 +64,79 @@ class BollingerConfig:
     """
     Bollinger Bot configuration.
 
-    ⚠️ 警告：不建議使用此策略 (2026-01 驗證結果)
+    ⚠️ BOLLINGER_TREND 模式 (2026-01 優化)
+    ======================================
+    Walk-Forward 驗證結果 (1 年數據, 2025-01 ~ 2026-01):
+    - 最佳配置: BB 2.5, ST 20/3.5, 5x 槓桿
+    - 報酬: +10.6%, Sharpe: 0.67, 回撤: 14.1%
+    - 一致性: 50% (3/6 時段獲利) - 未達 67% 門檻
+
+    策略邏輯:
+    - 進場: Supertrend 看多時在 BB 下軌買入，看空時在 BB 上軌賣出
+    - 出場: Supertrend 翻轉（主要）或 ATR 止損（保護）
+
+    優化後參數:
+    - bb_period: 20, bb_std: 2.5
+    - st_atr_period: 20, st_atr_multiplier: 3.5
+    - atr_stop_multiplier: 2.0
+    - leverage: 5
+
+    ⚠️ 舊模式 MEAN_REVERSION / BREAKOUT 已棄用
     ============================================
-    Walk-Forward 驗證結果 (1 年數據, 10+ 參數組合):
-    - 所有配置都是虧損的 (-1.6% ~ -99.9%)
-    - Walk-Forward 一致性: 0% (0/6 時段獲利)
-    - 最佳配置 (MR+trend L3): -1.6%, Sharpe -0.18
+    Walk-Forward 驗證: 0% 一致性，嚴重虧損 (-75% ~ -99%)
 
-    結論：Bollinger 策略在當前 BTC 市場完全無效。
-    建議使用 Supertrend Bot (Sharpe 4.34) 替代。
-
-    預設參數 (僅供參考，不建議實盤使用):
-    - bb_period: 20
-    - bb_std: 2.0
-    - leverage: 3
-    - strategy_mode: MEAN_REVERSION
-    - use_trend_filter: True
-
-    Attributes:
-        symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "15m")
-        strategy_mode: Trading strategy mode (MEAN_REVERSION or BREAKOUT)
-        bb_period: Bollinger Band period (default 15)
-        bb_std: Standard deviation multiplier (default 1.5)
-        bbw_lookback: BBW history lookback period (default 200)
-        bbw_threshold_pct: BBW threshold percentile (default 20 for breakout)
-        stop_loss_pct: Stop loss percentage (default 2%, fallback if ATR disabled)
-        max_hold_bars: Maximum bars to hold position (default 24)
-        leverage: Futures leverage (default 2)
-        position_size_pct: Position size as percentage of balance (default 10%)
-
-        # Trend Filter
-        use_trend_filter: Enable trend filter (default True)
-        trend_period: SMA period for trend detection (default 50)
-
-        # RSI Filter
-        use_rsi_filter: Enable RSI filter (default False)
-        rsi_period: RSI calculation period (default 14)
-        rsi_oversold: RSI oversold threshold (default 30)
-        rsi_overbought: RSI overbought threshold (default 70)
-
-        # ATR Stop Loss
-        use_atr_stop: Use ATR-based dynamic stop loss (default True)
-        atr_period: ATR calculation period (default 14)
-        atr_multiplier: ATR multiplier for stop distance (default 2.0)
-
-        # Trailing Stop
-        use_trailing_stop: Enable trailing stop (default False)
-        trailing_atr_mult: Trailing stop ATR multiplier (default 2.0)
+    建議: 使用 BOLLINGER_TREND 模式，但謹慎部署（未完全驗證）
+    替代方案: Supertrend Bot (Sharpe 4.34, 已驗證)
 
     Example:
         >>> config = BollingerConfig(
         ...     symbol="BTCUSDT",
-        ...     strategy_mode=StrategyMode.BREAKOUT,
-        ...     leverage=2,
-        ...     bb_std=Decimal("1.5"),
+        ...     strategy_mode=StrategyMode.BOLLINGER_TREND,
+        ...     leverage=5,
         ... )
     """
 
     symbol: str
     timeframe: str = "15m"
-    strategy_mode: StrategyMode = StrategyMode.MEAN_REVERSION  # MR slightly better than BRK
+    strategy_mode: StrategyMode = StrategyMode.BOLLINGER_TREND
     bb_period: int = 20
-    bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    bb_std: Decimal = field(default_factory=lambda: Decimal("2.5"))  # 優化後建議值
+
+    # Supertrend parameters (for BOLLINGER_TREND mode)
+    st_atr_period: int = 20  # Supertrend ATR period
+    st_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # Supertrend ATR multiplier
+
+    # ATR Stop Loss
+    atr_stop_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))  # Stop loss ATR multiplier
+
+    # Position settings
+    leverage: int = 5
+    max_capital: Optional[Decimal] = None
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+
+    # === Legacy parameters (for MEAN_REVERSION / BREAKOUT modes) ===
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
     max_hold_bars: int = 48
-    leverage: int = 3  # Low leverage to reduce loss
 
-    # Capital allocation (資金分配)
-    max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
-
-    # Trend Filter (reduces losses when enabled)
-    use_trend_filter: bool = True  # Must be True to minimize loss
+    # Legacy Trend Filter
+    use_trend_filter: bool = False
     trend_period: int = 50
 
-    # RSI Filter (disabled)
+    # Legacy RSI Filter
     use_rsi_filter: bool = False
     rsi_period: int = 14
     rsi_oversold: int = 30
     rsi_overbought: int = 70
 
-    # ATR Stop Loss
+    # Legacy ATR Stop Loss
     use_atr_stop: bool = True
     atr_period: int = 14
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Trailing Stop (disabled for MR strategy)
-    use_trailing_stop: bool = False  # Not used in mean reversion
+    # Legacy Trailing Stop
+    use_trailing_stop: bool = False
     trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
     def __post_init__(self):
@@ -159,6 +144,10 @@ class BollingerConfig:
         # Ensure Decimal types
         if not isinstance(self.bb_std, Decimal):
             self.bb_std = Decimal(str(self.bb_std))
+        if not isinstance(self.st_atr_multiplier, Decimal):
+            self.st_atr_multiplier = Decimal(str(self.st_atr_multiplier))
+        if not isinstance(self.atr_stop_multiplier, Decimal):
+            self.atr_stop_multiplier = Decimal(str(self.atr_stop_multiplier))
         if not isinstance(self.stop_loss_pct, Decimal):
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.position_size_pct, Decimal):
@@ -184,6 +173,27 @@ class BollingerConfig:
         if self.bb_std < Decimal("0.5") or self.bb_std > Decimal("5.0"):
             raise ValueError(f"bb_std must be 0.5-5.0, got {self.bb_std}")
 
+        if self.leverage < 1 or self.leverage > 125:
+            raise ValueError(f"leverage must be 1-125, got {self.leverage}")
+
+        if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
+            raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
+
+        valid_timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
+        if self.timeframe not in valid_timeframes:
+            raise ValueError(f"timeframe must be one of {valid_timeframes}")
+
+        # Supertrend parameters validation (BOLLINGER_TREND mode)
+        if self.st_atr_period < 5 or self.st_atr_period > 50:
+            raise ValueError(f"st_atr_period must be 5-50, got {self.st_atr_period}")
+
+        if self.st_atr_multiplier < Decimal("1.0") or self.st_atr_multiplier > Decimal("10.0"):
+            raise ValueError(f"st_atr_multiplier must be 1.0-10.0, got {self.st_atr_multiplier}")
+
+        if self.atr_stop_multiplier < Decimal("0.5") or self.atr_stop_multiplier > Decimal("5.0"):
+            raise ValueError(f"atr_stop_multiplier must be 0.5-5.0, got {self.atr_stop_multiplier}")
+
+        # Legacy parameters validation
         if self.bbw_lookback < 50 or self.bbw_lookback > 500:
             raise ValueError(f"bbw_lookback must be 50-500, got {self.bbw_lookback}")
 
@@ -196,21 +206,9 @@ class BollingerConfig:
         if self.max_hold_bars < 1 or self.max_hold_bars > 200:
             raise ValueError(f"max_hold_bars must be 1-200, got {self.max_hold_bars}")
 
-        if self.leverage < 1 or self.leverage > 125:
-            raise ValueError(f"leverage must be 1-125, got {self.leverage}")
-
-        if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
-            raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
-
-        valid_timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
-        if self.timeframe not in valid_timeframes:
-            raise ValueError(f"timeframe must be one of {valid_timeframes}")
-
-        # Trend filter validation
         if self.trend_period < 10 or self.trend_period > 200:
             raise ValueError(f"trend_period must be 10-200, got {self.trend_period}")
 
-        # ATR validation
         if self.atr_period < 5 or self.atr_period > 50:
             raise ValueError(f"atr_period must be 5-50, got {self.atr_period}")
 
@@ -290,6 +288,45 @@ class BBWData:
             self.threshold = Decimal(str(self.threshold))
 
 
+@dataclass
+class SupertrendData:
+    """
+    Supertrend indicator data for BOLLINGER_TREND mode.
+
+    Attributes:
+        upper_band: Upper Supertrend band
+        lower_band: Lower Supertrend band
+        supertrend: Current Supertrend value (support/resistance line)
+        trend: Trend direction (1 = bullish, -1 = bearish)
+        atr: Current ATR value
+        timestamp: Calculation timestamp
+    """
+
+    upper_band: Decimal
+    lower_band: Decimal
+    supertrend: Decimal
+    trend: int  # 1 = bullish, -1 = bearish
+    atr: Decimal
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self):
+        """Ensure Decimal types."""
+        for attr in ["upper_band", "lower_band", "supertrend", "atr"]:
+            value = getattr(self, attr)
+            if not isinstance(value, Decimal):
+                setattr(self, attr, Decimal(str(value)))
+
+    @property
+    def is_bullish(self) -> bool:
+        """Check if trend is bullish."""
+        return self.trend == 1
+
+    @property
+    def is_bearish(self) -> bool:
+        """Check if trend is bearish."""
+        return self.trend == -1
+
+
 # =============================================================================
 # Signal
 # =============================================================================
@@ -307,6 +344,7 @@ class Signal:
         stop_loss: Stop loss price
         bands: Bollinger Bands at signal time
         bbw: BBW data at signal time
+        supertrend: Supertrend data (for BOLLINGER_TREND mode)
         timestamp: Signal timestamp
         reason: Signal reason description
         trend_sma: Trend SMA value (for trend filter)
@@ -323,6 +361,7 @@ class Signal:
     stop_loss: Optional[Decimal] = None
     trend_sma: Optional[Decimal] = None
     atr: Optional[Decimal] = None
+    supertrend: Optional[SupertrendData] = None  # For BOLLINGER_TREND mode
 
     def __post_init__(self):
         """Ensure Decimal types."""

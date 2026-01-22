@@ -23,6 +23,7 @@ from src.exchange.binance.futures_api import BinanceFuturesAPI
 class StrategyMode(str, Enum):
     MEAN_REVERSION = "mean_reversion"
     BREAKOUT = "breakout"
+    BOLLINGER_TREND = "bollinger_trend"
 
 
 @dataclass
@@ -30,23 +31,28 @@ class BollingerConfig:
     """Bollinger configuration."""
     bb_period: int = 20
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
-    leverage: int = 10
+    leverage: int = 5
     position_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.015"))
     max_hold_bars: int = 48
-    strategy_mode: StrategyMode = StrategyMode.BREAKOUT
+    strategy_mode: StrategyMode = StrategyMode.BOLLINGER_TREND
+
+    # Supertrend parameters (for BOLLINGER_TREND mode)
+    st_atr_period: int = 20
+    st_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))
 
     # ATR Stop Loss
     use_atr_stop: bool = True
     atr_period: int = 14
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    atr_stop_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Trailing Stop
-    use_trailing_stop: bool = True
+    # Trailing Stop (legacy)
+    use_trailing_stop: bool = False
     trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Trend Filter
+    # Trend Filter (legacy)
     use_trend_filter: bool = False
     trend_period: int = 50
 
@@ -59,6 +65,12 @@ class BollingerBacktest:
         self._config = config
         self._position = None
         self._trades = []
+
+        # Supertrend state (for BOLLINGER_TREND mode)
+        self._prev_st_upper: Optional[Decimal] = None
+        self._prev_st_lower: Optional[Decimal] = None
+        self._prev_st_trend: int = 0
+        self._prev_close: Optional[Decimal] = None
 
     def _calculate_sma(self, prices: list[Decimal], period: int) -> Optional[Decimal]:
         if len(prices) < period:
@@ -83,6 +95,67 @@ class BollingerBacktest:
             tr_values.append(tr)
         return sum(tr_values) / Decimal(len(tr_values))
 
+    def _calculate_supertrend(self, klines: list[Kline]) -> tuple[int, Decimal, Decimal]:
+        """
+        Calculate Supertrend indicator.
+
+        Returns:
+            Tuple of (trend, supertrend_value, atr)
+            trend: 1 = bullish, -1 = bearish
+        """
+        period = self._config.st_atr_period
+        multiplier = self._config.st_atr_multiplier
+
+        if len(klines) < period + 1:
+            return 0, Decimal("0"), Decimal("0")
+
+        # Calculate ATR
+        tr_values = []
+        for i in range(len(klines) - period, len(klines)):
+            high = klines[i].high
+            low = klines[i].low
+            prev_close = klines[i - 1].close if i > 0 else klines[i].close
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr_values.append(tr)
+        atr = sum(tr_values) / Decimal(len(tr_values))
+
+        # Current kline
+        kline = klines[-1]
+        high = kline.high
+        low = kline.low
+        close = kline.close
+
+        # Calculate bands
+        hl2 = (high + low) / Decimal("2")
+        upper_band = hl2 + multiplier * atr
+        lower_band = hl2 - multiplier * atr
+
+        # Adjust bands based on previous values
+        if self._prev_st_upper is not None and self._prev_close is not None:
+            if self._prev_close > self._prev_st_upper:
+                lower_band = max(lower_band, self._prev_st_lower)
+            if self._prev_close < self._prev_st_lower:
+                upper_band = min(upper_band, self._prev_st_upper)
+
+        # Determine trend
+        if self._prev_st_trend == 0:
+            trend = 1 if close > upper_band else -1
+        elif self._prev_st_trend == 1:
+            trend = 1 if close > self._prev_st_lower else -1
+        else:
+            trend = -1 if close < self._prev_st_upper else 1
+
+        # Supertrend value
+        supertrend = lower_band if trend == 1 else upper_band
+
+        # Store for next iteration
+        self._prev_st_upper = upper_band
+        self._prev_st_lower = lower_band
+        self._prev_st_trend = trend
+        self._prev_close = close
+
+        return trend, supertrend, atr
+
     def _get_trend(self, closes: list[Decimal]) -> int:
         """Get trend direction: 1=up, -1=down, 0=neutral."""
         if not self._config.use_trend_filter:
@@ -99,7 +172,7 @@ class BollingerBacktest:
 
     def run(self) -> dict:
         """Run backtest and return results."""
-        min_bars = max(self._config.bb_period, self._config.atr_period,
+        min_bars = max(self._config.bb_period, self._config.atr_period, self._config.st_atr_period,
                        self._config.trend_period if self._config.use_trend_filter else 0) + 20
 
         if len(self._klines) < min_bars:
@@ -112,8 +185,13 @@ class BollingerBacktest:
         prev_equity = capital
         closes = []
 
+        # Reset state
         self._position = None
         self._trades = []
+        self._prev_st_upper = None
+        self._prev_st_lower = None
+        self._prev_st_trend = 0
+        self._prev_close = None
 
         for idx, kline in enumerate(self._klines):
             close = kline.close
@@ -122,6 +200,9 @@ class BollingerBacktest:
             closes.append(close)
 
             if len(closes) < min_bars:
+                # Still need to update Supertrend state
+                if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+                    self._calculate_supertrend(self._klines[:idx+1])
                 continue
 
             # Calculate Bollinger Bands
@@ -137,7 +218,12 @@ class BollingerBacktest:
             # Calculate ATR
             atr = self._calculate_atr(self._klines[:idx+1], self._config.atr_period)
 
-            # Get trend
+            # Calculate Supertrend (for BOLLINGER_TREND mode)
+            st_trend, st_value, st_atr = 0, Decimal("0"), Decimal("0")
+            if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+                st_trend, st_value, st_atr = self._calculate_supertrend(self._klines[:idx+1])
+
+            # Get trend (for legacy modes)
             trend = self._get_trend(closes)
 
             # Position management
@@ -146,85 +232,109 @@ class BollingerBacktest:
                 side = self._position['side']
                 bars_held = self._position['bars_held']
 
-                # Update trailing stop
-                if self._config.use_trailing_stop and atr:
-                    if side == 'long':
-                        new_trail = close - atr * self._config.trailing_atr_mult
-                        current_trail = self._position.get('trailing_stop')
-                        if current_trail is None or new_trail > current_trail:
-                            self._position['trailing_stop'] = new_trail
-                    else:
-                        new_trail = close + atr * self._config.trailing_atr_mult
-                        current_trail = self._position.get('trailing_stop')
-                        if current_trail is None or new_trail < current_trail:
-                            self._position['trailing_stop'] = new_trail
-
                 exit_reason = None
                 exit_price = close
 
-                if side == 'long':
-                    pnl_pct = (close - entry) / entry
+                # BOLLINGER_TREND mode exit logic
+                if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+                    # 1. Check Supertrend flip (primary exit)
+                    if side == 'long' and st_trend == -1:
+                        exit_reason = 'st_flip'
+                    elif side == 'short' and st_trend == 1:
+                        exit_reason = 'st_flip'
 
-                    # Check stop loss (ATR-based or fixed)
-                    if self._config.use_atr_stop and atr:
-                        stop_price = entry - atr * self._config.atr_multiplier
-                        if low <= stop_price:
-                            exit_reason = 'sl'
-                            exit_price = stop_price
-                    elif pnl_pct <= -self._config.stop_loss_pct:
-                        exit_reason = 'sl'
-
-                    # Check trailing stop
-                    if not exit_reason and self._config.use_trailing_stop:
-                        trail = self._position.get('trailing_stop')
-                        if trail and low <= trail:
-                            exit_reason = 'trail'
-                            exit_price = trail
-
-                    # Check take profit (price returns to middle band for mean reversion)
+                    # 2. Check ATR stop loss (protection)
                     if not exit_reason:
-                        if self._config.strategy_mode == StrategyMode.MEAN_REVERSION:
-                            if close >= sma:
-                                exit_reason = 'tp'
-                        else:  # BREAKOUT - exit on opposite band touch
-                            if close <= lower_band:
-                                exit_reason = 'tp'
+                        stop_distance = st_atr * self._config.atr_stop_multiplier
+                        if side == 'long':
+                            stop_price = entry - stop_distance
+                            if low <= stop_price:
+                                exit_reason = 'sl'
+                                exit_price = stop_price
+                        else:
+                            stop_price = entry + stop_distance
+                            if high >= stop_price:
+                                exit_reason = 'sl'
+                                exit_price = stop_price
 
-                    # Check timeout
-                    if not exit_reason and bars_held >= self._config.max_hold_bars:
-                        exit_reason = 'timeout'
+                # Legacy modes exit logic
+                else:
+                    # Update trailing stop
+                    if self._config.use_trailing_stop and atr:
+                        if side == 'long':
+                            new_trail = close - atr * self._config.trailing_atr_mult
+                            current_trail = self._position.get('trailing_stop')
+                            if current_trail is None or new_trail > current_trail:
+                                self._position['trailing_stop'] = new_trail
+                        else:
+                            new_trail = close + atr * self._config.trailing_atr_mult
+                            current_trail = self._position.get('trailing_stop')
+                            if current_trail is None or new_trail < current_trail:
+                                self._position['trailing_stop'] = new_trail
 
-                else:  # short
-                    pnl_pct = (entry - close) / entry
+                    if side == 'long':
+                        pnl_pct = (close - entry) / entry
 
-                    # Check stop loss
-                    if self._config.use_atr_stop and atr:
-                        stop_price = entry + atr * self._config.atr_multiplier
-                        if high >= stop_price:
+                        # Check stop loss (ATR-based or fixed)
+                        if self._config.use_atr_stop and atr:
+                            stop_price = entry - atr * self._config.atr_multiplier
+                            if low <= stop_price:
+                                exit_reason = 'sl'
+                                exit_price = stop_price
+                        elif pnl_pct <= -self._config.stop_loss_pct:
                             exit_reason = 'sl'
-                            exit_price = stop_price
-                    elif pnl_pct <= -self._config.stop_loss_pct:
-                        exit_reason = 'sl'
 
-                    # Check trailing stop
-                    if not exit_reason and self._config.use_trailing_stop:
-                        trail = self._position.get('trailing_stop')
-                        if trail and high >= trail:
-                            exit_reason = 'trail'
-                            exit_price = trail
+                        # Check trailing stop
+                        if not exit_reason and self._config.use_trailing_stop:
+                            trail = self._position.get('trailing_stop')
+                            if trail and low <= trail:
+                                exit_reason = 'trail'
+                                exit_price = trail
 
-                    # Check take profit
-                    if not exit_reason:
-                        if self._config.strategy_mode == StrategyMode.MEAN_REVERSION:
-                            if close <= sma:
-                                exit_reason = 'tp'
-                        else:  # BREAKOUT
-                            if close >= upper_band:
-                                exit_reason = 'tp'
+                        # Check take profit
+                        if not exit_reason:
+                            if self._config.strategy_mode == StrategyMode.MEAN_REVERSION:
+                                if close >= sma:
+                                    exit_reason = 'tp'
+                            else:  # BREAKOUT
+                                if close <= lower_band:
+                                    exit_reason = 'tp'
 
-                    # Check timeout
-                    if not exit_reason and bars_held >= self._config.max_hold_bars:
-                        exit_reason = 'timeout'
+                        # Check timeout
+                        if not exit_reason and bars_held >= self._config.max_hold_bars:
+                            exit_reason = 'timeout'
+
+                    else:  # short
+                        pnl_pct = (entry - close) / entry
+
+                        # Check stop loss
+                        if self._config.use_atr_stop and atr:
+                            stop_price = entry + atr * self._config.atr_multiplier
+                            if high >= stop_price:
+                                exit_reason = 'sl'
+                                exit_price = stop_price
+                        elif pnl_pct <= -self._config.stop_loss_pct:
+                            exit_reason = 'sl'
+
+                        # Check trailing stop
+                        if not exit_reason and self._config.use_trailing_stop:
+                            trail = self._position.get('trailing_stop')
+                            if trail and high >= trail:
+                                exit_reason = 'trail'
+                                exit_price = trail
+
+                        # Check take profit
+                        if not exit_reason:
+                            if self._config.strategy_mode == StrategyMode.MEAN_REVERSION:
+                                if close <= sma:
+                                    exit_reason = 'tp'
+                            else:  # BREAKOUT
+                                if close >= upper_band:
+                                    exit_reason = 'tp'
+
+                        # Check timeout
+                        if not exit_reason and bars_held >= self._config.max_hold_bars:
+                            exit_reason = 'timeout'
 
                 if exit_reason:
                     # Calculate PnL
@@ -243,7 +353,23 @@ class BollingerBacktest:
 
             # Entry logic
             if not self._position:
-                if self._config.strategy_mode == StrategyMode.BREAKOUT:
+                if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
+                    # BOLLINGER_TREND: Supertrend direction + BB band touch
+                    if st_trend == 1:  # Bullish Supertrend
+                        if low <= lower_band:
+                            self._position = {
+                                'entry': lower_band,
+                                'side': 'long',
+                                'bars_held': 0,
+                            }
+                    elif st_trend == -1:  # Bearish Supertrend
+                        if high >= upper_band:
+                            self._position = {
+                                'entry': upper_band,
+                                'side': 'short',
+                                'bars_held': 0,
+                            }
+                elif self._config.strategy_mode == StrategyMode.BREAKOUT:
                     # Breakout: enter when price breaks band
                     if high >= upper_band:
                         if not self._config.use_trend_filter or trend >= 0:
@@ -400,57 +526,58 @@ async def main():
 
     # Test configurations
     configs = [
-        # Current "optimized" config (claims 81% annual)
-        ("優化參數 (20x, BB 3.25, ATR止損)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("3.25"),
-            leverage=20,
-            stop_loss_pct=Decimal("0.015"),
-            max_hold_bars=48,
-            strategy_mode=StrategyMode.BREAKOUT,
-            use_atr_stop=True,
-            atr_multiplier=Decimal("2.0"),
-            use_trailing_stop=True,
-            trailing_atr_mult=Decimal("2.0"),
-        )),
-        # Standard BB (2.0 std)
-        ("標準 BB (20x, BB 2.0)", BollingerConfig(
+        # =============================================
+        # NEW: BOLLINGER_TREND configurations (recommended)
+        # =============================================
+        ("🌟 BB+ST (5x, BB 2.0, ST 20/3.5)", BollingerConfig(
             bb_period=20,
             bb_std=Decimal("2.0"),
-            leverage=20,
-            stop_loss_pct=Decimal("0.015"),
-            max_hold_bars=48,
-            strategy_mode=StrategyMode.BREAKOUT,
-            use_atr_stop=True,
-            atr_multiplier=Decimal("2.0"),
-            use_trailing_stop=True,
-        )),
-        # Lower leverage
-        ("保守槓桿 (10x, BB 3.25)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("3.25"),
-            leverage=10,
-            stop_loss_pct=Decimal("0.015"),
-            max_hold_bars=48,
-            strategy_mode=StrategyMode.BREAKOUT,
-            use_atr_stop=True,
-            atr_multiplier=Decimal("2.0"),
-            use_trailing_stop=True,
-        )),
-        # Even lower leverage
-        ("低槓桿 (5x, BB 3.25)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("3.25"),
             leverage=5,
-            stop_loss_pct=Decimal("0.02"),
-            max_hold_bars=48,
-            strategy_mode=StrategyMode.BREAKOUT,
-            use_atr_stop=True,
-            atr_multiplier=Decimal("2.0"),
-            use_trailing_stop=True,
+            strategy_mode=StrategyMode.BOLLINGER_TREND,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.5"),
+            atr_stop_multiplier=Decimal("2.0"),
         )),
-        # Mean reversion instead of breakout
-        ("均值回歸 (10x, BB 2.0)", BollingerConfig(
+        ("BB+ST (5x, BB 2.0, ST 25/3.0)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.0"),
+            leverage=5,
+            strategy_mode=StrategyMode.BOLLINGER_TREND,
+            st_atr_period=25,
+            st_atr_multiplier=Decimal("3.0"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        ("BB+ST (5x, BB 2.5, ST 20/3.5)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.5"),
+            leverage=5,
+            strategy_mode=StrategyMode.BOLLINGER_TREND,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.5"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        ("BB+ST (10x, BB 2.0, ST 20/3.5)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.0"),
+            leverage=10,
+            strategy_mode=StrategyMode.BOLLINGER_TREND,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.5"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        ("BB+ST (3x, BB 2.0, ST 20/3.5)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.0"),
+            leverage=3,
+            strategy_mode=StrategyMode.BOLLINGER_TREND,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.5"),
+            atr_stop_multiplier=Decimal("2.5"),
+        )),
+        # =============================================
+        # LEGACY: Mean Reversion (for comparison)
+        # =============================================
+        ("[舊] 均值回歸 (10x, BB 2.0)", BollingerConfig(
             bb_period=20,
             bb_std=Decimal("2.0"),
             leverage=10,
@@ -461,30 +588,18 @@ async def main():
             atr_multiplier=Decimal("1.5"),
             use_trailing_stop=False,
         )),
-        # With trend filter
-        ("趨勢過濾 (10x, BB 2.5, trend)", BollingerConfig(
+        # =============================================
+        # LEGACY: Breakout (for comparison)
+        # =============================================
+        ("[舊] 突破 (5x, BB 3.25)", BollingerConfig(
             bb_period=20,
-            bb_std=Decimal("2.5"),
-            leverage=10,
+            bb_std=Decimal("3.25"),
+            leverage=5,
             stop_loss_pct=Decimal("0.02"),
             max_hold_bars=48,
             strategy_mode=StrategyMode.BREAKOUT,
             use_atr_stop=True,
             atr_multiplier=Decimal("2.0"),
-            use_trailing_stop=True,
-            use_trend_filter=True,
-            trend_period=50,
-        )),
-        # Very conservative
-        ("超保守 (3x, BB 2.5)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("2.5"),
-            leverage=3,
-            stop_loss_pct=Decimal("0.03"),
-            max_hold_bars=48,
-            strategy_mode=StrategyMode.BREAKOUT,
-            use_atr_stop=True,
-            atr_multiplier=Decimal("2.5"),
             use_trailing_stop=True,
         )),
     ]
@@ -552,30 +667,50 @@ async def main():
             print(f"   {best['name']}")
             print(f"   報酬: {best['return']:+.1f}%, 一致性: {best['consistency']:.0f}%")
 
-    # Compare original claim vs reality
+    # Compare BOLLINGER_TREND vs Legacy strategies
     print("\n" + "=" * 70)
-    print("       原始聲稱 vs 驗證結果")
+    print("       BOLLINGER_TREND vs 舊策略比較")
     print("=" * 70)
 
-    original = results[0] if results[0]["name"].startswith("優化") else None
-    for r in results:
-        if r["name"].startswith("優化"):
-            original = r
-            break
+    # Find best BOLLINGER_TREND strategy
+    bt_results = [r for r in results if "BB+ST" in r["name"]]
+    legacy_results = [r for r in results if "[舊]" in r["name"]]
 
-    if original:
-        print(f"\n原始聲稱: 年化 81.4%, Sharpe 1.13, 回撤 43.6%")
-        print(f"驗證結果: 報酬 {original['return']:+.1f}%, Sharpe {original['sharpe']:.2f}, 回撤 {original['max_dd']:.1f}%")
-        print(f"Walk-Forward 一致性: {original['consistency']:.0f}%")
+    if bt_results:
+        bt_best = max(bt_results, key=lambda x: (x["consistency"], x["return"]))
+        print(f"\n🌟 最佳 BOLLINGER_TREND 策略: {bt_best['name']}")
+        print(f"   報酬: {bt_best['return']:+.1f}%")
+        print(f"   Sharpe: {bt_best['sharpe']:.2f}")
+        print(f"   最大回撤: {bt_best['max_dd']:.1f}%")
+        print(f"   Walk-Forward 一致性: {bt_best['consistency']:.0f}%")
+        print(f"   交易次數: {bt_best['trades']}")
 
-        if original['consistency'] < 67:
-            print(f"\n⚠️  結論: Bollinger Bot 可能過度擬合")
-            if passing:
-                rec = passing[0]
-                print(f"   建議使用通過驗證的配置: {rec['name']}")
-                print(f"   預期報酬: {rec['return']:+.1f}%")
+    if legacy_results:
+        legacy_best = max(legacy_results, key=lambda x: (x["consistency"], x["return"]))
+        print(f"\n📉 最佳舊策略: {legacy_best['name']}")
+        print(f"   報酬: {legacy_best['return']:+.1f}%")
+        print(f"   Sharpe: {legacy_best['sharpe']:.2f}")
+        print(f"   Walk-Forward 一致性: {legacy_best['consistency']:.0f}%")
+
+    # Final recommendation
+    print("\n" + "=" * 70)
+    print("       結論與建議")
+    print("=" * 70)
+
+    if passing:
+        rec = passing[0]
+        print(f"\n✅ 推薦配置: {rec['name']}")
+        print(f"   報酬: {rec['return']:+.1f}%")
+        print(f"   Sharpe: {rec['sharpe']:.2f}")
+        print(f"   一致性: {rec['consistency']:.0f}%")
+
+        if "BB+ST" in rec["name"]:
+            print("\n   BOLLINGER_TREND 模式通過驗證，建議使用此策略。")
         else:
-            print(f"\n✅ 結論: Bollinger Bot 配置通過驗證")
+            print("\n   ⚠️ 新策略未通過驗證，保留舊策略。")
+    else:
+        print("\n❌ 所有策略均未通過 Walk-Forward 驗證")
+        print("   建議繼續使用 Supertrend Bot 或調整參數後重新驗證")
 
 
 if __name__ == "__main__":
