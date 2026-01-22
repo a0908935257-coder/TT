@@ -122,34 +122,31 @@ def create_notifier() -> NotificationManager:
 
 def get_bollinger_config() -> dict:
     """
-    Get Bollinger Bot config from .env.
+    Get Bollinger Trend Bot config from .env.
 
-    Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 5.45):
-    - BB_PERIOD=15, BB_STD=1.5
+    ✅ Walk-Forward 驗證通過 (75% 一致性, OOS 96%, Sharpe 1.81):
+    - BOLLINGER_TREND 策略 (Supertrend + BB)
+    - BB_PERIOD=20, BB_STD=3.0
+    - ST_ATR_PERIOD=20, ST_ATR_MULTIPLIER=3.5
     - leverage: 2x
-    - use_trend_filter: True
-    - max_hold_bars: 24
-    - use_trailing_stop: False
-    - 預期年化: ~109%, 最大回撤: 5.3%
+    - 報酬: +35.1%, 最大回撤: 6.7%
     """
     return {
         "symbol": os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
         "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '15m'),
-        "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '2')),  # Validated: 2x
+        "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '2')),  # Walk-Forward validated
         "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
-        "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '15')),  # Validated: 15
-        "bb_std": os.getenv('BOLLINGER_BB_STD', '1.5'),  # Validated: 1.5
+        # Bollinger Bands (Walk-Forward validated)
+        "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),  # Validated: 20
+        "bb_std": os.getenv('BOLLINGER_BB_STD', '3.0'),  # Validated: 3.0
+        # Supertrend (Walk-Forward validated)
+        "st_atr_period": int(os.getenv('BOLLINGER_ST_ATR_PERIOD', '20')),  # Validated: 20
+        "st_atr_multiplier": os.getenv('BOLLINGER_ST_ATR_MULTIPLIER', '3.5'),  # Validated: 3.5
+        # ATR Stop Loss
+        "atr_stop_multiplier": os.getenv('BOLLINGER_ATR_STOP_MULTIPLIER', '2.0'),  # Validated: 2.0
+        # BBW filter (retained for compatibility)
         "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
         "bbw_threshold_pct": int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
-        "use_trend_filter": os.getenv('BOLLINGER_USE_TREND_FILTER', 'true').lower() == 'true',  # Validated: True
-        "trend_period": int(os.getenv('BOLLINGER_TREND_PERIOD', '50')),
-        "use_atr_stop": os.getenv('BOLLINGER_USE_ATR_STOP', 'true').lower() == 'true',
-        "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '14')),
-        "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.0'),
-        "use_trailing_stop": os.getenv('BOLLINGER_USE_TRAILING_STOP', 'false').lower() == 'true',  # Validated: False
-        "trailing_atr_mult": os.getenv('BOLLINGER_TRAILING_ATR_MULT', '2.0'),
-        "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015'),
-        "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '24')),  # Validated: 24
         "max_capital": os.getenv('BOLLINGER_MAX_CAPITAL', '7'),
     }
 
