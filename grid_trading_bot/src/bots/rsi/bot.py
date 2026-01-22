@@ -154,7 +154,7 @@ class RSIBot(BaseBot):
         logger.info(f"  SL: {self._config.stop_loss_pct*100:.1f}%, TP: {self._config.take_profit_pct*100:.1f}%")
         logger.info(f"  Initial RSI: {result.rsi:.2f}")
 
-    async def _do_stop(self) -> None:
+    async def _do_stop(self, clear_position: bool = False) -> None:
         """Stop the RSI bot."""
         logger.info(f"Stopping RSI Bot for {self._config.symbol}")
 

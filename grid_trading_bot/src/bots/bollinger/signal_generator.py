@@ -202,7 +202,7 @@ class SignalGenerator:
                     supertrend=supertrend_data,
                     timestamp=datetime.now(timezone.utc),
                     reason=f"Supertrend 看多，等待價格觸及下軌 {bands.lower:.2f}",
-                    atr=atr,
+                    atr=supertrend_data.atr,
                 )
         elif trend == -1:  # Bearish Supertrend
             if current_price >= bands.upper:
@@ -217,7 +217,7 @@ class SignalGenerator:
                     supertrend=supertrend_data,
                     timestamp=datetime.now(timezone.utc),
                     reason=f"Supertrend 看空，等待價格觸及上軌 {bands.upper:.2f}",
-                    atr=atr,
+                    atr=supertrend_data.atr,
                 )
 
         # Calculate ATR-based stop loss
