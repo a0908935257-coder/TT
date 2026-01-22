@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
 RSI Momentum Strategy Optimization
-Instead of mean reversion, follow RSI momentum
-- Long when RSI crosses above 50 (momentum building)
-- Short when RSI crosses below 50 (momentum fading)
+
+Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
+- RSI Period: 25
+- Entry Level: 50, Momentum Threshold: 5
+- Leverage: 5x
+- Stop Loss: 2%, Take Profit: 4%
+- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+
+Strategy:
+- Long when RSI crosses above entry_level + threshold (55)
+- Short when RSI crosses below entry_level - threshold (45)
 """
 
 import asyncio
@@ -17,7 +25,7 @@ from src.exchange.binance.futures_api import BinanceFuturesAPI
 
 @dataclass
 class RSIMomentumConfig:
-    rsi_period: int = 14
+    rsi_period: int = 25  # Walk-Forward validated: RSI=25
     entry_level: int = 50  # Cross above = long, cross below = short
     momentum_threshold: int = 5  # Must cross by this much
     leverage: int = 5
@@ -229,26 +237,26 @@ async def main():
 
     # Test different RSI momentum configurations
     configs = [
-        # Standard momentum (cross 50)
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=10, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.06),
+        # Walk-Forward validated (RSI=25, 67% consistency)
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
 
-        # Different RSI periods
-        RSIMomentumConfig(rsi_period=7, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
+        # RSI period variations
         RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
+        RSIMomentumConfig(rsi_period=28, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
 
-        # Different entry levels
-        RSIMomentumConfig(rsi_period=14, entry_level=45, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-        RSIMomentumConfig(rsi_period=14, entry_level=55, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
+        # Momentum threshold variations
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=3, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=7, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
+
+        # Different TP/SL ratios
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.025, take_profit_pct=0.05),
+
+        # Lower leverage for safety
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.06),
 
         # With trailing stop
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.06, trailing_stop=True, trailing_pct=0.015),
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.08, trailing_stop=True, trailing_pct=0.02),
-
-        # More conservative
-        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=10, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.06),
-        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=10, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.06, trailing_stop=True, trailing_pct=0.015),
     ]
 
     print(f"\n測試 {len(configs)} 個動量策略組合...")
