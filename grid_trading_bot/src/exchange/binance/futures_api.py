@@ -136,6 +136,7 @@ class BinanceFuturesAPI:
         endpoint: str,
         params: dict | None = None,
         signed: bool = False,
+        api_key_required: bool = False,
     ) -> dict | list:
         """
         Send HTTP request to Binance Futures API.
@@ -145,6 +146,7 @@ class BinanceFuturesAPI:
             endpoint: API endpoint path
             params: Request parameters
             signed: Whether to sign the request
+            api_key_required: Whether to include API key header (without signature)
 
         Returns:
             JSON response as dict or list
@@ -171,6 +173,11 @@ class BinanceFuturesAPI:
             if self._auth is None:
                 raise AuthenticationError("API key and secret required for signed requests")
             params = self._auth.sign_params(params)
+            headers = self._auth.get_headers()
+        elif api_key_required:
+            # Some endpoints require API key but not signature (e.g., listen key)
+            if self._auth is None:
+                raise AuthenticationError("API key required for this request")
             headers = self._auth.get_headers()
 
         logger.debug(f"Request: {method} {endpoint}")

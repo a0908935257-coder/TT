@@ -103,67 +103,58 @@ class RSIBot(BaseBot):
         """Return trading symbol."""
         return self._config.symbol
 
-    async def _do_start(self) -> bool:
+    async def _do_start(self) -> None:
         """Start the RSI bot."""
         logger.info(f"Initializing RSI Bot for {self._config.symbol}")
 
-        try:
-            # Set leverage and margin type
-            await self._exchange.futures.set_leverage(
-                symbol=self._config.symbol,
-                leverage=self._config.leverage,
-            )
-            await self._exchange.futures.set_margin_type(
-                symbol=self._config.symbol,
-                margin_type=self._config.margin_type,
-            )
+        # Set leverage and margin type
+        await self._exchange.futures.set_leverage(
+            symbol=self._config.symbol,
+            leverage=self._config.leverage,
+        )
+        await self._exchange.futures.set_margin_type(
+            symbol=self._config.symbol,
+            margin_type=self._config.margin_type,
+        )
 
-            # Initialize RSI calculator
-            self._rsi_calc = RSICalculator(
-                period=self._config.rsi_period,
-                oversold=self._config.entry_level - self._config.momentum_threshold,
-                overbought=self._config.entry_level + self._config.momentum_threshold,
-            )
+        # Initialize RSI calculator
+        self._rsi_calc = RSICalculator(
+            period=self._config.rsi_period,
+            oversold=self._config.entry_level - self._config.momentum_threshold,
+            overbought=self._config.entry_level + self._config.momentum_threshold,
+        )
 
-            # Get historical klines for initialization
-            klines = await self._exchange.futures.get_klines(
-                symbol=self._config.symbol,
-                interval=self._config.timeframe,
-                limit=200,
-            )
+        # Get historical klines for initialization
+        klines = await self._exchange.futures.get_klines(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            limit=200,
+        )
 
-            if not klines or len(klines) < self._config.rsi_period + 10:
-                logger.error("Insufficient klines for RSI initialization")
-                return False
+        if not klines or len(klines) < self._config.rsi_period + 10:
+            raise RuntimeError("Insufficient klines for RSI initialization")
 
-            # Initialize RSI
-            result = self._rsi_calc.initialize(klines)
-            if not result:
-                logger.error("Failed to initialize RSI calculator")
-                return False
+        # Initialize RSI
+        result = self._rsi_calc.initialize(klines)
+        if not result:
+            raise RuntimeError("Failed to initialize RSI calculator")
 
-            # Check for existing position
-            await self._sync_position()
+        # Check for existing position
+        await self._sync_position()
 
-            # Start kline monitoring
-            self._kline_task = asyncio.create_task(self._kline_loop())
+        # Start kline monitoring
+        self._kline_task = asyncio.create_task(self._kline_loop())
 
-            logger.info(f"RSI Momentum Bot initialized successfully")
-            logger.info(f"  Symbol: {self._config.symbol}")
-            logger.info(f"  Timeframe: {self._config.timeframe}")
-            logger.info(f"  RSI Period: {self._config.rsi_period}")
-            logger.info(f"  Entry Level: {self._config.entry_level} ± {self._config.momentum_threshold}")
-            logger.info(f"  Leverage: {self._config.leverage}x")
-            logger.info(f"  SL: {self._config.stop_loss_pct*100:.1f}%, TP: {self._config.take_profit_pct*100:.1f}%")
-            logger.info(f"  Initial RSI: {result.rsi:.2f}")
+        logger.info(f"RSI Momentum Bot initialized successfully")
+        logger.info(f"  Symbol: {self._config.symbol}")
+        logger.info(f"  Timeframe: {self._config.timeframe}")
+        logger.info(f"  RSI Period: {self._config.rsi_period}")
+        logger.info(f"  Entry Level: {self._config.entry_level} ± {self._config.momentum_threshold}")
+        logger.info(f"  Leverage: {self._config.leverage}x")
+        logger.info(f"  SL: {self._config.stop_loss_pct*100:.1f}%, TP: {self._config.take_profit_pct*100:.1f}%")
+        logger.info(f"  Initial RSI: {result.rsi:.2f}")
 
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to start RSI Bot: {e}")
-            return False
-
-    async def _do_stop(self) -> bool:
+    async def _do_stop(self) -> None:
         """Stop the RSI bot."""
         logger.info(f"Stopping RSI Bot for {self._config.symbol}")
 
@@ -181,9 +172,8 @@ class RSIBot(BaseBot):
             await self._cancel_stop_loss_order()
 
         logger.info("RSI Bot stopped")
-        return True
 
-    async def _do_pause(self) -> bool:
+    async def _do_pause(self) -> None:
         """Pause the bot."""
         if self._kline_task:
             self._kline_task.cancel()
@@ -192,12 +182,10 @@ class RSIBot(BaseBot):
             except asyncio.CancelledError:
                 pass
             self._kline_task = None
-        return True
 
-    async def _do_resume(self) -> bool:
+    async def _do_resume(self) -> None:
         """Resume the bot."""
         self._kline_task = asyncio.create_task(self._kline_loop())
-        return True
 
     async def _kline_loop(self):
         """Main loop for monitoring klines."""
