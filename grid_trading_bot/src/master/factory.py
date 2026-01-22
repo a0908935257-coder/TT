@@ -228,13 +228,12 @@ class BotFactory:
         """
         Create a BollingerBot instance.
 
-        Walk-Forward 驗證通過的參數 (83% 一致性, Sharpe 5.45):
-        - bb_period: 15
-        - bb_std: 1.5
+        Walk-Forward 驗證通過的參數 (75% 一致性, Sharpe 1.81):
+        - bb_period: 20, bb_std: 3.0
+        - st_atr_period: 20, st_atr_multiplier: 3.5
+        - atr_stop_multiplier: 2.0
         - leverage: 2x
-        - use_trend_filter: True
-        - max_hold_bars: 24
-        - 預期年化: ~109%, 最大回撤: 5.3%
+        - 報酬: +35.1%, 最大回撤: 6.7%
 
         Args:
             bot_id: Bot identifier
@@ -253,22 +252,21 @@ class BotFactory:
         bollinger_config = BollingerConfig(
             symbol=config["symbol"],
             timeframe=config.get("timeframe", "15m"),
-            leverage=int(config.get("leverage", 2)),  # Validated: 2x
+            # Bollinger Bands (Walk-Forward validated: BB(20, 3.0))
+            bb_period=int(config.get("bb_period", 20)),
+            bb_std=Decimal(str(config.get("bb_std", "3.0"))),
+            # Supertrend (Walk-Forward validated: ST(20, 3.5))
+            st_atr_period=int(config.get("st_atr_period", 20)),
+            st_atr_multiplier=Decimal(str(config.get("st_atr_multiplier", "3.5"))),
+            # ATR Stop Loss (Walk-Forward validated: 2.0x ATR)
+            atr_stop_multiplier=Decimal(str(config.get("atr_stop_multiplier", "2.0"))),
+            # Position settings
+            leverage=int(config.get("leverage", 2)),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
             position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            bb_period=int(config.get("bb_period", 15)),  # Validated: 15
-            bb_std=Decimal(str(config.get("bb_std", "1.5"))),  # Validated: 1.5
+            # BBW filter
             bbw_lookback=int(config.get("bbw_lookback", 200)),
             bbw_threshold_pct=int(config.get("bbw_threshold_pct", 20)),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.02"))),  # 2%
-            max_hold_bars=int(config.get("max_hold_bars", 24)),  # Validated: 24
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            use_trend_filter=config.get("use_trend_filter", True),  # Validated: enabled
-            trend_period=int(config.get("trend_period", 50)),
-            use_atr_stop=config.get("use_atr_stop", True),
-            atr_period=int(config.get("atr_period", 14)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", "2.0"))),
-            use_trailing_stop=config.get("use_trailing_stop", False),  # Validated: disabled
-            trailing_atr_mult=Decimal(str(config.get("trailing_atr_mult", "2.0"))),
         )
 
         # Create bot instance

@@ -63,6 +63,7 @@ class RSIBot(BaseBot):
         """Initialize RSI Bot."""
         super().__init__(
             bot_id=bot_id,
+            config=config,
             exchange=exchange,
             data_manager=data_manager,
             notifier=notifier,
@@ -87,6 +88,20 @@ class RSIBot(BaseBot):
         self._total_pnl = Decimal("0")
         self._win_count = 0
         self._loss_count = 0
+
+    # =========================================================================
+    # Abstract Properties (Required by BaseBot)
+    # =========================================================================
+
+    @property
+    def bot_type(self) -> str:
+        """Return bot type identifier."""
+        return "rsi"
+
+    @property
+    def symbol(self) -> str:
+        """Return trading symbol."""
+        return self._config.symbol
 
     async def _do_start(self) -> bool:
         """Start the RSI bot."""
@@ -596,3 +611,74 @@ class RSIBot(BaseBot):
             "win_rate": self._win_count / (self._win_count + self._loss_count) * 100
                         if (self._win_count + self._loss_count) > 0 else 0,
         }
+
+    # =========================================================================
+    # Abstract Methods (Required by BaseBot)
+    # =========================================================================
+
+    def _get_extra_status(self) -> dict:
+        """
+        Return extra status fields specific to RSI bot.
+
+        Returns:
+            Dictionary with RSI-specific status fields
+        """
+        rsi_state = self._rsi_calc.get_state() if self._rsi_calc else {}
+        current_rsi = rsi_state.get("rsi")
+
+        entry_level = self._config.entry_level
+        threshold = self._config.momentum_threshold
+
+        signal = "NEUTRAL"
+        if current_rsi:
+            if current_rsi > entry_level + threshold:
+                signal = "BULLISH"
+            elif current_rsi < entry_level - threshold:
+                signal = "BEARISH"
+
+        return {
+            "rsi_period": self._config.rsi_period,
+            "entry_level": entry_level,
+            "momentum_threshold": threshold,
+            "current_rsi": current_rsi,
+            "rsi_signal": signal,
+            "position": {
+                "side": self._position.side.value,
+                "entry_price": float(self._position.entry_price),
+                "quantity": float(self._position.quantity),
+            } if self._position else None,
+            "total_pnl": float(self._total_pnl),
+            "win_count": self._win_count,
+            "loss_count": self._loss_count,
+        }
+
+    async def _extra_health_checks(self) -> dict:
+        """
+        Perform extra health checks specific to RSI bot.
+
+        Returns:
+            Dictionary mapping check name to pass/fail boolean
+        """
+        checks = {}
+
+        # Check RSI calculator initialized
+        checks["rsi_initialized"] = self._rsi_calc is not None
+
+        # Check RSI value is valid
+        if self._rsi_calc:
+            rsi_state = self._rsi_calc.get_state()
+            current_rsi = rsi_state.get("rsi")
+            checks["rsi_valid"] = current_rsi is not None and 0 <= current_rsi <= 100
+        else:
+            checks["rsi_valid"] = False
+
+        # Check position sync (if we have position, it should be valid)
+        if self._position:
+            checks["position_valid"] = (
+                self._position.quantity > 0 and
+                self._position.entry_price > 0
+            )
+        else:
+            checks["position_valid"] = True  # No position is valid
+
+        return checks
