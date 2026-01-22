@@ -55,12 +55,14 @@ def print_banner():
   ✓ Bollinger Bot (合約 2x) - Supertrend + BB 趨勢策略
   ✓ RSI Momentum Bot (合約 2x) - 動量策略
   ✓ Grid Futures Bot (合約 2x) - 趨勢網格
+  ✓ Supertrend Bot (合約 2x) - 趨勢跟蹤策略
   ✓ Discord Bot (遠端管理)
 
 Walk-Forward 驗證通過的策略:
   Bollinger: BB(20,3.0), ST(20,3.5), 2x (75% 一致性, Sharpe 1.81, OOS 96%)
-  RSI: Period=21, Level=50±5, 2x (88% 一致性, Sharpe 0.80, OOS 140%)
-  Grid: 12格, trend=50, 2x (100% 一致性, Sharpe 1.85)
+  RSI: Period=21, Level=50±5, 2x (88% 一致性, Sharpe 0.81, OOS 140%)
+  Grid: 10格, trend=20, ATR=3.0, 2x (100% 一致性, Sharpe 4.50)
+  Supertrend: ATR=25, M=3.0, 2x (75% 一致性, Sharpe 0.39)
 
 Discord 指令:
   /bot list     - 列出所有機器人
@@ -214,6 +216,38 @@ def get_grid_futures_config() -> dict:
     }
 
 
+def get_supertrend_config() -> dict:
+    """
+    Get Supertrend Bot config from .env.
+
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+
+    驗證結果 - 最佳配置:
+    - Walk-Forward 一致性: 75% (6/8 時段獲利)
+    - 報酬: +6.7% (2 年), 年化 +3.3%
+    - Sharpe: 0.39, 最大回撤: 11.5%
+
+    默認參數 (Walk-Forward 驗證通過):
+    - leverage: 2x (降低風險)
+    - atr_period: 25 (更長週期減少雜訊)
+    - atr_multiplier: 3.0
+    - stop_loss_pct: 3%
+    """
+    return {
+        "symbol": os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
+        "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
+        "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '2')),  # Validated: 2x (降低風險)
+        "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+        "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '25')),  # Validated: 25 (更長週期)
+        "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),  # Validated: 3.0
+        "max_capital": os.getenv('SUPERTREND_MAX_CAPITAL', '5'),
+        "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
+        "stop_loss_pct": os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.03'),  # Validated: 3%
+        "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
+        "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.02'),
+    }
+
+
 async def create_and_start_bots(master: Master) -> list[str]:
     """Create and start all bots through Master."""
     bot_ids = []
@@ -254,6 +288,22 @@ async def create_and_start_bots(master: Master) -> list[str]:
     print("  創建 Grid Futures Bot...")
     grid_futures_config = get_grid_futures_config()
     result = await master.create_bot(BotType.GRID_FUTURES, grid_futures_config)
+    if result.success:
+        bot_ids.append(result.bot_id)
+        print(f"    ✓ 已創建: {result.bot_id}")
+        # Start the bot
+        start_result = await master.start_bot(result.bot_id)
+        if start_result.success:
+            print(f"    ✓ 已啟動: {result.bot_id}")
+        else:
+            print(f"    ✗ 啟動失敗: {start_result.message}")
+    else:
+        print(f"    ✗ 創建失敗: {result.message}")
+
+    # 4. Create Supertrend Bot
+    print("  創建 Supertrend Bot...")
+    supertrend_config = get_supertrend_config()
+    result = await master.create_bot(BotType.SUPERTREND, supertrend_config)
     if result.success:
         bot_ids.append(result.bot_id)
         print(f"    ✓ 已創建: {result.bot_id}")
