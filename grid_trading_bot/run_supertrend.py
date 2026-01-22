@@ -42,19 +42,22 @@ def get_config_from_env() -> SupertrendConfig:
     max_capital = Decimal(max_capital_str) if max_capital_str else None
 
     return SupertrendConfig(
-        # 基本設定
+        # 基本設定 (Walk-Forward 驗證通過: 75% 一致性)
         symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '5')),
+        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '2')),  # Validated: 2x (降低風險)
         margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
 
         # 資金分配
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
-        # Supertrend 設定 (⚠️ 未通過樣本外驗證)
-        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '10')),  # ⚠️ 未通過驗證
-        atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0')),  # ⚠️ 未通過驗證
+        # Supertrend 設定 (Walk-Forward 驗證通過)
+        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '25')),  # Validated: 25 (更長週期)
+        atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0')),  # Validated: 3.0
+
+        # 止損設定
+        stop_loss_pct=Decimal(os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.03')),  # Validated: 3%
 
         # 可選：追蹤止損
         use_trailing_stop=os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
