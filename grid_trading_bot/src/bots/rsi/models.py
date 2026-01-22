@@ -7,13 +7,13 @@ Strategy: RSI crossover (trend following, not mean reversion)
 - Long when RSI crosses above entry_level + threshold
 - Short when RSI crosses below entry_level - threshold
 
-Walk-Forward 驗證 (2 年數據, 12 期, 2024-01 ~ 2026-01):
+⚠️ Walk-Forward 驗證 (1 年數據, 6 期, 2025-01 ~ 2026-01):
 - RSI Period: 25, Entry Level: 50±5, Leverage: 5x
-- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
-- Consistency: 67% (8/12 期獲利) ✅
+- Return: +9.67%, Sharpe: 1.09, Max DD: 5.4%
+- Consistency: 67% (4/6 期獲利) ✅ (剛好達標)
 
-注意：Sharpe 0.65 遠低於 Supertrend Bot (4.34)，
-建議優先使用 Supertrend，RSI 可作為輔助策略。
+注意：一致性剛好達到 67% 門檻，屬於邊緣通過。
+建議謹慎使用，並搭配適當的風險管理。
 """
 
 from dataclasses import dataclass, field

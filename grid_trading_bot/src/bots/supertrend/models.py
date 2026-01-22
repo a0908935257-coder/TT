@@ -38,6 +38,20 @@ class SupertrendConfig:
     """
     Supertrend Bot configuration.
 
+    ⚠️ 警告：此策略未通過樣本外驗證，不建議用於實盤交易！
+
+    驗證結果 (2024-01 ~ 2026-01, 2 年數據):
+        所有參數組合均未通過樣本外測試：
+        - ATR=5, M=2.5: 樣本內 -0.2%, 樣本外 -3.6% ❌
+        - ATR=10, M=2.5: 樣本內 +26.2%, 樣本外 -6.7% ❌
+        - ATR=10, M=3.0: 樣本內 +5.6%, 樣本外 -13.0% ❌
+        - ATR=20, M=3.5: 樣本內 +26.0%, 樣本外 -6.8% ❌
+
+        Walk-Forward 一致性: 47% (7/15 期間獲利) ❌ 需要 ≥60%
+
+    結論：策略在歷史數據表現良好但無法泛化到新數據，
+          屬於典型過度擬合，不建議實盤使用。
+
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
@@ -47,24 +61,12 @@ class SupertrendConfig:
         position_size_pct: Position size as percentage of balance (default 10%)
         use_trailing_stop: Enable trailing stop loss
         trailing_stop_pct: Trailing stop percentage (fallback)
-
-    樣本外驗證 (2 年數據, 70/30 分割, 2024-01 ~ 2026-01):
-        - ATR=5, M=2.5, L=5x: 樣本外 +25.9%, 衰退 14.9%, DD 5.5% ✅ 預設
-        - ATR=18, M=3.5, L=5x: 樣本外 +16.8%, 衰退 8.9%, DD 10.2%
-        - ATR=12, M=3.5, L=5x: 樣本外 +16.1%, 衰退 18.8%, DD 4.5%
-
-    過度擬合測試 (2024-01 ~ 2026-01):
-        ATR=5, M=2.5 通過樣本外測試 ✅
-        - 樣本內報酬: +30.4%
-        - 樣本外報酬: +25.9%
-        - 績效衰退: 14.9% (< 50% 門檻)
-        - 樣本外最大回撤: 5.5%
     """
     symbol: str
     timeframe: str = "15m"
-    atr_period: int = 5  # Out-of-sample validated: +25.9%
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.5"))  # Out-of-sample validated
-    leverage: int = 5  # Risk management
+    atr_period: int = 10  # ⚠️ 未通過驗證
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # ⚠️ 未通過驗證
+    leverage: int = 5
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
