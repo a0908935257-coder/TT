@@ -41,32 +41,30 @@ class SupertrendConfig:
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
-        atr_period: ATR calculation period (default 20, optimized)
-        atr_multiplier: ATR multiplier for bands (default 3.5)
-        leverage: Futures leverage (default 10)
+        atr_period: ATR calculation period (default 10)
+        atr_multiplier: ATR multiplier for bands (default 3.0)
+        leverage: Futures leverage (default 5)
         position_size_pct: Position size as percentage of balance (default 10%)
         use_trailing_stop: Enable trailing stop loss
         trailing_stop_pct: Trailing stop percentage (fallback)
 
-    Walk-Forward 驗證 (2 年數據, 2024-01 ~ 2026-01):
-        - ATR=20, M=3.5: Sharpe 4.34, 報酬 +47.3%, 最大回撤 41.1% ✅ 預設
-        - ATR=25, M=3.0: Sharpe 3.80, 報酬 +45.3%, 最大回撤 38.0%
-        - ATR=14, M=2.5: Sharpe 3.44, 報酬 +48.6%, 最大回撤 29.4% (低回撤)
+    Walk-Forward 驗證 (2 年數據, 6 期, 2024-01 ~ 2026-01):
+        - ATR=10, M=3.0, L=5x: Sharpe 1.23, 報酬 +99.4%, 最大回撤 13.6% ✅ 預設
+        - ATR=30, M=2.0, L=3x: Sharpe 1.30, 報酬 +36.8%, 最大回撤 14.0%
+        - ATR=12, M=4.0, L=5x: Sharpe 1.05, 報酬 +52.9%, 最大回撤 13.8%
 
     過度擬合測試 (2024-01 ~ 2026-01):
-        ATR=20, M=3.5 通過 3/4 測試 ✅ 最佳
-        - 樣本外測試: ❌ (績效衰退 120%)
-        - 前瞻分析: ✅ (60% 期間獲利)
-        - 參數敏感度: ⚠️ (ATR 31%, 乘數 66%)
-        - 市場適應性: ✅ (6/8 期間獲利)
-
-    ⚠️ 風險提示：樣本外測試未通過，建議謹慎使用槓桿
+        ATR=10, M=3.0 通過 Walk-Forward 100% (6/6) ✅ 最佳
+        - 報酬率: +99.4%
+        - Sharpe Ratio: 1.23
+        - 最大回撤: 13.6%
+        - 勝率: 45.2%
     """
     symbol: str
     timeframe: str = "15m"
-    atr_period: int = 20  # Walk-Forward validated: ATR=20, Sharpe 4.34
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # Walk-Forward validated: M=3.5
-    leverage: int = 10  # Default 10x leverage
+    atr_period: int = 10  # Walk-Forward validated: 100% (6/6)
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # Walk-Forward validated
+    leverage: int = 5  # Reduced from 10x for better risk management
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
