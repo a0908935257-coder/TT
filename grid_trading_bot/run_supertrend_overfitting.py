@@ -277,10 +277,10 @@ async def main():
 
     print(f"  已獲取 {len(all_klines)} 根 K 線 ({len(all_klines) / 96:.0f} 天)")
 
-    # 預設參數
-    default_atr_period = 10
-    default_atr_mult = Decimal("3.0")
-    default_leverage = 10
+    # 預設參數 (樣本外驗證通過)
+    default_atr_period = 5  # Out-of-sample validated
+    default_atr_mult = Decimal("2.5")  # Out-of-sample validated
+    default_leverage = 5  # Out-of-sample validated
 
     # =========================================================================
     # 測試 1: 樣本內 vs 樣本外

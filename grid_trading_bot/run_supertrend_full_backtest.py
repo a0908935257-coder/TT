@@ -351,52 +351,49 @@ async def main():
     print(f"  價格範圍: ${min(closes):,.0f} ~ ${max(closes):,.0f}")
     print(f"  價格變化: {(closes[-1]/closes[0]-1)*100:+.1f}%")
 
-    # 測試配置 (全部使用 10% 倉位大小)
+    # 測試配置 (使用驗證後的 5x 槓桿)
     base_config = {
-        'leverage': 10,
+        'leverage': 5,  # Out-of-sample validated
         'position_size': 0.1,
     }
 
     configs = {
-        "當前配置 (ATR=25, M=3.0) 有追蹤": {
+        "🌟 當前配置 (ATR=5, M=2.5) 樣本外驗證": {
             **base_config,
-            'atr_period': 25,
-            'atr_multiplier': 3.0,
-            'use_trailing_stop': True,
-            'trailing_stop_pct': 0.03,
-        },
-        "當前配置 無追蹤止損": {
-            **base_config,
-            'atr_period': 25,
-            'atr_multiplier': 3.0,
+            'atr_period': 5,  # Out-of-sample validated
+            'atr_multiplier': 2.5,  # Out-of-sample validated
             'use_trailing_stop': False,
         },
-        "舊配置 (ATR=10, M=3.0) 有追蹤": {
+        "當前配置 有追蹤止損": {
             **base_config,
-            'atr_period': 10,
-            'atr_multiplier': 3.0,
-            'use_trailing_stop': True,
-            'trailing_stop_pct': 0.03,
-        },
-        "舊配置 無追蹤止損": {
-            **base_config,
-            'atr_period': 10,
-            'atr_multiplier': 3.0,
-            'use_trailing_stop': False,
-        },
-        "ATR=14, M=2.5 有追蹤": {
-            **base_config,
-            'atr_period': 14,
+            'atr_period': 5,
             'atr_multiplier': 2.5,
             'use_trailing_stop': True,
             'trailing_stop_pct': 0.03,
         },
-        "ATR=20, M=3.5 有追蹤": {
+        "備選 ATR=18, M=3.5 (樣本外 +16.8%)": {
+            **base_config,
+            'atr_period': 18,
+            'atr_multiplier': 3.5,
+            'use_trailing_stop': False,
+        },
+        "備選 ATR=12, M=3.5 (樣本外 +16.1%)": {
+            **base_config,
+            'atr_period': 12,
+            'atr_multiplier': 3.5,
+            'use_trailing_stop': False,
+        },
+        "舊配置 ATR=10, M=3.0 (樣本外失敗)": {
+            **base_config,
+            'atr_period': 10,
+            'atr_multiplier': 3.0,
+            'use_trailing_stop': False,
+        },
+        "舊配置 ATR=20, M=3.5 (樣本外失敗)": {
             **base_config,
             'atr_period': 20,
             'atr_multiplier': 3.5,
-            'use_trailing_stop': True,
-            'trailing_stop_pct': 0.03,
+            'use_trailing_stop': False,
         },
     }
 
@@ -454,15 +451,14 @@ async def main():
     print("  追蹤止損效果比較")
     print("=" * 70)
 
-    pairs = [
-        ("當前配置 (ATR=25, M=3.0) 有追蹤", "當前配置 無追蹤止損"),
-        ("舊配置 (ATR=10, M=3.0) 有追蹤", "舊配置 無追蹤止損"),
-    ]
+    # Compare current validated config with and without trailing stop
+    with_ts = "當前配置 有追蹤止損"
+    without_ts = "🌟 當前配置 (ATR=5, M=2.5) 樣本外驗證"
 
-    for with_ts, without_ts in pairs:
+    if with_ts in results and without_ts in results:
         r_with = results[with_ts]
         r_without = results[without_ts]
-        print(f"\n  {with_ts.split(' 有')[0]}:")
+        print(f"\n  當前配置 (ATR=5, M=2.5):")
         print(f"    {'指標':<15} {'有追蹤':>12} {'無追蹤':>12} {'差異':>12}")
         print(f"    {'-'*50}")
         print(f"    {'總報酬':<15} {r_with.total_return_pct:>+11.1f}% {r_without.total_return_pct:>+11.1f}% {r_with.total_return_pct - r_without.total_return_pct:>+11.1f}%")
