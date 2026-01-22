@@ -229,8 +229,8 @@ async def main():
     config = {
         'leverage': 10,
         'position_size': 0.1,
-        'atr_period': 30,  # 優化後配置
-        'atr_multiplier': 3.0,
+        'atr_period': 20,  # Walk-Forward + 過度擬合測試最佳配置
+        'atr_multiplier': 3.5,
         'use_trailing_stop': True,
         'trailing_stop_pct': 0.03,
     }
