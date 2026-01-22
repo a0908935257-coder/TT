@@ -1,0 +1,30 @@
+[Unit]
+Description=Grid Trading Bot - Integrated Trading System
+Documentation=https://github.com/a0908935257-coder/TT
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/c/trading/grid_trading_bot
+Environment=PATH=/home/a0908/.pyenv/versions/3.12.4/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+# Main command
+ExecStart=/home/a0908/.pyenv/versions/3.12.4/bin/python run_all.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Graceful shutdown
+TimeoutStopSec=60
+KillMode=mixed
+KillSignal=SIGINT
+
+# Logging
+StandardOutput=append:/mnt/c/trading/grid_trading_bot/logs/systemd.log
+StandardError=append:/mnt/c/trading/grid_trading_bot/logs/systemd-error.log
+
+[Install]
+WantedBy=default.target
