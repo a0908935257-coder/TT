@@ -332,63 +332,109 @@ async def fetch_klines(days: int, timeframe: str = "1h") -> list[Kline]:
 
 async def main():
     print("=" * 70)
-    print("       Grid Futures Bot Walk-Forward 驗證")
+    print("       Grid Futures Bot Walk-Forward 驗證優化")
     print("=" * 70)
 
-    print("\n獲取 1 年數據 (1h timeframe)...")
-    klines = await fetch_klines(365, "1h")
+    print("\n獲取 2 年數據 (1h timeframe)...")
+    klines = await fetch_klines(730, "1h")  # 2 years for robust validation
     print(f"  獲取 {len(klines)} 根 K 線")
+    print(f"  時間範圍: {klines[0].open_time.date()} ~ {klines[-1].close_time.date()}")
 
-    # Test configurations
+    # Test configurations - expanded parameter search
+    # Based on sensitivity analysis: ATR 3.0-3.5 better, Grid 10 optimal, lower leverage more stable
     configs = [
-        # Current optimized config
-        ("優化參數 (3x, 15格, trend=30)", GridConfig(
-            grid_count=15,
-            leverage=3,
+        # === 低槓桿組 (推薦) - 穩定性優先 ===
+        ("2x, 10格, ATR 2.5, trend=20", GridConfig(
+            grid_count=10,
+            leverage=2,
+            direction=GridDirection.TREND_FOLLOW,
+            use_trend_filter=True,
+            trend_period=20,
+            use_atr_range=True,
+            atr_multiplier=Decimal("2.5"),
+        )),
+        ("2x, 10格, ATR 3.0, trend=20", GridConfig(
+            grid_count=10,
+            leverage=2,
+            direction=GridDirection.TREND_FOLLOW,
+            use_trend_filter=True,
+            trend_period=20,
+            use_atr_range=True,
+            atr_multiplier=Decimal("3.0"),
+        )),
+        ("2x, 10格, ATR 3.0, trend=30", GridConfig(
+            grid_count=10,
+            leverage=2,
             direction=GridDirection.TREND_FOLLOW,
             use_trend_filter=True,
             trend_period=30,
             use_atr_range=True,
-            atr_multiplier=Decimal("2.0"),
+            atr_multiplier=Decimal("3.0"),
         )),
-        # More conservative
-        ("保守參數 (2x, 12格, trend=50)", GridConfig(
+        ("2x, 12格, ATR 2.5, trend=20", GridConfig(
             grid_count=12,
             leverage=2,
             direction=GridDirection.TREND_FOLLOW,
             use_trend_filter=True,
-            trend_period=50,
+            trend_period=20,
             use_atr_range=True,
-            atr_multiplier=Decimal("2.0"),
+            atr_multiplier=Decimal("2.5"),
         )),
-        # Neutral direction
-        ("雙向網格 (3x, 15格, neutral)", GridConfig(
-            grid_count=15,
-            leverage=3,
-            direction=GridDirection.NEUTRAL,
-            use_trend_filter=False,
-            use_atr_range=True,
-            atr_multiplier=Decimal("2.0"),
-        )),
-        # Higher leverage
-        ("高槓桿 (5x, 15格, trend=30)", GridConfig(
-            grid_count=15,
-            leverage=5,
+        ("2x, 12格, ATR 3.0, trend=30", GridConfig(
+            grid_count=12,
+            leverage=2,
             direction=GridDirection.TREND_FOLLOW,
             use_trend_filter=True,
             trend_period=30,
             use_atr_range=True,
-            atr_multiplier=Decimal("2.0"),
+            atr_multiplier=Decimal("3.0"),
         )),
-        # Different trend period
-        ("短趨勢 (3x, 15格, trend=20)", GridConfig(
-            grid_count=15,
+        # === 中槓桿組 - 平衡報酬與風險 ===
+        ("3x, 10格, ATR 2.5, trend=20", GridConfig(
+            grid_count=10,
             leverage=3,
             direction=GridDirection.TREND_FOLLOW,
             use_trend_filter=True,
             trend_period=20,
             use_atr_range=True,
-            atr_multiplier=Decimal("1.5"),
+            atr_multiplier=Decimal("2.5"),
+        )),
+        ("3x, 10格, ATR 3.0, trend=20", GridConfig(
+            grid_count=10,
+            leverage=3,
+            direction=GridDirection.TREND_FOLLOW,
+            use_trend_filter=True,
+            trend_period=20,
+            use_atr_range=True,
+            atr_multiplier=Decimal("3.0"),
+        )),
+        ("3x, 12格, ATR 2.5, trend=30", GridConfig(
+            grid_count=12,
+            leverage=3,
+            direction=GridDirection.TREND_FOLLOW,
+            use_trend_filter=True,
+            trend_period=30,
+            use_atr_range=True,
+            atr_multiplier=Decimal("2.5"),
+        )),
+        # === 原始配置對照 ===
+        ("3x, 15格, ATR 2.0, trend=30 (原始)", GridConfig(
+            grid_count=15,
+            leverage=3,
+            direction=GridDirection.TREND_FOLLOW,
+            use_trend_filter=True,
+            trend_period=30,
+            use_atr_range=True,
+            atr_multiplier=Decimal("2.0"),
+        )),
+        # === 雙向網格 (中性) ===
+        ("2x, 10格, ATR 3.0, 雙向", GridConfig(
+            grid_count=10,
+            leverage=2,
+            direction=GridDirection.NEUTRAL,
+            use_trend_filter=False,
+            use_atr_range=True,
+            atr_multiplier=Decimal("3.0"),
         )),
     ]
 
@@ -401,8 +447,8 @@ async def main():
         bt = GridBacktest(klines, config)
         full = bt.run()
 
-        # Walk-forward validation
-        wf = walk_forward(klines, config, periods=6)
+        # Walk-forward validation (8 periods for 2-year data)
+        wf = walk_forward(klines, config, periods=8)
 
         status = "✅" if full["return"] > 0 and wf["consistency"] >= 67 else "⚠️" if full["return"] > 0 else "❌"
 
@@ -454,21 +500,34 @@ async def main():
             print(f"   {best['name']}")
             print(f"   報酬: {best['return']:+.1f}%, 一致性: {best['consistency']:.0f}%")
 
-    # Compare original claim vs reality
-    print("\n" + "=" * 70)
-    print("       原始聲稱 vs 驗證結果")
-    print("=" * 70)
+    # Show all results sorted by consistency
+    print("\n" + "=" * 100)
+    print("       所有配置結果 (按一致性排序)")
+    print("=" * 100)
+    print(f"\n{'配置名稱':<35} {'報酬%':>10} {'Sharpe':>10} {'回撤%':>10} {'一致性':>10} {'狀態':>8}")
+    print("-" * 100)
 
-    original = results[0]  # First config is the "optimized" one
-    print(f"\n原始聲稱: 年化 113.6%, Sharpe 1.54")
-    print(f"驗證結果: 報酬 {original['return']:+.1f}%, Sharpe {original['sharpe']:.2f}")
-    print(f"Walk-Forward 一致性: {original['consistency']:.0f}%")
+    for r in results:
+        status = "✅" if r["return"] > 0 and r["consistency"] >= 67 else "⚠️"
+        print(f"{r['name']:<35} {r['return']:>+9.1f}% {r['sharpe']:>10.2f} {r['max_dd']:>9.1f}% {r['consistency']:>9.0f}% {status:>8}")
 
-    if original['consistency'] < 67:
-        print(f"\n⚠️  結論: Grid Bot 可能過度擬合")
-        print(f"   建議: 降低預期報酬至 {original['return'] * 0.5:+.1f}% ~ {original['return'] * 0.7:+.1f}%")
+    print("-" * 100)
+
+    # Best configuration recommendation
+    if passing:
+        best = max(passing, key=lambda x: x["sharpe"])  # Best Sharpe among passing
+        print(f"\n🏆 推薦配置: {best['name']}")
+        print(f"   報酬: {best['return']:+.1f}% (2 年)")
+        print(f"   年化報酬: {best['return']/2:+.1f}%")
+        print(f"   Sharpe: {best['sharpe']:.2f}")
+        print(f"   最大回撤: {best['max_dd']:.1f}%")
+        print(f"   Walk-Forward 一致性: {best['consistency']:.0f}% ({best['consistency']/100*8:.0f}/8 時段)")
+        print(f"   勝率: {best['win_rate']:.1f}%")
     else:
-        print(f"\n✅ 結論: Grid Bot 通過驗證，績效可信")
+        print(f"\n⚠️  沒有配置通過 Walk-Forward 驗證 (一致性 ≥67%)")
+        if results:
+            best = max(results, key=lambda x: x["consistency"])
+            print(f"   最高一致性: {best['name']} ({best['consistency']:.0f}%)")
 
 
 if __name__ == "__main__":
