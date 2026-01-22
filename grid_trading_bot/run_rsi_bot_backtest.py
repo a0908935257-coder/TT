@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-RSI Bot Backtest - 測試 RSI Mean Reversion 策略績效
+RSI Bot Backtest - 測試 RSI Momentum 策略績效
 
-使用與 RSI Bot 相同的參數進行回測：
-- RSI Period: 14
-- Oversold: 20
-- Overbought: 80
-- Exit Level: 50
-- Leverage: 7x
-- Stop Loss: 2%
-- Take Profit: 3%
+Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
+- RSI Period: 25
+- Entry Level: 50, Momentum Threshold: 5
+- Leverage: 5x
+- Stop Loss: 2%, Take Profit: 4%
+- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
 """
 
 import argparse
@@ -46,25 +44,24 @@ class RSIBacktestResult:
 
 @dataclass
 class RSIConfig:
-    """RSI strategy configuration."""
+    """RSI Momentum strategy configuration."""
     symbol: str = "BTCUSDT"
     timeframe: str = "15m"
 
-    # RSI Parameters
-    rsi_period: int = 14
-    oversold: int = 20
-    overbought: int = 80
-    exit_level: int = 50
+    # RSI Parameters (Walk-Forward validated)
+    rsi_period: int = 25  # Walk-Forward validated: RSI=25
+    entry_level: int = 50  # Center level for crossover
+    momentum_threshold: int = 5  # RSI must cross by this amount
 
     # Position Management
-    leverage: int = 7
+    leverage: int = 5  # Walk-Forward validated
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
-    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
+    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
 
 
 class RSIBacktest:
-    """RSI Mean Reversion Backtest."""
+    """RSI Momentum Backtest."""
 
     FEE_RATE = Decimal("0.0004")
 
@@ -78,6 +75,7 @@ class RSIBacktest:
         self._avg_gain: Optional[float] = None
         self._avg_loss: Optional[float] = None
         self._prev_close: Optional[float] = None
+        self._prev_rsi: float = 50.0  # Track previous RSI for crossover detection
 
     def _calculate_rsi(self, closes: list[float]) -> float:
         """Calculate RSI using Wilder's smoothing method."""
@@ -125,6 +123,7 @@ class RSIBacktest:
         self._avg_loss = None
         self._position = None
         self._trades = []
+        self._prev_rsi = 50.0
 
         # Track equity for drawdown
         equity_curve = []
@@ -138,6 +137,9 @@ class RSIBacktest:
 
         # Collect closes for RSI
         closes = []
+
+        entry_level = self._config.entry_level
+        momentum_threshold = self._config.momentum_threshold
 
         for i, kline in enumerate(self._klines):
             close = float(kline.close)
@@ -165,8 +167,8 @@ class RSIBacktest:
                     # Take profit
                     elif price_change >= self._config.take_profit_pct:
                         exit_reason = 'take_profit'
-                    # RSI exit
-                    elif rsi >= self._config.exit_level:
+                    # RSI exit: bearish momentum (crosses below entry_level - threshold)
+                    elif rsi < entry_level - momentum_threshold:
                         exit_reason = 'rsi_exit'
 
                 elif side == 'short':
@@ -176,8 +178,8 @@ class RSIBacktest:
                     # Take profit (price went down)
                     elif price_change <= -self._config.take_profit_pct:
                         exit_reason = 'take_profit'
-                    # RSI exit
-                    elif rsi <= self._config.exit_level:
+                    # RSI exit: bullish momentum (crosses above entry_level + threshold)
+                    elif rsi > entry_level + momentum_threshold:
                         exit_reason = 'rsi_exit'
 
                 if exit_reason:
@@ -218,10 +220,10 @@ class RSIBacktest:
                     else:
                         result.rsi_exits += 1
 
-            # Entry signals (only if not in position)
+            # Entry signals (only if not in position) - Momentum crossover
             if not self._position:
-                # Oversold - go long
-                if rsi < self._config.oversold:
+                # Bullish momentum: RSI crossed above entry_level + threshold
+                if self._prev_rsi <= entry_level and rsi > entry_level + momentum_threshold:
                     self._position = {
                         'entry_price': Decimal(str(close)),
                         'side': 'long',
@@ -229,14 +231,17 @@ class RSIBacktest:
                     }
                     result.long_trades += 1
 
-                # Overbought - go short
-                elif rsi > self._config.overbought:
+                # Bearish momentum: RSI crossed below entry_level - threshold
+                elif self._prev_rsi >= entry_level and rsi < entry_level - momentum_threshold:
                     self._position = {
                         'entry_price': Decimal(str(close)),
                         'side': 'short',
                         'entry_bar': i,
                     }
                     result.short_trades += 1
+
+            # Track previous RSI for crossover detection
+            self._prev_rsi = rsi
 
             # Track equity
             equity_curve.append(current_equity)
@@ -381,28 +386,27 @@ async def fetch_klines(symbol: str, interval: str, days: int) -> list[Kline]:
 async def run_backtest():
     """Run RSI Bot backtest."""
     print("=" * 70)
-    print("       RSI Bot 回測 - Mean Reversion Strategy")
+    print("       RSI Bot 回測 - Momentum Strategy")
     print("=" * 70)
 
-    # RSI Bot optimized parameters
+    # RSI Bot Walk-Forward validated parameters
     config = RSIConfig(
         symbol="BTCUSDT",
         timeframe="15m",
-        rsi_period=21,
-        oversold=30,
-        overbought=70,
-        exit_level=50,
+        rsi_period=25,
+        entry_level=50,
+        momentum_threshold=5,
         leverage=5,
         position_size_pct=Decimal("0.1"),
         stop_loss_pct=Decimal("0.02"),
         take_profit_pct=Decimal("0.04"),
     )
 
-    print(f"\n策略參數:")
+    print(f"\n策略參數 (Walk-Forward Validated):")
     print(f"  RSI Period: {config.rsi_period}")
-    print(f"  Oversold: {config.oversold}")
-    print(f"  Overbought: {config.overbought}")
-    print(f"  Exit Level: {config.exit_level}")
+    print(f"  Entry Level: {config.entry_level} ± {config.momentum_threshold}")
+    print(f"  Long: RSI crosses above {config.entry_level + config.momentum_threshold}")
+    print(f"  Short: RSI crosses below {config.entry_level - config.momentum_threshold}")
     print(f"  Stop Loss: {float(config.stop_loss_pct)*100:.1f}%")
     print(f"  Take Profit: {float(config.take_profit_pct)*100:.1f}%")
     print(f"  Leverage: {config.leverage}x")

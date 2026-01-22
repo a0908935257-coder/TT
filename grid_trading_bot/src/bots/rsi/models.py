@@ -8,11 +8,11 @@ Strategy: RSI crossover (trend following, not mean reversion)
 - Short when RSI crosses below entry_level - threshold
 
 Walk-Forward 驗證 (2 年數據, 12 期, 2024-01 ~ 2026-01):
-- RSI Period: 21, Entry Level: 50±5, Leverage: 5x
-- Sharpe: 0.67, Return: +14.9%, Max DD: 12.9%
+- RSI Period: 25, Entry Level: 50±5, Leverage: 5x
+- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
 - Consistency: 67% (8/12 期獲利) ✅
 
-注意：Sharpe 0.67 遠低於 Supertrend Bot (4.34)，
+注意：Sharpe 0.65 遠低於 Supertrend Bot (4.34)，
 建議優先使用 Supertrend，RSI 可作為輔助策略。
 """
 
@@ -56,17 +56,17 @@ class RSIConfig:
     - Short when RSI crosses below entry_level - momentum_threshold
     - Exit on opposite RSI crossover or SL/TP
 
-    Walk-Forward 驗證通過的參數 (2 年, 67% 一致性):
-    - RSI Period: 21
+    Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
+    - RSI Period: 25
     - Entry Level: 50, Momentum Threshold: 5
     - Leverage: 5x
     - Stop Loss: 2%, Take Profit: 4%
-    - Sharpe: 0.67, Return: +14.9%, Max DD: 12.9%
+    - Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m")
-        rsi_period: RSI calculation period (default 21)
+        rsi_period: RSI calculation period (default 25)
         entry_level: RSI center level for crossover detection (default 50)
         momentum_threshold: RSI must cross by this amount to trigger (default 5)
         leverage: Futures leverage (default 5)
@@ -76,7 +76,7 @@ class RSIConfig:
     """
     symbol: str
     timeframe: str = "15m"
-    rsi_period: int = 21
+    rsi_period: int = 25  # Walk-Forward validated: RSI=25, 67% consistency
     entry_level: int = 50  # Center level for RSI crossover
     momentum_threshold: int = 5  # RSI must cross entry_level by this amount
     leverage: int = 5
