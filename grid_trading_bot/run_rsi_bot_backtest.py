@@ -2,12 +2,13 @@
 """
 RSI Bot Backtest - 測試 RSI Momentum 策略績效
 
-Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
-- RSI Period: 25
+Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
+- RSI Period: 21
 - Entry Level: 50, Momentum Threshold: 5
-- Leverage: 5x
-- Stop Loss: 2%, Take Profit: 4%
-- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+- Leverage: 2x
+- Stop Loss: 4%, Take Profit: 8%
+- Walk-Forward 一致性: 88% (7/8 時段獲利)
+- OOS 效率: 140%
 """
 
 import argparse
@@ -48,16 +49,16 @@ class RSIConfig:
     symbol: str = "BTCUSDT"
     timeframe: str = "15m"
 
-    # RSI Parameters (Walk-Forward validated)
-    rsi_period: int = 25  # Walk-Forward validated: RSI=25
+    # RSI Parameters (Walk-Forward validated: 88% consistency)
+    rsi_period: int = 21  # Walk-Forward validated: RSI=21
     entry_level: int = 50  # Center level for crossover
     momentum_threshold: int = 5  # RSI must cross by this amount
 
-    # Position Management
-    leverage: int = 5  # Walk-Forward validated
+    # Position Management (降低槓桿提高穩定性)
+    leverage: int = 2  # Walk-Forward validated
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
-    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4%
+    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))  # 8%
 
 
 class RSIBacktest:

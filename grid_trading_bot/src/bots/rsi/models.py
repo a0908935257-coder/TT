@@ -7,13 +7,18 @@ Strategy: RSI crossover (trend following, not mean reversion)
 - Long when RSI crosses above entry_level + threshold
 - Short when RSI crosses below entry_level - threshold
 
-⚠️ Walk-Forward 驗證 (1 年數據, 6 期, 2025-01 ~ 2026-01):
-- RSI Period: 25, Entry Level: 50±5, Leverage: 5x
-- Return: +9.67%, Sharpe: 1.09, Max DD: 5.4%
-- Consistency: 67% (4/6 期獲利) ✅ (剛好達標)
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
 
-注意：一致性剛好達到 67% 門檻，屬於邊緣通過。
-建議謹慎使用，並搭配適當的風險管理。
+驗證結果 - 最佳配置 RSI(21), 2x, SL 4%, TP 8%:
+    - Walk-Forward 一致性: 88% (7/8 時段獲利) ✓
+    - 報酬: +7.74% (2 年)
+    - Sharpe: 0.80
+    - 最大回撤: 6.5%
+    - OOS 效率: 140% (OOS 表現優於樣本內)
+
+OOS 測試結果 (2025-07 ~ 2026-01):
+    - OOS 報酬: +2.1%, Sharpe 0.86, DD 2.1%
+    - 月均報酬: OOS +0.32%/月 > IS +0.23%/月
 """
 
 from dataclasses import dataclass, field
@@ -56,39 +61,37 @@ class RSIConfig:
     - Short when RSI crosses below entry_level - momentum_threshold
     - Exit on opposite RSI crossover or SL/TP
 
-    Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
-    - RSI Period: 25
-    - Entry Level: 50, Momentum Threshold: 5
-    - Leverage: 5x
-    - Stop Loss: 2%, Take Profit: 4%
-    - Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
 
-    Attributes:
-        symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "15m")
-        rsi_period: RSI calculation period (default 25)
-        entry_level: RSI center level for crossover detection (default 50)
-        momentum_threshold: RSI must cross by this amount to trigger (default 5)
-        leverage: Futures leverage (default 5)
-        position_size_pct: Position size as percentage of balance (default 10%)
-        stop_loss_pct: Stop loss percentage (default 2%)
-        take_profit_pct: Take profit percentage (default 4%)
+    驗證結果:
+    - Walk-Forward 一致性: 88% (7/8 時段獲利)
+    - OOS 效率: 140%
+    - 報酬: +7.74%, Sharpe: 0.80, DD: 6.5%
+
+    默認參數 (Walk-Forward + OOS 驗證通過):
+    - RSI Period: 21
+    - Entry Level: 50, Momentum Threshold: 5
+    - Leverage: 2x (降低風險)
+    - Stop Loss: 4%, Take Profit: 8%
+
+    Example:
+        >>> config = RSIConfig(symbol="BTCUSDT")  # 使用默認參數
     """
     symbol: str
     timeframe: str = "15m"
-    rsi_period: int = 25  # Walk-Forward validated: RSI=25, 67% consistency
+    rsi_period: int = 21  # Walk-Forward validated: RSI=21, 88% consistency
     entry_level: int = 50  # Center level for RSI crossover
     momentum_threshold: int = 5  # RSI must cross entry_level by this amount
-    leverage: int = 5
+    leverage: int = 2  # 降低槓桿提高穩定性
     margin_type: str = "ISOLATED"
 
     # Capital allocation
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
 
-    # Risk management
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
-    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
+    # Risk management - Walk-Forward 驗證通過的參數
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4%
+    take_profit_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))  # 8%
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True

@@ -2,16 +2,17 @@
 """
 RSI Momentum Strategy Optimization
 
-Walk-Forward 驗證通過的參數 (2 年, 12 期, 67% 一致性):
-- RSI Period: 25
-- Entry Level: 50, Momentum Threshold: 5
-- Leverage: 5x
-- Stop Loss: 2%, Take Profit: 4%
-- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+Walk-Forward 驗證 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+
+優化目標：
+- Walk-Forward 一致性 ≥75%
+- Sharpe >1.0
+- 最大回撤 <10%
+- 槓桿 2-3x（降低風險）
 
 Strategy:
-- Long when RSI crosses above entry_level + threshold (55)
-- Short when RSI crosses below entry_level - threshold (45)
+- Long when RSI crosses above entry_level + threshold
+- Short when RSI crosses below entry_level - threshold
 """
 
 import asyncio
@@ -25,14 +26,18 @@ from src.exchange.binance.futures_api import BinanceFuturesAPI
 
 @dataclass
 class RSIMomentumConfig:
-    rsi_period: int = 25  # Walk-Forward validated: RSI=25
+    rsi_period: int = 25
     entry_level: int = 50  # Cross above = long, cross below = short
     momentum_threshold: int = 5  # Must cross by this much
-    leverage: int = 5
+    leverage: int = 2  # 降低槓桿提高穩定性
     stop_loss_pct: float = 0.02
     take_profit_pct: float = 0.04
     trailing_stop: bool = False
     trailing_pct: float = 0.02
+    # ATR-based stop loss (optional)
+    use_atr_stop: bool = False
+    atr_period: int = 14
+    atr_multiplier: float = 2.0
 
 
 class RSIMomentumBacktest:
@@ -228,35 +233,43 @@ def walk_forward(klines: list[Kline], config: RSIMomentumConfig, periods: int = 
 async def main():
     print("=" * 70)
     print("       RSI 動量策略優化")
-    print("       (趨勢跟隨而非均值回歸)")
+    print("       (2 年數據, 8 期 Walk-Forward)")
     print("=" * 70)
 
-    print("\n獲取 1 年數據...")
-    klines = await fetch_klines(365)
+    print("\n獲取 2 年數據 (15m timeframe)...")
+    klines = await fetch_klines(730)
     print(f"  獲取 {len(klines)} 根 K 線")
 
-    # Test different RSI momentum configurations
+    # 擴展參數搜索 - 低槓桿組 + 中槓桿對照組
     configs = [
-        # Walk-Forward validated (RSI=25, 67% consistency)
+        # === 低槓桿組 (2x) - 推薦 ===
+        # RSI 週期變化
+        RSIMomentumConfig(rsi_period=14, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=28, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+
+        # 門檻值變化 (RSI=21)
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=3, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=7, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=10, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.06),
+
+        # SL/TP 比例變化
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.02, take_profit_pct=0.04),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.025, take_profit_pct=0.05),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.04, take_profit_pct=0.08),
+
+        # 追蹤止損
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.08, trailing_stop=True, trailing_pct=0.02),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=2, stop_loss_pct=0.03, take_profit_pct=0.08, trailing_stop=True, trailing_pct=0.02),
+
+        # === 中槓桿對照組 (3x) ===
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.025, take_profit_pct=0.05),
+        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.025, take_profit_pct=0.05),
+        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=7, leverage=3, stop_loss_pct=0.025, take_profit_pct=0.05),
+
+        # === 舊配置對照 (5x) ===
         RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-
-        # RSI period variations
-        RSIMomentumConfig(rsi_period=21, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-        RSIMomentumConfig(rsi_period=28, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-
-        # Momentum threshold variations
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=3, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=7, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.04),
-
-        # Different TP/SL ratios
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.06),
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.025, take_profit_pct=0.05),
-
-        # Lower leverage for safety
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=3, stop_loss_pct=0.03, take_profit_pct=0.06),
-
-        # With trailing stop
-        RSIMomentumConfig(rsi_period=25, entry_level=50, momentum_threshold=5, leverage=5, stop_loss_pct=0.02, take_profit_pct=0.06, trailing_stop=True, trailing_pct=0.015),
     ]
 
     print(f"\n測試 {len(configs)} 個動量策略組合...")
@@ -266,10 +279,10 @@ async def main():
     for i, config in enumerate(configs):
         bt = RSIMomentumBacktest(klines, config)
         full = bt.run()
-        wf = walk_forward(klines, config, periods=6)
+        wf = walk_forward(klines, config, periods=8)  # 8 期分割
 
         trail = "是" if config.trailing_stop else "否"
-        status = "✅" if full["return"] > 0 and wf["consistency"] >= 67 else "⚠️" if full["return"] > 0 else "❌"
+        status = "✅" if full["return"] > 0 and wf["consistency"] >= 75 else "⚠️" if full["return"] > 0 and wf["consistency"] >= 62 else "❌"
 
         print(f"  {i+1:2d}. {status} RSI({config.rsi_period}) Level={config.entry_level}±{config.momentum_threshold} Trail={trail}")
         print(f"      報酬: {full['return']:+6.2f}% | 一致性: {wf['consistency']:.0f}% | 勝率: {full['win_rate']:.0f}% | 交易: {full['trades']}")
@@ -294,7 +307,7 @@ async def main():
     for i, r in enumerate(results[:5]):
         c = r["config"]
         trail = "是" if c.trailing_stop else "否"
-        status = "✅ 通過" if r["return"] > 0 and r["consistency"] >= 67 else "⚠️ 部分" if r["return"] > 0 else "❌ 不佳"
+        status = "✅ 通過" if r["return"] > 0 and r["consistency"] >= 75 else "⚠️ 邊緣" if r["return"] > 0 and r["consistency"] >= 62 else "❌ 不佳"
 
         print(f"\n#{i+1} {status}")
         print(f"  RSI Period: {c.rsi_period}, Entry Level: {c.entry_level}±{c.momentum_threshold}")
@@ -303,8 +316,8 @@ async def main():
         print(f"  報酬: {r['return']:+.2f}% | Sharpe: {r['sharpe']:.2f} | 最大回撤: {r['max_dd']:.1f}%")
         print(f"  勝率: {r['win_rate']:.1f}% | 交易: {r['trades']} | Walk-Forward: {r['consistency']:.0f}%")
 
-    # Best passing
-    passing = [r for r in results if r["return"] > 0 and r["consistency"] >= 67]
+    # Best passing (75% threshold for robust validation)
+    passing = [r for r in results if r["return"] > 0 and r["consistency"] >= 75]
     if passing:
         best = passing[0]
         c = best["config"]
