@@ -3,9 +3,15 @@
 Bollinger Bot Walk-Forward Validation.
 
 驗證 Bollinger Bot 是否過度擬合：
-1. 將 1 年數據分成 6 個時段
+1. 將 2 年數據 (2024-01 ~ 2026-01) 分成 8 個時段
 2. 在每個時段獨立回測
 3. 計算一致性 (需要 ≥67% 才算通過)
+
+優化目標：
+- Walk-Forward 一致性 ≥67%
+- Sharpe >1.0
+- 最大回撤 <10%
+- 槓桿 2x（降低風險）
 """
 
 import asyncio
@@ -23,8 +29,8 @@ from src.exchange.binance.futures_api import BinanceFuturesAPI
 class BollingerConfig:
     """Bollinger + Supertrend configuration."""
     bb_period: int = 20
-    bb_std: Decimal = field(default_factory=lambda: Decimal("2.5"))
-    leverage: int = 5
+    bb_std: Decimal = field(default_factory=lambda: Decimal("3.0"))  # Walk-Forward 最佳值
+    leverage: int = 2  # 降低槓桿提高穩定性
     position_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
@@ -351,51 +357,62 @@ async def main():
     print("       Bollinger Bot Walk-Forward 驗證")
     print("=" * 70)
 
-    print("\n獲取 1 年數據 (15m timeframe)...")
-    klines = await fetch_klines(365, "15m")
+    print("\n獲取 2 年數據 (15m timeframe)...")
+    klines = await fetch_klines(730, "15m")
     print(f"  獲取 {len(klines)} 根 K 線")
 
     # Test configurations (BOLLINGER_TREND: Supertrend + BB band touch)
+    # 優化目標：一致性 ≥67%, Sharpe >1.0, 回撤 <10%
     configs = [
-        ("🌟 BB+ST (5x, BB 2.5, ST 20/3.5)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("2.5"),
-            leverage=5,
-            st_atr_period=20,
-            st_atr_multiplier=Decimal("3.5"),
-            atr_stop_multiplier=Decimal("2.0"),
-        )),
-        ("BB+ST (5x, BB 2.0, ST 20/3.5)", BollingerConfig(
+        # 低槓桿組（推薦）- 降低風險，提高穩定性
+        ("BB+ST (2x, BB 2.0, ST 3.0)", BollingerConfig(
             bb_period=20,
             bb_std=Decimal("2.0"),
-            leverage=5,
+            leverage=2,
             st_atr_period=20,
-            st_atr_multiplier=Decimal("3.5"),
-            atr_stop_multiplier=Decimal("2.0"),
-        )),
-        ("BB+ST (5x, BB 2.0, ST 25/3.0)", BollingerConfig(
-            bb_period=20,
-            bb_std=Decimal("2.0"),
-            leverage=5,
-            st_atr_period=25,
             st_atr_multiplier=Decimal("3.0"),
             atr_stop_multiplier=Decimal("2.0"),
         )),
-        ("BB+ST (10x, BB 2.5, ST 20/3.5)", BollingerConfig(
+        ("BB+ST (2x, BB 2.5, ST 3.0)", BollingerConfig(
             bb_period=20,
             bb_std=Decimal("2.5"),
-            leverage=10,
+            leverage=2,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.0"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        ("BB+ST (2x, BB 2.5, ST 3.5)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.5"),
+            leverage=2,
             st_atr_period=20,
             st_atr_multiplier=Decimal("3.5"),
             atr_stop_multiplier=Decimal("2.0"),
         )),
-        ("BB+ST (3x, BB 2.0, ST 20/3.5)", BollingerConfig(
+        ("BB+ST (2x, BB 3.0, ST 3.5)", BollingerConfig(
             bb_period=20,
-            bb_std=Decimal("2.0"),
+            bb_std=Decimal("3.0"),
+            leverage=2,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.5"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        # 中槓桿對照組
+        ("BB+ST (3x, BB 2.5, ST 3.0)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.5"),
+            leverage=3,
+            st_atr_period=20,
+            st_atr_multiplier=Decimal("3.0"),
+            atr_stop_multiplier=Decimal("2.0"),
+        )),
+        ("BB+ST (3x, BB 2.5, ST 3.5)", BollingerConfig(
+            bb_period=20,
+            bb_std=Decimal("2.5"),
             leverage=3,
             st_atr_period=20,
             st_atr_multiplier=Decimal("3.5"),
-            atr_stop_multiplier=Decimal("2.5"),
+            atr_stop_multiplier=Decimal("2.0"),
         )),
     ]
 
@@ -408,8 +425,8 @@ async def main():
         bt = BollingerBacktest(klines, config)
         full = bt.run()
 
-        # Walk-forward validation
-        wf = walk_forward(klines, config, periods=6)
+        # Walk-forward validation (8 periods for 2-year data)
+        wf = walk_forward(klines, config, periods=8)
 
         status = "✅" if full["return"] > 0 and wf["consistency"] >= 67 else "⚠️" if full["return"] > 0 else "❌"
 
