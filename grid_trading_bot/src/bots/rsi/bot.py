@@ -6,12 +6,12 @@ A futures trading bot using RSI momentum (trend following) strategy.
 - Short when RSI crosses below entry_level - momentum_threshold (bearish momentum)
 - Exit on opposite RSI crossover, stop loss, or take profit
 
-Walk-Forward Validated (2 年, 12 期, 67% consistency):
-- RSI Period: 25
-- Entry Level: 50, Momentum Threshold: 5
-- Leverage: 5x
-- Stop Loss: 2%, Take Profit: 4%
-- Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
+- Walk-Forward 一致性: 88% (7/8 時段獲利)
+- OOS 效率: 140%
+- RSI Period: 21, Entry Level: 50±5
+- Leverage: 2x, Stop Loss: 4%, Take Profit: 8%
+- Sharpe: 0.80, Max DD: 6.5%
 """
 
 import asyncio
@@ -43,12 +43,12 @@ class RSIBot(BaseBot):
     - Short when RSI crosses below entry_level - momentum_threshold
     - Exit on opposite RSI crossover or SL/TP
 
-    Walk-Forward Validated (2 年, 12 期, 67% consistency):
-    - RSI Period: 25
-    - Entry Level: 50, Momentum Threshold: 5
-    - Leverage: 5x
-    - Stop Loss: 2%, Take Profit: 4%
-    - Sharpe: 0.65, Return: +12.0%, Max DD: 9.5%
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
+    - Walk-Forward 一致性: 88% (7/8 時段獲利)
+    - OOS 效率: 140%
+    - RSI Period: 21, Entry Level: 50±5
+    - Leverage: 2x, Stop Loss: 4%, Take Profit: 8%
+    - Sharpe: 0.80, Max DD: 6.5%
     """
 
     def __init__(

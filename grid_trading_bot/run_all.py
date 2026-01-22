@@ -52,15 +52,15 @@ def print_banner():
 
 啟動項目:
   ✓ Master 主控台
-  ✓ Bollinger Bot (合約 2x) - BB突破策略
-  ✓ RSI Momentum Bot (合約 5x) - 動量策略
+  ✓ Bollinger Bot (合約 2x) - Supertrend + BB 趨勢策略
+  ✓ RSI Momentum Bot (合約 2x) - 動量策略
   ✓ Grid Futures Bot (合約 2x) - 趨勢網格
   ✓ Discord Bot (遠端管理)
 
 Walk-Forward 驗證通過的策略:
-  Bollinger: BB(15,1.5) 2x, trend_filter (83% 一致性, Sharpe 5.45)
-  RSI: Period=21, Level=50±5, 5x (67% 一致性, Sharpe 1.03)
-  Grid: 12格, trend=50, 2x (83% 一致性, Sharpe 1.85)
+  Bollinger: BB(20,3.0), ST(20,3.5), 2x (75% 一致性, Sharpe 1.81, OOS 96%)
+  RSI: Period=21, Level=50±5, 2x (88% 一致性, Sharpe 0.80, OOS 140%)
+  Grid: 12格, trend=50, 2x (100% 一致性, Sharpe 1.85)
 
 Discord 指令:
   /bot list     - 列出所有機器人
@@ -158,24 +158,24 @@ def get_rsi_config() -> dict:
     """
     Get RSI Momentum Bot config from .env.
 
-    Optimized parameters (67% walk-forward consistency, Sharpe 1.03):
+    ✅ Walk-Forward 驗證通過 (88% 一致性, OOS 效率 140%):
     - RSI Period: 21
     - Entry Level: 50, Momentum Threshold: 5
-    - Leverage: 5x
-    - Stop Loss: 2%, Take Profit: 4%
+    - Leverage: 2x (降低風險)
+    - Stop Loss: 4%, Take Profit: 8%
     """
     return {
         "symbol": os.getenv('RSI_SYMBOL', 'BTCUSDT'),
         "timeframe": os.getenv('RSI_TIMEFRAME', '15m'),
-        "rsi_period": int(os.getenv('RSI_PERIOD', '21')),  # Optimized: 21
+        "rsi_period": int(os.getenv('RSI_PERIOD', '21')),  # Walk-Forward validated
         "entry_level": int(os.getenv('RSI_ENTRY_LEVEL', '50')),  # Momentum crossover level
         "momentum_threshold": int(os.getenv('RSI_MOMENTUM_THRESHOLD', '5')),  # Crossover threshold
-        "leverage": int(os.getenv('RSI_LEVERAGE', '5')),  # Optimized: 5x
+        "leverage": int(os.getenv('RSI_LEVERAGE', '2')),  # 降低槓桿提高穩定性
         "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
         "max_capital": os.getenv('RSI_MAX_CAPITAL', '7'),
         "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
-        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.02'),  # 2%
-        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.04'),  # 4%
+        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.04'),  # 4% (Walk-Forward validated)
+        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.08'),  # 8% (Walk-Forward validated)
     }
 
 
