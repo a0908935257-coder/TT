@@ -2,10 +2,18 @@
 """
 Bollinger Bot Runner.
 
-啟動布林帶交易機器人。
-支援兩種策略模式：
-- BREAKOUT (突破策略): 價格突破布林帶時順勢交易 (預設)
-- MEAN_REVERSION (均值回歸): 價格觸碰布林帶時反向交易
+啟動布林帶趨勢交易機器人 (BOLLINGER_TREND 策略)。
+
+策略邏輯:
+- 進場: Supertrend 看多時在 BB 下軌買入，看空時在 BB 上軌賣出
+- 出場: Supertrend 翻轉（主要）或 ATR 止損（保護）
+
+Walk-Forward 驗證結果 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
+- 報酬: +35.1% (2 年)
+- Sharpe: 1.81
+- 最大回撤: 6.7%
+- Walk-Forward 一致性: 75%
+- OOS 效率: 96%
 """
 
 import asyncio
@@ -24,7 +32,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.bollinger.bot import BollingerBot
-from src.bots.bollinger.models import BollingerConfig, StrategyMode
+from src.bots.bollinger.models import BollingerConfig
 
 # Load environment variables
 load_dotenv()
@@ -36,54 +44,41 @@ _bot: BollingerBot | None = None
 
 
 def get_config_from_env() -> BollingerConfig:
-    """從環境變數讀取配置"""
+    """
+    從環境變數讀取配置。
+
+    Walk-Forward 驗證通過的默認參數:
+    - bb_std: 3.0
+    - st_atr_multiplier: 3.5
+    - leverage: 2
+    - atr_stop_multiplier: 2.0
+    """
     # 資金分配：如果設定了 MAX_CAPITAL，則限制該 Bot 最大可用資金
     max_capital_str = os.getenv('BOLLINGER_MAX_CAPITAL', '')
     max_capital = Decimal(max_capital_str) if max_capital_str else None
-
-    # 策略模式：BREAKOUT (突破) 或 MEAN_REVERSION (均值回歸)
-    strategy_mode_str = os.getenv('BOLLINGER_STRATEGY_MODE', 'breakout').lower()
-    strategy_mode = StrategyMode.BREAKOUT if strategy_mode_str == 'breakout' else StrategyMode.MEAN_REVERSION
 
     return BollingerConfig(
         # 基本設定
         symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('BOLLINGER_TIMEFRAME', '15m'),
-        strategy_mode=strategy_mode,
-        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '20')),  # 優化: 20x
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
 
-        # 布林帶設定 (優化後)
+        # Walk-Forward 驗證通過的參數 (2x, BB 3.0, ST 3.5)
+        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '2')),  # 降低槓桿提高穩定性
         bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
-        bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '3.25')),  # 優化: 3.25 (Sharpe 1.13)
+        bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '3.0')),  # Walk-Forward 最佳值
 
-        # BBW 過濾 (20% = 突破策略需要波動率擴張)
+        # Supertrend 參數
+        st_atr_period=int(os.getenv('BOLLINGER_ST_ATR_PERIOD', '20')),
+        st_atr_multiplier=Decimal(os.getenv('BOLLINGER_ST_ATR_MULTIPLIER', '3.5')),  # Walk-Forward 最佳值
+
+        # ATR Stop Loss
+        atr_stop_multiplier=Decimal(os.getenv('BOLLINGER_ATR_STOP_MULTIPLIER', '2.0')),
+
+        # BBW 過濾 (保留用於指標兼容)
         bbw_lookback=int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
         bbw_threshold_pct=int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
-
-        # 趨勢過濾 (突破策略預設關閉)
-        use_trend_filter=os.getenv('BOLLINGER_USE_TREND_FILTER', 'false').lower() == 'true',
-        trend_period=int(os.getenv('BOLLINGER_TREND_PERIOD', '50')),
-
-        # RSI 過濾 (突破策略預設關閉)
-        use_rsi_filter=os.getenv('BOLLINGER_USE_RSI_FILTER', 'false').lower() == 'true',
-        rsi_period=int(os.getenv('BOLLINGER_RSI_PERIOD', '14')),
-        rsi_oversold=int(os.getenv('BOLLINGER_RSI_OVERSOLD', '30')),
-        rsi_overbought=int(os.getenv('BOLLINGER_RSI_OVERBOUGHT', '70')),
-
-        # ATR 動態止損
-        use_atr_stop=os.getenv('BOLLINGER_USE_ATR_STOP', 'true').lower() == 'true',
-        atr_period=int(os.getenv('BOLLINGER_ATR_PERIOD', '14')),
-        atr_multiplier=Decimal(os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.0')),
-
-        # 追蹤止損 (突破策略專用)
-        use_trailing_stop=os.getenv('BOLLINGER_USE_TRAILING_STOP', 'true').lower() == 'true',
-        trailing_atr_mult=Decimal(os.getenv('BOLLINGER_TRAILING_ATR_MULT', '2.0')),
-
-        # 止損/持倉
-        stop_loss_pct=Decimal(os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015')),
-        max_hold_bars=int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),  # 突破策略持倉更久
     )
 
 
@@ -151,19 +146,16 @@ async def main() -> None:
     global _bot
 
     print("=" * 60)
-    print("    Bollinger Bot - 布林帶交易機器人")
+    print("    Bollinger Trend Bot - 布林帶趨勢交易機器人")
     print("=" * 60)
 
     # 讀取配置
     config = get_config_from_env()
 
-    # 策略模式顯示
-    strategy_name = "突破策略" if config.strategy_mode == StrategyMode.BREAKOUT else "均值回歸"
-
     print(f"\n配置資訊：")
     print(f"  交易對: {config.symbol}")
     print(f"  時間框架: {config.timeframe}")
-    print(f"  策略模式: {strategy_name}")
+    print(f"  策略模式: BOLLINGER_TREND (Supertrend + BB)")
     print(f"  槓桿: {config.leverage}x")
     print(f"  保證金模式: ISOLATED (逐倉)")
 
@@ -175,24 +167,21 @@ async def main() -> None:
         print(f"  分配資金: 全部餘額")
         print(f"  單次倉位: {config.position_size_pct*100}%")
 
-    print(f"  布林帶週期: {config.bb_period}")
-    print(f"  布林帶標準差: {config.bb_std}σ")
-    print(f"  BBW 過濾閾值: {config.bbw_threshold_pct}%")
+    print(f"\n  Bollinger Bands:")
+    print(f"    週期: {config.bb_period}")
+    print(f"    標準差: {config.bb_std}σ")
 
-    if config.strategy_mode == StrategyMode.BREAKOUT:
-        print(f"  追蹤止損: {'開啟' if config.use_trailing_stop else '關閉'} ({config.trailing_atr_mult}x ATR)")
-    else:
-        print(f"  趨勢過濾: {'開啟' if config.use_trend_filter else '關閉'} (SMA {config.trend_period})")
-        print(f"  RSI 過濾: {'開啟' if config.use_rsi_filter else '關閉'} ({config.rsi_oversold}/{config.rsi_overbought})")
+    print(f"\n  Supertrend:")
+    print(f"    ATR 週期: {config.st_atr_period}")
+    print(f"    ATR 乘數: {config.st_atr_multiplier}")
 
-    print(f"  ATR 止損: {'開啟' if config.use_atr_stop else '關閉'} ({config.atr_multiplier}x ATR)")
-    print(f"  最大持倉: {config.max_hold_bars} 根 K 線")
+    print(f"\n  ATR Stop Loss:")
+    print(f"    乘數: {config.atr_stop_multiplier}")
 
-    if config.strategy_mode == StrategyMode.BREAKOUT:
-        print(f"\n  策略: 突破策略 @ {config.leverage}x (年化 ~81%, Sharpe 1.13)")
-        print(f"  預期交易頻率: ~165 次/年 (~3 次/週)")
-    else:
-        print(f"\n  策略: 均值回歸 (Sharpe 2.05)")
+    print(f"\n  Walk-Forward 驗證結果:")
+    print(f"    報酬: +35.1% (2年), Sharpe: 1.81")
+    print(f"    回撤: 6.7%, 一致性: 75%")
+    print(f"    OOS 效率: 96%")
     print()
 
     try:
