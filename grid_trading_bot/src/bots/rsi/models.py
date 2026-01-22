@@ -82,10 +82,6 @@ class RSIConfig:
     leverage: int = 5
     margin_type: str = "ISOLATED"
 
-    # Deprecated but kept for backwards compatibility
-    oversold: int = 30  # Used as entry_level - momentum_threshold fallback
-    overbought: int = 70  # Used as entry_level + momentum_threshold fallback
-
     # Capital allocation
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
