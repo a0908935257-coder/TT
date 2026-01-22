@@ -173,13 +173,11 @@ class BollingerBot(BaseBot):
             bbw_threshold_pct=config.bbw_threshold_pct,
         )
 
-        # Initialize Supertrend calculator for BOLLINGER_TREND mode
-        self._supertrend: Optional[SupertrendCalculator] = None
-        if config.strategy_mode == StrategyMode.BOLLINGER_TREND:
-            self._supertrend = SupertrendCalculator(
-                atr_period=config.st_atr_period,
-                atr_multiplier=config.st_atr_multiplier,
-            )
+        # Initialize Supertrend calculator (BOLLINGER_TREND mode - Walk-Forward validated)
+        self._supertrend = SupertrendCalculator(
+            atr_period=config.st_atr_period,
+            atr_multiplier=config.st_atr_multiplier,
+        )
 
         self._signal_generator = SignalGenerator(config, self._calculator, self._supertrend)
         self._position_manager = PositionManager(config, exchange, data_manager)
@@ -228,9 +226,8 @@ class BollingerBot(BaseBot):
         # 3. Initialize indicator calculator (build BBW history)
         self._calculator.initialize(klines)
 
-        # 4. Initialize Supertrend (for BOLLINGER_TREND mode)
-        if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND:
-            self._signal_generator.initialize_supertrend(klines)
+        # 4. Initialize Supertrend (BOLLINGER_TREND mode - Walk-Forward validated)
+        self._signal_generator.initialize_supertrend(klines)
 
         # 5. Set current bar number
         self._current_bar = len(klines)
@@ -326,7 +323,7 @@ class BollingerBot(BaseBot):
         status = {
             "timeframe": self._config.timeframe,
             "leverage": self._config.leverage,
-            "strategy_mode": self._config.strategy_mode.value,
+            "strategy_mode": "bollinger_trend",  # Walk-Forward validated mode
             "bb_period": self._config.bb_period,
             "bb_std": str(self._config.bb_std),
             "current_bar": self._current_bar,
@@ -339,8 +336,8 @@ class BollingerBot(BaseBot):
             "signals_filtered": self._bollinger_stats.signals_filtered,
         }
 
-        # Add Supertrend info for BOLLINGER_TREND mode
-        if self._config.strategy_mode == StrategyMode.BOLLINGER_TREND and self._supertrend:
+        # Add Supertrend info (BOLLINGER_TREND mode)
+        if self._supertrend:
             st = self._supertrend.current
             status["supertrend_trend"] = "BULL" if self._supertrend.is_bullish else "BEAR"
             if st:
