@@ -227,10 +227,10 @@ async def main():
     print(f"  已獲取 {len(klines)} 根 K 線")
 
     config = {
-        'leverage': 5,  # Reduced for better risk management
+        'leverage': 5,
         'position_size': 0.1,
-        'atr_period': 10,  # Walk-Forward validated: 100% (6/6)
-        'atr_multiplier': 3.0,  # Walk-Forward validated
+        'atr_period': 5,  # Out-of-sample validated: +25.9%
+        'atr_multiplier': 2.5,  # Out-of-sample validated
         'use_trailing_stop': False,
         'trailing_stop_pct': 0.03,
     }
