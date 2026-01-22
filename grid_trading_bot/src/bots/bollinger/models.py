@@ -1,10 +1,11 @@
 """
-Bollinger Band Mean Reversion Bot Data Models.
+Bollinger Trend Bot Data Models.
 
-Provides data models for Bollinger Band mean reversion strategy
+Provides data models for Bollinger Trend strategy (Supertrend + BB combination)
 running on futures market.
 
-Conforms to Prompt 64 specification.
+Strategy: Enter on BB band touch when aligned with Supertrend direction.
+Exit: Supertrend flip or ATR stop loss.
 """
 
 from dataclasses import dataclass, field
@@ -22,9 +23,7 @@ from typing import Optional
 class StrategyMode(str, Enum):
     """Trading strategy mode."""
 
-    MEAN_REVERSION = "mean_reversion"  # [DEPRECATED] Buy at lower band, sell at upper band
-    BREAKOUT = "breakout"              # [DEPRECATED] Buy above upper band, sell below lower band
-    BOLLINGER_TREND = "bollinger_trend"  # Supertrend + BB combination (recommended)
+    BOLLINGER_TREND = "bollinger_trend"  # Supertrend + BB combination
 
 
 class SignalType(str, Enum):
@@ -46,12 +45,10 @@ class PositionSide(str, Enum):
 class ExitReason(str, Enum):
     """Reason for exiting a position."""
 
-    TAKE_PROFIT = "take_profit"  # Price returned to middle band
-    STOP_LOSS = "stop_loss"      # Stop loss triggered
-    TIMEOUT = "timeout"          # Max hold bars exceeded
+    TREND_FLIP = "trend_flip"    # Supertrend flipped direction
+    STOP_LOSS = "stop_loss"      # ATR stop loss triggered
     MANUAL = "manual"            # Manual exit
     BOT_STOP = "bot_stop"        # Bot stopped
-    TREND_FLIP = "trend_flip"    # Supertrend flipped (BOLLINGER_TREND mode)
 
 
 # =============================================================================
@@ -62,106 +59,61 @@ class ExitReason(str, Enum):
 @dataclass
 class BollingerConfig:
     """
-    Bollinger Bot configuration.
+    Bollinger Trend Bot configuration.
 
-    ⚠️ BOLLINGER_TREND 模式 (2026-01 優化)
-    ======================================
     Walk-Forward 驗證結果 (1 年數據, 2025-01 ~ 2026-01):
-    - 最佳配置: BB 2.5, ST 20/3.5, 5x 槓桿
     - 報酬: +10.6%, Sharpe: 0.67, 回撤: 14.1%
-    - 一致性: 50% (3/6 時段獲利) - 未達 67% 門檻
+    - 一致性: 50% (3/6 時段獲利)
 
     策略邏輯:
     - 進場: Supertrend 看多時在 BB 下軌買入，看空時在 BB 上軌賣出
     - 出場: Supertrend 翻轉（主要）或 ATR 止損（保護）
 
-    優化後參數:
+    參數 (6 個):
     - bb_period: 20, bb_std: 2.5
     - st_atr_period: 20, st_atr_multiplier: 3.5
     - atr_stop_multiplier: 2.0
     - leverage: 5
 
-    ⚠️ 舊模式 MEAN_REVERSION / BREAKOUT 已棄用
-    ============================================
-    Walk-Forward 驗證: 0% 一致性，嚴重虧損 (-75% ~ -99%)
-
-    建議: 使用 BOLLINGER_TREND 模式，但謹慎部署（未完全驗證）
-    替代方案: Supertrend Bot (Sharpe 4.34, 已驗證)
-
     Example:
-        >>> config = BollingerConfig(
-        ...     symbol="BTCUSDT",
-        ...     strategy_mode=StrategyMode.BOLLINGER_TREND,
-        ...     leverage=5,
-        ... )
+        >>> config = BollingerConfig(symbol="BTCUSDT", leverage=5)
     """
 
     symbol: str
     timeframe: str = "15m"
-    strategy_mode: StrategyMode = StrategyMode.BOLLINGER_TREND
-    bb_period: int = 20
-    bb_std: Decimal = field(default_factory=lambda: Decimal("2.5"))  # 優化後建議值
 
-    # Supertrend parameters (for BOLLINGER_TREND mode)
-    st_atr_period: int = 20  # Supertrend ATR period
-    st_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # Supertrend ATR multiplier
+    # Bollinger Bands parameters
+    bb_period: int = 20
+    bb_std: Decimal = field(default_factory=lambda: Decimal("2.5"))
+
+    # Supertrend parameters
+    st_atr_period: int = 20
+    st_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))
 
     # ATR Stop Loss
-    atr_stop_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))  # Stop loss ATR multiplier
+    atr_stop_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
     # Position settings
     leverage: int = 5
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
 
-    # === Legacy parameters (for MEAN_REVERSION / BREAKOUT modes) ===
+    # BBW filter (retained for indicator compatibility)
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
-    max_hold_bars: int = 48
-
-    # Legacy Trend Filter
-    use_trend_filter: bool = False
-    trend_period: int = 50
-
-    # Legacy RSI Filter
-    use_rsi_filter: bool = False
-    rsi_period: int = 14
-    rsi_oversold: int = 30
-    rsi_overbought: int = 70
-
-    # Legacy ATR Stop Loss
-    use_atr_stop: bool = True
-    atr_period: int = 14
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
-
-    # Legacy Trailing Stop
-    use_trailing_stop: bool = False
-    trailing_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
     def __post_init__(self):
         """Validate and normalize configuration."""
-        # Ensure Decimal types
         if not isinstance(self.bb_std, Decimal):
             self.bb_std = Decimal(str(self.bb_std))
         if not isinstance(self.st_atr_multiplier, Decimal):
             self.st_atr_multiplier = Decimal(str(self.st_atr_multiplier))
         if not isinstance(self.atr_stop_multiplier, Decimal):
             self.atr_stop_multiplier = Decimal(str(self.atr_stop_multiplier))
-        if not isinstance(self.stop_loss_pct, Decimal):
-            self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.position_size_pct, Decimal):
             self.position_size_pct = Decimal(str(self.position_size_pct))
-        if not isinstance(self.atr_multiplier, Decimal):
-            self.atr_multiplier = Decimal(str(self.atr_multiplier))
-        if not isinstance(self.trailing_atr_mult, Decimal):
-            self.trailing_atr_mult = Decimal(str(self.trailing_atr_mult))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
-
-        # Convert strategy_mode from string if needed
-        if isinstance(self.strategy_mode, str):
-            self.strategy_mode = StrategyMode(self.strategy_mode)
 
         self._validate()
 
@@ -183,7 +135,6 @@ class BollingerConfig:
         if self.timeframe not in valid_timeframes:
             raise ValueError(f"timeframe must be one of {valid_timeframes}")
 
-        # Supertrend parameters validation (BOLLINGER_TREND mode)
         if self.st_atr_period < 5 or self.st_atr_period > 50:
             raise ValueError(f"st_atr_period must be 5-50, got {self.st_atr_period}")
 
@@ -192,28 +143,6 @@ class BollingerConfig:
 
         if self.atr_stop_multiplier < Decimal("0.5") or self.atr_stop_multiplier > Decimal("5.0"):
             raise ValueError(f"atr_stop_multiplier must be 0.5-5.0, got {self.atr_stop_multiplier}")
-
-        # Legacy parameters validation
-        if self.bbw_lookback < 50 or self.bbw_lookback > 500:
-            raise ValueError(f"bbw_lookback must be 50-500, got {self.bbw_lookback}")
-
-        if self.bbw_threshold_pct < 5 or self.bbw_threshold_pct > 50:
-            raise ValueError(f"bbw_threshold_pct must be 5-50, got {self.bbw_threshold_pct}")
-
-        if self.stop_loss_pct < Decimal("0.005") or self.stop_loss_pct > Decimal("0.10"):
-            raise ValueError(f"stop_loss_pct must be 0.5%-10%, got {self.stop_loss_pct}")
-
-        if self.max_hold_bars < 1 or self.max_hold_bars > 200:
-            raise ValueError(f"max_hold_bars must be 1-200, got {self.max_hold_bars}")
-
-        if self.trend_period < 10 or self.trend_period > 200:
-            raise ValueError(f"trend_period must be 10-200, got {self.trend_period}")
-
-        if self.atr_period < 5 or self.atr_period > 50:
-            raise ValueError(f"atr_period must be 5-50, got {self.atr_period}")
-
-        if self.atr_multiplier < Decimal("0.5") or self.atr_multiplier > Decimal("5.0"):
-            raise ValueError(f"atr_multiplier must be 0.5-5.0, got {self.atr_multiplier}")
 
 
 # =============================================================================
@@ -340,15 +269,13 @@ class Signal:
     Attributes:
         signal_type: Signal type (LONG, SHORT, NONE)
         entry_price: Suggested entry price (band price)
-        take_profit: Take profit price (middle band)
-        stop_loss: Stop loss price
+        stop_loss: ATR-based stop loss price
         bands: Bollinger Bands at signal time
         bbw: BBW data at signal time
-        supertrend: Supertrend data (for BOLLINGER_TREND mode)
+        supertrend: Supertrend data
         timestamp: Signal timestamp
         reason: Signal reason description
-        trend_sma: Trend SMA value (for trend filter)
-        atr: ATR value (for dynamic stop loss)
+        atr: ATR value (for stop loss calculation)
     """
 
     signal_type: SignalType
@@ -357,22 +284,16 @@ class Signal:
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     reason: str = ""
     entry_price: Optional[Decimal] = None
-    take_profit: Optional[Decimal] = None
     stop_loss: Optional[Decimal] = None
-    trend_sma: Optional[Decimal] = None
     atr: Optional[Decimal] = None
-    supertrend: Optional[SupertrendData] = None  # For BOLLINGER_TREND mode
+    supertrend: Optional[SupertrendData] = None
 
     def __post_init__(self):
         """Ensure Decimal types."""
         if self.entry_price is not None and not isinstance(self.entry_price, Decimal):
             self.entry_price = Decimal(str(self.entry_price))
-        if self.take_profit is not None and not isinstance(self.take_profit, Decimal):
-            self.take_profit = Decimal(str(self.take_profit))
         if self.stop_loss is not None and not isinstance(self.stop_loss, Decimal):
             self.stop_loss = Decimal(str(self.stop_loss))
-        if self.trend_sma is not None and not isinstance(self.trend_sma, Decimal):
-            self.trend_sma = Decimal(str(self.trend_sma))
         if self.atr is not None and not isinstance(self.atr, Decimal):
             self.atr = Decimal(str(self.atr))
 
