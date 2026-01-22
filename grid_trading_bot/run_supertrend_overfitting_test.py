@@ -226,11 +226,12 @@ async def main():
     klines = await fetch_data(days=730)
     print(f"  已獲取 {len(klines)} 根 K 線")
 
+    # ⚠️ 警告：此策略未通過樣本外驗證
     config = {
         'leverage': 5,
         'position_size': 0.1,
-        'atr_period': 5,  # Out-of-sample validated: +25.9%
-        'atr_multiplier': 2.5,  # Out-of-sample validated
+        'atr_period': 10,  # ⚠️ 未通過驗證
+        'atr_multiplier': 3.0,  # ⚠️ 未通過驗證
         'use_trailing_stop': False,
         'trailing_stop_pct': 0.03,
     }

@@ -3,8 +3,10 @@
 Supertrend Bot Runner.
 
 啟動 Supertrend 趨勢跟蹤交易機器人。
-策略：樣本外驗證通過 (ATR 5, 乘數 2.5) @ 5x 逐倉
-樣本外驗證: +25.9%, 績效衰退 14.9%, 最大回撤 5.5%
+
+⚠️ 警告：此策略未通過樣本外驗證，不建議用於實盤交易！
+策略：ATR 10, 乘數 3.0 @ 5x 逐倉
+樣本外測試結果：所有參數組合均為負報酬
 """
 
 import asyncio
@@ -43,16 +45,16 @@ def get_config_from_env() -> SupertrendConfig:
         # 基本設定
         symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '5')),  # Out-of-sample validated
+        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '5')),
         margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
 
         # 資金分配
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
 
-        # Supertrend 設定 (樣本外驗證通過: +25.9%)
-        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '5')),  # Out-of-sample validated
-        atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '2.5')),  # Out-of-sample validated
+        # Supertrend 設定 (⚠️ 未通過樣本外驗證)
+        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '10')),  # ⚠️ 未通過驗證
+        atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0')),  # ⚠️ 未通過驗證
 
         # 可選：追蹤止損
         use_trailing_stop=os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
@@ -149,8 +151,8 @@ async def main() -> None:
     print(f"  追蹤止損: {'開啟' if config.use_trailing_stop else '關閉'}")
     if config.use_trailing_stop:
         print(f"  追蹤止損比例: {config.trailing_stop_pct*100}%")
-    print(f"\n  策略: Supertrend @ {config.leverage}x (樣本外驗證通過)")
-    print(f"  預期績效: 年化 ~25%, 回撤 <6%, 績效衰退 <15%")
+    print(f"\n  ⚠️ 警告: 此策略未通過樣本外驗證!")
+    print(f"  策略: Supertrend @ {config.leverage}x (不建議實盤使用)")
     print()
 
     try:

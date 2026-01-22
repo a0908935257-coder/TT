@@ -616,10 +616,10 @@ async def main():
         if c['use_trailing_stop']:
             print(f"  SUPERTREND_TRAILING_STOP_PCT={c['trailing_stop_pct']}")
 
-        # 與當前配置比較
+        # 與當前配置比較 (⚠️ 當前配置未通過驗證)
         print("\n  與當前配置比較:")
         print("-" * 50)
-        current = {'atr_period': 5, 'atr_multiplier': 2.5, 'stop_loss_pct': 0.02, 'use_trailing_stop': False, 'trailing_stop_pct': 0.03}
+        current = {'atr_period': 10, 'atr_multiplier': 3.0, 'stop_loss_pct': 0.02, 'use_trailing_stop': False, 'trailing_stop_pct': 0.03}
         current_wf = walk_forward_validation(klines, current, n_splits=6, leverage=10)
 
         print(f"  │ 指標        │ 當前配置     │ 優化配置     │")
