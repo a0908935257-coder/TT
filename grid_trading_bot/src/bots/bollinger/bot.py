@@ -28,6 +28,7 @@ Architecture:
     └── OrderExecutor         → Execute orders
 """
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Protocol
@@ -191,6 +192,10 @@ class BollingerBot(BaseBot):
         # Statistics
         self._bollinger_stats = BollingerBotStats()
 
+        # State persistence
+        self._save_task: Optional[asyncio.Task] = None
+        self._save_interval_minutes: int = 5
+
     # =========================================================================
     # Abstract Properties
     # =========================================================================
@@ -262,6 +267,9 @@ class BollingerBot(BaseBot):
             f"klines={len(klines)}, bar={self._current_bar}"
         )
 
+        # Start periodic state saving
+        self._start_save_task()
+
     async def _do_stop(self, clear_position: bool = False) -> None:
         """Stop the bot."""
         # 1. Cancel all pending orders
@@ -285,7 +293,11 @@ class BollingerBot(BaseBot):
         except Exception as e:
             logger.debug(f"Unsubscribe klines: {e}")
 
-        # 4. Send notification
+        # 4. Stop periodic save task and save final state
+        self._stop_save_task()
+        await self._save_state()
+
+        # 5. Send notification
         if self._notifier:
             await self._notifier.send(
                 title="🔴 BollingerBot 已停止",
@@ -401,95 +413,107 @@ class BollingerBot(BaseBot):
         2. Check entry order timeout
         3. Check for new entry signal
         """
-        current_price = self._klines[-1].close
-        if not isinstance(current_price, Decimal):
-            current_price = Decimal(str(current_price))
+        try:
+            current_price = self._klines[-1].close
+            if not isinstance(current_price, Decimal):
+                current_price = Decimal(str(current_price))
 
-        # ===== 1. Check existing position =====
-        position = self._position_manager.get_position()
+            # ===== 1. Check existing position =====
+            position = self._position_manager.get_position()
 
-        if position:
-            should_exit, reason = self._signal_generator.check_exit(
-                position=position,
-                klines=self._klines,
-                current_price=current_price,
-                current_bar=self._current_bar,
-            )
+            if position:
+                should_exit, reason = self._signal_generator.check_exit(
+                    position=position,
+                    klines=self._klines,
+                    current_price=current_price,
+                    current_bar=self._current_bar,
+                )
 
-            if should_exit:
-                await self._exit_position(reason)
+                if should_exit:
+                    await self._exit_position(reason)
+                    return
+
+                # Has position, don't check new signals
                 return
 
-            # Has position, don't check new signals
-            return
+            # ===== 2. Check entry order timeout =====
+            if self._entry_order_bar is not None:
+                bars_since_entry = self._current_bar - self._entry_order_bar
+                if bars_since_entry >= self._order_executor.get_entry_timeout_bars():
+                    await self._order_executor.cancel_entry_order()
+                    self._entry_order_bar = None
+                    logger.info("Entry order timeout, cancelled")
+                    return
 
-        # ===== 2. Check entry order timeout =====
-        if self._entry_order_bar is not None:
-            bars_since_entry = self._current_bar - self._entry_order_bar
-            if bars_since_entry >= self._order_executor.get_entry_timeout_bars():
-                await self._order_executor.cancel_entry_order()
-                self._entry_order_bar = None
-                logger.info("Entry order timeout, cancelled")
-                return
+            # ===== 3. Check new entry signal =====
+            if self._entry_order_bar is None:
+                signal = self._signal_generator.generate(self._klines, current_price)
 
-        # ===== 3. Check new entry signal =====
-        if self._entry_order_bar is None:
-            signal = self._signal_generator.generate(self._klines, current_price)
+                # Record signal stats
+                if signal.bbw.is_squeeze:
+                    self._bollinger_stats.record_signal(filtered=True)
+                elif signal.signal_type != SignalType.NONE:
+                    self._bollinger_stats.record_signal(filtered=False)
+                    await self._enter_position(signal)
 
-            # Record signal stats
-            if signal.bbw.is_squeeze:
-                self._bollinger_stats.record_signal(filtered=True)
-            elif signal.signal_type != SignalType.NONE:
-                self._bollinger_stats.record_signal(filtered=False)
-                await self._enter_position(signal)
+        except Exception as e:
+            logger.error(f"Error in _process_bar: {e}", exc_info=True)
 
     async def _enter_position(self, signal) -> None:
         """Enter a new position."""
-        # 1. Calculate position and create
-        position = await self._position_manager.open_position(signal)
+        try:
+            # 1. Calculate position and create
+            position = await self._position_manager.open_position(signal)
 
-        # 2. Place entry order
-        await self._order_executor.place_entry_order(signal, position.quantity)
+            # 2. Place entry order
+            await self._order_executor.place_entry_order(signal, position.quantity)
 
-        # 3. Record entry bar
-        self._entry_order_bar = self._current_bar
+            # 3. Record entry bar
+            self._entry_order_bar = self._current_bar
 
-        logger.info(
-            f"Entry signal: {signal.signal_type.value}, "
-            f"price={signal.entry_price}, qty={position.quantity}"
-        )
+            logger.info(
+                f"Entry signal: {signal.signal_type.value}, "
+                f"price={signal.entry_price}, qty={position.quantity}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in _enter_position: {e}", exc_info=True)
 
     async def _exit_position(self, reason: str) -> None:
         """Exit current position."""
-        position = self._position_manager.get_position()
-        if not position:
-            return
+        try:
+            position = self._position_manager.get_position()
+            if not position:
+                return
 
-        # 1. Cancel exit orders if timeout
-        if "超時" in reason:
-            await self._order_executor.cancel_exit_orders()
-            await self._order_executor.close_position_market(position)
+            # 1. Cancel exit orders if timeout
+            if "超時" in reason:
+                await self._order_executor.cancel_exit_orders()
+                await self._order_executor.close_position_market(position)
 
-        # 2. Record trade
-        record = await self._position_manager.close_position(reason)
-        record.hold_bars = self._current_bar - position.entry_bar
+            # 2. Record trade
+            record = await self._position_manager.close_position(reason)
+            record.hold_bars = self._current_bar - position.entry_bar
 
-        # 3. Update statistics
-        self._update_stats(record)
+            # 3. Update statistics
+            self._update_stats(record)
 
-        # 4. Send notification
-        if self._notifier:
-            emoji = "📈" if record.pnl > 0 else "📉"
-            await self._notifier.send(
-                title=f"{emoji} 平倉",
-                message=(
-                    f"方向: {record.side.value}\n"
-                    f"盈虧: {record.pnl:+.4f} USDT\n"
-                    f"原因: {reason}"
-                ),
-            )
+            # 4. Send notification
+            if self._notifier:
+                emoji = "📈" if record.pnl > 0 else "📉"
+                await self._notifier.send(
+                    title=f"{emoji} 平倉",
+                    message=(
+                        f"方向: {record.side.value}\n"
+                        f"盈虧: {record.pnl:+.4f} USDT\n"
+                        f"原因: {reason}"
+                    ),
+                )
 
-        logger.info(f"Exit: {reason}, PnL={record.pnl:+.4f}")
+            logger.info(f"Exit: {reason}, PnL={record.pnl:+.4f}")
+
+        except Exception as e:
+            logger.error(f"Error in _exit_position: {e}", exc_info=True)
 
     # =========================================================================
     # Order Update Callback
@@ -497,39 +521,43 @@ class BollingerBot(BaseBot):
 
     async def _on_order_update(self, order: OrderProtocol) -> None:
         """Handle order update callback."""
-        if order.status != "FILLED":
-            return
+        try:
+            if order.status != "FILLED":
+                return
 
-        result = await self._order_executor.on_order_filled(order)
+            result = await self._order_executor.on_order_filled(order)
 
-        if result == "entry_filled":
-            # Entry filled, place exit orders
-            position = self._position_manager.get_position()
-            if position:
-                # Update position with actual fill price
-                position.entry_bar = self._current_bar
-                position.entry_price = order.avg_price
+            if result == "entry_filled":
+                # Entry filled, place exit orders
+                position = self._position_manager.get_position()
+                if position:
+                    # Update position with actual fill price
+                    position.entry_bar = self._current_bar
+                    position.entry_price = order.avg_price
 
-                # Recalculate stop loss based on actual entry
-                stop_loss = self._signal_generator._calculate_stop_loss(
-                    order.avg_price,
-                    SignalType.LONG if position.side == PositionSide.LONG else SignalType.SHORT,
-                )
-                position.stop_loss_price = stop_loss
+                    # Recalculate stop loss based on actual entry
+                    stop_loss = self._signal_generator._calculate_stop_loss(
+                        order.avg_price,
+                        SignalType.LONG if position.side == PositionSide.LONG else SignalType.SHORT,
+                    )
+                    position.stop_loss_price = stop_loss
 
-                # Place exit orders
-                await self._order_executor.place_exit_orders(position)
-                self._entry_order_bar = None
+                    # Place exit orders
+                    await self._order_executor.place_exit_orders(position)
+                    self._entry_order_bar = None
 
-        elif result == "take_profit_filled":
-            # Take profit filled
-            await self._position_manager.close_position("止盈")
-            self._record_trade_from_order(order, "止盈")
+            elif result == "take_profit_filled":
+                # Take profit filled
+                await self._position_manager.close_position("止盈")
+                self._record_trade_from_order(order, "止盈")
 
-        elif result == "stop_loss_filled":
-            # Stop loss filled
-            await self._position_manager.close_position("止損")
-            self._record_trade_from_order(order, "止損")
+            elif result == "stop_loss_filled":
+                # Stop loss filled
+                await self._position_manager.close_position("止損")
+                self._record_trade_from_order(order, "止損")
+
+        except Exception as e:
+            logger.error(f"Error in _on_order_update: {e}", exc_info=True)
 
     def _record_trade_from_order(self, order: OrderProtocol, reason: str) -> None:
         """Record trade stats from order fill."""
@@ -575,3 +603,136 @@ class BollingerBot(BaseBot):
 
         # Note: PositionManager will use new max_capital automatically
         # on next position calculation. No immediate action needed.
+
+    # =========================================================================
+    # State Persistence
+    # =========================================================================
+
+    async def _save_state(self) -> None:
+        """Save bot state to database."""
+        try:
+            config = {
+                "symbol": self._config.symbol,
+                "timeframe": self._config.timeframe,
+                "bb_period": self._config.bb_period,
+                "bb_std": str(self._config.bb_std),
+                "st_atr_period": self._config.st_atr_period,
+                "st_atr_multiplier": str(self._config.st_atr_multiplier),
+                "leverage": self._config.leverage,
+                "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
+            }
+
+            state_data = {
+                "current_bar": self._current_bar,
+                "entry_order_bar": self._entry_order_bar,
+                "stats": self._bollinger_stats.to_dict(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            position = self._position_manager.get_position()
+            if position:
+                state_data["position"] = {
+                    "side": position.side.value,
+                    "entry_price": str(position.entry_price),
+                    "quantity": str(position.quantity),
+                    "entry_bar": position.entry_bar,
+                    "take_profit_price": str(position.take_profit_price) if position.take_profit_price else None,
+                    "stop_loss_price": str(position.stop_loss_price) if position.stop_loss_price else None,
+                }
+
+            await self._data_manager.save_bot_state(
+                bot_id=self._bot_id,
+                bot_type="bollinger",
+                status=self._state.value,
+                config=config,
+                state_data=state_data,
+            )
+
+            logger.debug(f"Bot state saved: {self._bot_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save bot state: {e}")
+
+    def _start_save_task(self) -> None:
+        """Start periodic save task."""
+        if self._save_task is not None:
+            return
+
+        async def save_loop():
+            while self._running:
+                await asyncio.sleep(self._save_interval_minutes * 60)
+                if self._running:
+                    await self._save_state()
+
+        self._save_task = asyncio.create_task(save_loop())
+
+    def _stop_save_task(self) -> None:
+        """Stop periodic save task."""
+        if self._save_task:
+            self._save_task.cancel()
+            self._save_task = None
+
+    @classmethod
+    async def restore(
+        cls,
+        bot_id: str,
+        exchange: ExchangeProtocol,
+        data_manager: Any,
+        notifier: Optional[NotifierProtocol] = None,
+    ) -> Optional["BollingerBot"]:
+        """
+        Restore a BollingerBot from saved state.
+
+        Args:
+            bot_id: Bot ID to restore
+            exchange: Exchange client
+            data_manager: Data manager instance
+            notifier: Notification manager
+
+        Returns:
+            Restored BollingerBot or None if not found
+        """
+        try:
+            state_data = await data_manager.get_bot_state(bot_id)
+            if not state_data:
+                logger.warning(f"No saved state for bot: {bot_id}")
+                return None
+
+            config_data = state_data.get("config", {})
+            config = BollingerConfig(
+                symbol=config_data.get("symbol", ""),
+                timeframe=config_data.get("timeframe", "15m"),
+                bb_period=config_data.get("bb_period", 20),
+                bb_std=Decimal(config_data.get("bb_std", "3.0")),
+                st_atr_period=config_data.get("st_atr_period", 20),
+                st_atr_multiplier=Decimal(config_data.get("st_atr_multiplier", "3.5")),
+                leverage=config_data.get("leverage", 2),
+                max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
+            )
+
+            bot = cls(
+                bot_id=bot_id,
+                config=config,
+                exchange=exchange,
+                data_manager=data_manager,
+                notifier=notifier,
+            )
+
+            # Restore state
+            saved_state = state_data.get("state_data", {})
+            bot._current_bar = saved_state.get("current_bar", 0)
+            bot._entry_order_bar = saved_state.get("entry_order_bar")
+
+            # Restore stats
+            stats_data = saved_state.get("stats", {})
+            bot._bollinger_stats.total_trades = stats_data.get("total_trades", 0)
+            bot._bollinger_stats.winning_trades = stats_data.get("winning_trades", 0)
+            bot._bollinger_stats.losing_trades = stats_data.get("losing_trades", 0)
+            bot._bollinger_stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+
+            logger.info(f"Restored BollingerBot: {bot_id}, PnL={bot._bollinger_stats.total_pnl}")
+            return bot
+
+        except Exception as e:
+            logger.error(f"Failed to restore bot: {e}")
+            return None

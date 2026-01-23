@@ -83,6 +83,7 @@ class SupertrendConfig:
     # Capital allocation (資金分配)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+    max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
     # Optional trailing stop (software-based)
     use_trailing_stop: bool = False
@@ -102,6 +103,8 @@ class SupertrendConfig:
             self.trailing_stop_pct = Decimal(str(self.trailing_stop_pct))
         if not isinstance(self.stop_loss_pct, Decimal):
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
+        if not isinstance(self.max_position_pct, Decimal):
+            self.max_position_pct = Decimal(str(self.max_position_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
 
@@ -120,6 +123,9 @@ class SupertrendConfig:
 
         if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
             raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
+
+        if self.max_position_pct < Decimal("0.1") or self.max_position_pct > Decimal("1.0"):
+            raise ValueError(f"max_position_pct must be 10%-100%, got {self.max_position_pct}")
 
 
 @dataclass

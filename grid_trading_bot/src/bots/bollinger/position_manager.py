@@ -210,8 +210,9 @@ class PositionManager:
         else:
             capital = available_balance
 
-        # Calculate position value
-        position_value = capital * self._config.position_size_pct
+        # Calculate position value (cap at max_position_pct for safety)
+        position_pct = min(self._config.position_size_pct, self._config.max_position_pct)
+        position_value = capital * position_pct
 
         # Calculate notional value with leverage
         notional_value = position_value * Decimal(self._leverage)
@@ -225,7 +226,7 @@ class PositionManager:
         capital_source = f"max_capital={self._config.max_capital}" if self._config.max_capital else f"balance={available_balance}"
         logger.info(
             f"Position size: {capital_source}, "
-            f"use={position_value} ({self._config.position_size_pct:.0%}), "
+            f"use={position_value} ({position_pct:.0%}), "
             f"leverage={self._leverage}x, quantity={quantity}"
         )
 

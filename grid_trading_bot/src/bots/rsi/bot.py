@@ -89,6 +89,10 @@ class RSIBot(BaseBot):
         self._win_count = 0
         self._loss_count = 0
 
+        # State persistence
+        self._save_task: Optional[asyncio.Task] = None
+        self._save_interval_minutes: int = 5
+
     # =========================================================================
     # Abstract Properties (Required by BaseBot)
     # =========================================================================
@@ -154,6 +158,9 @@ class RSIBot(BaseBot):
         logger.info(f"  SL: {self._config.stop_loss_pct*100:.1f}%, TP: {self._config.take_profit_pct*100:.1f}%")
         logger.info(f"  Initial RSI: {result.rsi:.2f}")
 
+        # Start periodic state saving
+        self._start_save_task()
+
     async def _do_stop(self, clear_position: bool = False) -> None:
         """Stop the RSI bot."""
         logger.info(f"Stopping RSI Bot for {self._config.symbol}")
@@ -170,6 +177,10 @@ class RSIBot(BaseBot):
         # Cancel stop loss order if exists
         if self._position and self._position.stop_loss_order_id:
             await self._cancel_stop_loss_order()
+
+        # Stop periodic save task and save final state
+        self._stop_save_task()
+        await self._save_state()
 
         logger.info("RSI Bot stopped")
 
@@ -316,7 +327,9 @@ class RSIBot(BaseBot):
             if self._config.max_capital:
                 balance = min(balance, self._config.max_capital)
 
-            position_value = balance * self._config.position_size_pct * self._config.leverage
+            # Apply position_size_pct but cap at max_position_pct for safety
+            position_pct = min(self._config.position_size_pct, self._config.max_position_pct)
+            position_value = balance * position_pct * self._config.leverage
             quantity = position_value / price
 
             # Round quantity
@@ -694,3 +707,150 @@ class RSIBot(BaseBot):
 
         # Note: Position sizing will use new max_capital automatically
         # on next _open_position call. No immediate action needed.
+
+    # =========================================================================
+    # State Persistence
+    # =========================================================================
+
+    async def _save_state(self) -> None:
+        """Save bot state to database."""
+        try:
+            config = {
+                "symbol": self._config.symbol,
+                "timeframe": self._config.timeframe,
+                "rsi_period": self._config.rsi_period,
+                "entry_level": self._config.entry_level,
+                "momentum_threshold": self._config.momentum_threshold,
+                "leverage": self._config.leverage,
+                "stop_loss_pct": str(self._config.stop_loss_pct),
+                "take_profit_pct": str(self._config.take_profit_pct),
+                "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
+            }
+
+            state_data = {
+                "total_pnl": str(self._total_pnl),
+                "win_count": self._win_count,
+                "loss_count": self._loss_count,
+                "trades_count": len(self._trades),
+                "prev_rsi": str(self._prev_rsi),
+                "signal_cooldown_bars": self._signal_cooldown_bars,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            if self._position:
+                state_data["position"] = {
+                    "side": self._position.side.value,
+                    "entry_price": str(self._position.entry_price),
+                    "quantity": str(self._position.quantity),
+                    "entry_time": self._position.entry_time.isoformat(),
+                    "entry_rsi": str(self._position.entry_rsi),
+                    "stop_loss_order_id": self._position.stop_loss_order_id,
+                    "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                }
+
+            await self._data_manager.save_bot_state(
+                bot_id=self._bot_id,
+                bot_type="rsi",
+                status=self._state.value,
+                config=config,
+                state_data=state_data,
+            )
+
+            logger.debug(f"Bot state saved: {self._bot_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save bot state: {e}")
+
+    def _start_save_task(self) -> None:
+        """Start periodic save task."""
+        if self._save_task is not None:
+            return
+
+        async def save_loop():
+            while self._running:
+                await asyncio.sleep(self._save_interval_minutes * 60)
+                if self._running:
+                    await self._save_state()
+
+        self._save_task = asyncio.create_task(save_loop())
+
+    def _stop_save_task(self) -> None:
+        """Stop periodic save task."""
+        if self._save_task:
+            self._save_task.cancel()
+            self._save_task = None
+
+    @classmethod
+    async def restore(
+        cls,
+        bot_id: str,
+        exchange: Any,
+        data_manager: Any,
+        notifier: Any = None,
+    ) -> Optional["RSIBot"]:
+        """
+        Restore an RSIBot from saved state.
+
+        Args:
+            bot_id: Bot ID to restore
+            exchange: Exchange client
+            data_manager: Data manager instance
+            notifier: Notification manager
+
+        Returns:
+            Restored RSIBot or None if not found
+        """
+        try:
+            state_data = await data_manager.get_bot_state(bot_id)
+            if not state_data:
+                logger.warning(f"No saved state for bot: {bot_id}")
+                return None
+
+            config_data = state_data.get("config", {})
+            config = RSIConfig(
+                symbol=config_data.get("symbol", ""),
+                timeframe=config_data.get("timeframe", "15m"),
+                rsi_period=config_data.get("rsi_period", 21),
+                entry_level=config_data.get("entry_level", 50),
+                momentum_threshold=config_data.get("momentum_threshold", 5),
+                leverage=config_data.get("leverage", 2),
+                stop_loss_pct=Decimal(config_data.get("stop_loss_pct", "0.04")),
+                take_profit_pct=Decimal(config_data.get("take_profit_pct", "0.08")),
+                max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
+            )
+
+            bot = cls(
+                bot_id=bot_id,
+                config=config,
+                exchange=exchange,
+                data_manager=data_manager,
+                notifier=notifier,
+            )
+
+            # Restore state
+            saved_state = state_data.get("state_data", {})
+            bot._total_pnl = Decimal(saved_state.get("total_pnl", "0"))
+            bot._win_count = saved_state.get("win_count", 0)
+            bot._loss_count = saved_state.get("loss_count", 0)
+            bot._prev_rsi = Decimal(saved_state.get("prev_rsi", "50"))
+            bot._signal_cooldown_bars = saved_state.get("signal_cooldown_bars", 0)
+
+            # Restore position if exists
+            position_data = saved_state.get("position")
+            if position_data:
+                bot._position = Position(
+                    side=PositionSide(position_data["side"]),
+                    entry_price=Decimal(position_data["entry_price"]),
+                    quantity=Decimal(position_data["quantity"]),
+                    entry_time=datetime.fromisoformat(position_data["entry_time"]),
+                    entry_rsi=Decimal(position_data.get("entry_rsi", "50")),
+                    stop_loss_order_id=position_data.get("stop_loss_order_id"),
+                    stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
+                )
+
+            logger.info(f"Restored RSIBot: {bot_id}, PnL={bot._total_pnl}")
+            return bot
+
+        except Exception as e:
+            logger.error(f"Failed to restore bot: {e}")
+            return None

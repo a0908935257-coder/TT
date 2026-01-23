@@ -88,6 +88,7 @@ class RSIConfig:
     # Capital allocation
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+    max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
     # Risk management - Walk-Forward 驗證通過的參數
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4%
@@ -100,6 +101,8 @@ class RSIConfig:
         """Validate and normalize configuration."""
         if not isinstance(self.position_size_pct, Decimal):
             self.position_size_pct = Decimal(str(self.position_size_pct))
+        if not isinstance(self.max_position_pct, Decimal):
+            self.max_position_pct = Decimal(str(self.max_position_pct))
         if not isinstance(self.stop_loss_pct, Decimal):
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.take_profit_pct, Decimal):
@@ -125,6 +128,9 @@ class RSIConfig:
 
         if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
             raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
+
+        if self.max_position_pct < Decimal("0.1") or self.max_position_pct > Decimal("1.0"):
+            raise ValueError(f"max_position_pct must be 10%-100%, got {self.max_position_pct}")
 
 
 @dataclass
