@@ -465,6 +465,146 @@ class FundManager:
         logger.warning(f"No allocation found for pattern: {bot_pattern}")
         return False
 
+    async def recall_funds(
+        self,
+        bot_id: str,
+        amount: Optional[Decimal] = None,
+    ) -> AllocationRecord:
+        """
+        Recall funds from a bot back to the pool.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount to recall (None = recall all allocated funds)
+
+        Returns:
+            AllocationRecord with recall result
+        """
+        current_allocation = self._fund_pool.get_allocation(bot_id)
+
+        if current_allocation <= 0:
+            record = AllocationRecord(
+                bot_id=bot_id,
+                amount=Decimal("0"),
+                trigger="recall",
+                previous_allocation=Decimal("0"),
+                new_allocation=Decimal("0"),
+                success=False,
+                error_message="No funds allocated to this bot",
+            )
+            logger.warning(f"No funds to recall from {bot_id}")
+            return record
+
+        # Determine recall amount
+        if amount is None:
+            recall_amount = current_allocation
+        else:
+            recall_amount = min(amount, current_allocation)
+
+        new_allocation = current_allocation - recall_amount
+
+        record = AllocationRecord(
+            bot_id=bot_id,
+            amount=-recall_amount,  # Negative to indicate recall
+            trigger="recall",
+            previous_allocation=current_allocation,
+            new_allocation=new_allocation,
+        )
+
+        try:
+            # Update fund pool allocation tracking
+            self._fund_pool.set_allocation(bot_id, new_allocation)
+
+            # Notify bot about reduced allocation
+            dispatch_record = await self._dispatcher.notify_bot(
+                bot_id=bot_id,
+                amount=new_allocation,
+                trigger="recall",
+                previous_allocation=current_allocation,
+            )
+
+            if dispatch_record.success:
+                record.success = True
+                logger.info(
+                    f"Recalled {recall_amount} from {bot_id} "
+                    f"(previous: {current_allocation}, new: {new_allocation})"
+                )
+            else:
+                # Even if notification fails, allocation is updated
+                record.success = True
+                record.error_message = (
+                    f"Funds recalled but notification failed: "
+                    f"{dispatch_record.error_message}"
+                )
+                logger.warning(
+                    f"Recalled {recall_amount} from {bot_id} but notification failed"
+                )
+
+            # Store record
+            self._allocation_records.append(record)
+            if len(self._allocation_records) > self._max_records:
+                self._allocation_records = self._allocation_records[-self._max_records:]
+
+            # Send notification
+            await self._notify_recall(bot_id, recall_amount, new_allocation)
+
+        except Exception as e:
+            logger.error(f"Failed to recall funds from {bot_id}: {e}")
+            record.success = False
+            record.error_message = str(e)
+
+        return record
+
+    async def recall_all_funds(self) -> List[AllocationRecord]:
+        """
+        Recall all funds from all bots back to the pool.
+
+        Returns:
+            List of AllocationRecord for each recall attempt
+        """
+        records: List[AllocationRecord] = []
+        allocations = self._fund_pool.allocations
+
+        for bot_id in list(allocations.keys()):
+            record = await self.recall_funds(bot_id)
+            records.append(record)
+
+        # Log summary
+        successful = sum(1 for r in records if r.success)
+        total_recalled = sum(
+            abs(r.amount) for r in records if r.success
+        )
+        logger.info(
+            f"Recalled funds from {successful}/{len(records)} bots, "
+            f"total: {total_recalled} USDT"
+        )
+
+        return records
+
+    async def _notify_recall(
+        self,
+        bot_id: str,
+        amount: Decimal,
+        new_allocation: Decimal,
+    ) -> None:
+        """
+        Send recall notification.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount recalled
+            new_allocation: New allocation after recall
+        """
+        if self._notifier:
+            try:
+                await self._notifier.send_info(
+                    "Fund Recall",
+                    f"Recalled {amount} USDT from {bot_id}. "
+                    f"New allocation: {new_allocation} USDT",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send recall notification: {e}")
+
     # =========================================================================
     # Query Methods
     # =========================================================================

@@ -139,6 +139,36 @@ class FundManagerCLI:
         # bots command
         subparsers.add_parser("bots", help="List configured bot allocations")
 
+        # recall command
+        recall_parser = subparsers.add_parser(
+            "recall",
+            help="Recall funds from a bot back to the pool",
+        )
+        recall_parser.add_argument(
+            "bot_id",
+            type=str,
+            help="Bot ID to recall funds from (use 'all' to recall from all bots)",
+        )
+        recall_parser.add_argument(
+            "--amount", "-a",
+            type=float,
+            help="Amount to recall (omit to recall all)",
+        )
+
+        # pause-bot command
+        pause_parser = subparsers.add_parser(
+            "pause-bot",
+            help="Pause a bot's fund allocation",
+        )
+        pause_parser.add_argument("bot_id", type=str, help="Bot ID to pause")
+
+        # resume-bot command
+        resume_parser = subparsers.add_parser(
+            "resume-bot",
+            help="Resume a bot's fund allocation",
+        )
+        resume_parser.add_argument("bot_id", type=str, help="Bot ID to resume")
+
         return parser
 
     async def run(self, args: List[str]) -> int:
@@ -303,6 +333,57 @@ class FundManagerCLI:
         self._print_bot_allocations(self._fund_manager.config.allocations)
         return 0
 
+    async def _cmd_recall(self, args: argparse.Namespace) -> int:
+        """Handle recall command."""
+        if not self._fund_manager:
+            print("Error: FundManager not initialized")
+            return 1
+
+        amount = Decimal(str(args.amount)) if args.amount else None
+
+        if args.bot_id.lower() == "all":
+            print("Recalling funds from all bots...")
+            records = await self._fund_manager.recall_all_funds()
+            self._print_recall_results(records)
+            return 0 if all(r.success for r in records) else 1
+        else:
+            print(f"Recalling funds from {args.bot_id}...")
+            record = await self._fund_manager.recall_funds(args.bot_id, amount)
+            self._print_recall_result(record)
+            return 0 if record.success else 1
+
+    async def _cmd_pause_bot(self, args: argparse.Namespace) -> int:
+        """Handle pause-bot command."""
+        if not self._fund_manager:
+            print("Error: FundManager not initialized")
+            return 1
+
+        # Find and disable the bot in config
+        for alloc in self._fund_manager.config.allocations:
+            if alloc.matches(args.bot_id):
+                alloc.enabled = False
+                print(f"Paused bot {args.bot_id} (pattern: {alloc.bot_pattern})")
+                return 0
+
+        print(f"Error: Bot {args.bot_id} not found in allocation config")
+        return 1
+
+    async def _cmd_resume_bot(self, args: argparse.Namespace) -> int:
+        """Handle resume-bot command."""
+        if not self._fund_manager:
+            print("Error: FundManager not initialized")
+            return 1
+
+        # Find and enable the bot in config
+        for alloc in self._fund_manager.config.allocations:
+            if alloc.matches(args.bot_id):
+                alloc.enabled = True
+                print(f"Resumed bot {args.bot_id} (pattern: {alloc.bot_pattern})")
+                return 0
+
+        print(f"Error: Bot {args.bot_id} not found in allocation config")
+        return 1
+
     # =========================================================================
     # Output Formatting
     # =========================================================================
@@ -405,6 +486,39 @@ class FundManagerCLI:
                 f"{str(alloc.min_capital):>10} {str(alloc.max_capital):>12} "
                 f"{alloc.priority:>8} {enabled:<8}"
             )
+
+    def _print_recall_result(self, record: Any) -> None:
+        """Print single recall result."""
+        print("\n=== Recall Result ===")
+        print(f"Bot ID:     {record.bot_id}")
+        print(f"Success:    {'Yes' if record.success else 'No'}")
+        print(f"Amount:     {abs(record.amount)} USDT")
+        print(f"Previous:   {record.previous_allocation} USDT")
+        print(f"New:        {record.new_allocation} USDT")
+
+        if record.error_message:
+            print(f"Message:    {record.error_message}")
+
+    def _print_recall_results(self, records: list) -> None:
+        """Print multiple recall results."""
+        print("\n=== Recall Results ===")
+        print(f"{'Bot ID':<20} {'Recalled':>12} {'Previous':>12} {'New':>12} {'Status':<8}")
+        print("-" * 70)
+
+        total_recalled = Decimal("0")
+        for record in records:
+            status = "OK" if record.success else "FAILED"
+            recalled = abs(record.amount)
+            if record.success:
+                total_recalled += recalled
+            print(
+                f"{record.bot_id:<20} {str(recalled):>12} "
+                f"{str(record.previous_allocation):>12} "
+                f"{str(record.new_allocation):>12} {status:<8}"
+            )
+
+        print("-" * 70)
+        print(f"Total Recalled: {total_recalled} USDT")
 
 
 def create_cli(

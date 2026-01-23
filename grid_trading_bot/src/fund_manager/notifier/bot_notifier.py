@@ -339,15 +339,135 @@ class FileNotifier(BaseNotifier):
             return False
 
 
+class ApiNotifier(BaseNotifier):
+    """
+    API-based notifier.
+
+    Sends HTTP POST requests to bot endpoints with fund allocation updates.
+    """
+
+    def __init__(
+        self,
+        retry_count: int = 3,
+        retry_interval: int = 60,
+        timeout: int = 30,
+    ):
+        """
+        Initialize API notifier.
+
+        Args:
+            retry_count: Number of retry attempts
+            retry_interval: Seconds between retries
+            timeout: HTTP request timeout in seconds
+        """
+        super().__init__(retry_count, retry_interval)
+        self._timeout = timeout
+
+        # Bot-specific API endpoints
+        self._bot_endpoints: Dict[str, str] = {}
+
+        # Optional authentication headers per bot
+        self._bot_headers: Dict[str, Dict[str, str]] = {}
+
+    def set_bot_endpoint(
+        self,
+        bot_id: str,
+        endpoint: str,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """
+        Set API endpoint for a specific bot.
+
+        Args:
+            bot_id: Bot identifier
+            endpoint: API endpoint URL
+            headers: Optional authentication headers
+        """
+        self._bot_endpoints[bot_id] = endpoint
+        if headers:
+            self._bot_headers[bot_id] = headers
+        logger.debug(f"Set API endpoint for {bot_id}: {endpoint}")
+
+    def get_bot_endpoint(self, bot_id: str) -> Optional[str]:
+        """
+        Get API endpoint for a bot.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            API endpoint URL or None if not configured
+        """
+        return self._bot_endpoints.get(bot_id)
+
+    async def _send(self, message: NotificationMessage) -> bool:
+        """
+        Send notification via HTTP POST.
+
+        Args:
+            message: Notification message
+
+        Returns:
+            True if request was successful (2xx status)
+        """
+        endpoint = self.get_bot_endpoint(message.bot_id)
+        if not endpoint:
+            logger.error(f"No API endpoint configured for {message.bot_id}")
+            return False
+
+        try:
+            import aiohttp
+
+            headers = {
+                "Content-Type": "application/json",
+                **self._bot_headers.get(message.bot_id, {}),
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint,
+                    json=message.to_dict(),
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=self._timeout),
+                ) as response:
+                    if response.status >= 200 and response.status < 300:
+                        logger.debug(
+                            f"API notification sent to {message.bot_id}: "
+                            f"status={response.status}"
+                        )
+                        return True
+                    else:
+                        body = await response.text()
+                        logger.warning(
+                            f"API notification failed for {message.bot_id}: "
+                            f"status={response.status}, body={body[:200]}"
+                        )
+                        return False
+
+        except ImportError:
+            logger.error(
+                "aiohttp not installed. Install with: pip install aiohttp"
+            )
+            return False
+        except asyncio.TimeoutError:
+            logger.error(f"API notification timeout for {message.bot_id}")
+            return False
+        except Exception as e:
+            logger.error(f"API notification error for {message.bot_id}: {e}")
+            return False
+
+
 class BotNotifier:
     """
     Main bot notifier that manages multiple notification methods.
 
     Routes notifications to appropriate notifier based on bot configuration.
+    Supports file-based and API-based notifications.
 
     Example:
         >>> notifier = BotNotifier()
         >>> notifier.register_bot("grid_btc", "file", "data/notifications/grid_btc.json")
+        >>> notifier.register_bot("remote_bot", "api", "http://localhost:8080/fund-update")
         >>> await notifier.notify_allocation("grid_btc", Decimal("100"), Decimal("500"))
     """
 
@@ -356,6 +476,7 @@ class BotNotifier:
         default_notification_path: str = "data/fund_notifications",
         retry_count: int = 3,
         retry_interval: int = 60,
+        api_timeout: int = 30,
     ):
         """
         Initialize bot notifier.
@@ -364,6 +485,7 @@ class BotNotifier:
             default_notification_path: Default path for file notifications
             retry_count: Number of retry attempts
             retry_interval: Seconds between retries
+            api_timeout: Timeout for API requests in seconds
         """
         self._retry_count = retry_count
         self._retry_interval = retry_interval
@@ -374,15 +496,22 @@ class BotNotifier:
             retry_count=retry_count,
             retry_interval=retry_interval,
         )
+        self._api_notifier = ApiNotifier(
+            retry_count=retry_count,
+            retry_interval=retry_interval,
+            timeout=api_timeout,
+        )
 
         # Bot notification method mapping
         self._bot_methods: Dict[str, str] = {}  # bot_id -> method
+        self._bot_targets: Dict[str, str] = {}  # bot_id -> target (path or URL)
 
     def register_bot(
         self,
         bot_id: str,
         method: str = "file",
         target: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """
         Register a bot with its notification method.
@@ -390,12 +519,18 @@ class BotNotifier:
         Args:
             bot_id: Bot identifier
             method: Notification method (file, api, none)
-            target: Target path or endpoint
+            target: Target path (for file) or endpoint URL (for api)
+            headers: Optional authentication headers (for api method)
         """
         self._bot_methods[bot_id] = method
 
+        if target:
+            self._bot_targets[bot_id] = target
+
         if method == "file" and target:
             self._file_notifier.set_bot_path(bot_id, target)
+        elif method == "api" and target:
+            self._api_notifier.set_bot_endpoint(bot_id, target, headers)
 
         logger.info(f"Registered bot {bot_id} with {method} notification")
 
@@ -448,9 +583,7 @@ class BotNotifier:
         if method == "file":
             return await self._file_notifier.notify(notification)
         elif method == "api":
-            # TODO: Implement API notifier when needed
-            logger.warning(f"API notification not implemented for {bot_id}")
-            return False
+            return await self._api_notifier.notify(notification)
         else:
             logger.warning(f"Unknown notification method {method} for {bot_id}")
             return False
@@ -483,12 +616,14 @@ class BotNotifier:
         Returns:
             Number of successful retries
         """
-        return await self._file_notifier.retry_pending()
+        file_retries = await self._file_notifier.retry_pending()
+        api_retries = await self._api_notifier.retry_pending()
+        return file_retries + api_retries
 
     @property
     def pending_count(self) -> int:
         """Get total pending notification count."""
-        return self._file_notifier.pending_count
+        return self._file_notifier.pending_count + self._api_notifier.pending_count
 
     def get_status(self) -> Dict[str, Any]:
         """
@@ -500,5 +635,8 @@ class BotNotifier:
         return {
             "registered_bots": len(self._bot_methods),
             "pending_notifications": self.pending_count,
+            "pending_file": self._file_notifier.pending_count,
+            "pending_api": self._api_notifier.pending_count,
             "bot_methods": dict(self._bot_methods),
+            "bot_targets": dict(self._bot_targets),
         }
