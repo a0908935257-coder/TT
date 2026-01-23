@@ -111,6 +111,18 @@ from .versioning import (
     is_yaml_available,
 )
 
+# Git Integration
+from .git_integration import (
+    GitVersionManager,
+    GitClient,
+    GitCommit,
+    GitTag,
+    GitBranch,
+    GitStatus,
+    GitError,
+    create_git_version_manager,
+)
+
 # Experiment Tracking
 from .experiment import (
     ExperimentTracker,
@@ -207,6 +219,15 @@ __all__ = [
     "StrategySnapshot",
     "SerializationFormat",
     "is_yaml_available",
+    # Git Integration
+    "GitVersionManager",
+    "GitClient",
+    "GitCommit",
+    "GitTag",
+    "GitBranch",
+    "GitStatus",
+    "GitError",
+    "create_git_version_manager",
     # Experiment Tracking
     "ExperimentTracker",
     "Experiment",
