@@ -18,6 +18,12 @@ Enhanced Components (v2.0):
 - Fee Calculators: Fixed, Maker/Taker, Tiered
 - Order Book: Limit orders, Stop orders, Partial fills
 - Market Microstructure: Spread simulation, Gap handling
+
+Strategy Layer Components (v2.1):
+- Parameter Optimization: Grid, Random, Bayesian (Optuna) search
+- Walk-Forward Optimization: Overfitting detection
+- Strategy Versioning: Serialization, metadata, snapshots
+- Experiment Tracking: Result persistence, comparison reports
 """
 
 # Config
@@ -78,6 +84,41 @@ from .microstructure import (
     create_microstructure_from_config,
 )
 
+# Optimizer
+from .optimizer import (
+    Optimizer,
+    GridSearchOptimizer,
+    RandomSearchOptimizer,
+    BayesianOptimizer,
+    WalkForwardOptimizer,
+    ParameterSpace,
+    OptimizationTrial,
+    OptimizationResult,
+    OptimizationMethod,
+    OptimizationDirection,
+    create_optimizer,
+    is_optuna_available,
+)
+
+# Versioning
+from .versioning import (
+    StrategySerializer,
+    VersionManager,
+    StrategyMetadata,
+    StrategySnapshot,
+    SerializationFormat,
+    is_yaml_available,
+)
+
+# Experiment Tracking
+from .experiment import (
+    ExperimentTracker,
+    Experiment,
+    ExperimentConfig,
+    ExperimentResult,
+    ExperimentStatus,
+)
+
 # Metrics
 from .metrics import MetricsCalculator
 
@@ -133,6 +174,32 @@ __all__ = [
     "SpreadContext",
     "PriceSequence",
     "create_microstructure_from_config",
+    # Optimizer
+    "Optimizer",
+    "GridSearchOptimizer",
+    "RandomSearchOptimizer",
+    "BayesianOptimizer",
+    "WalkForwardOptimizer",
+    "ParameterSpace",
+    "OptimizationTrial",
+    "OptimizationResult",
+    "OptimizationMethod",
+    "OptimizationDirection",
+    "create_optimizer",
+    "is_optuna_available",
+    # Versioning
+    "StrategySerializer",
+    "VersionManager",
+    "StrategyMetadata",
+    "StrategySnapshot",
+    "SerializationFormat",
+    "is_yaml_available",
+    # Experiment Tracking
+    "ExperimentTracker",
+    "Experiment",
+    "ExperimentConfig",
+    "ExperimentResult",
+    "ExperimentStatus",
     # Metrics
     "MetricsCalculator",
     # Strategy
