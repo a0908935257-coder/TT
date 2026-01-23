@@ -12,19 +12,87 @@ Core Components:
 - PositionManager: Position and trade tracking
 - OrderSimulator: Order matching simulation
 - MetricsCalculator: Performance metrics calculation
+
+Enhanced Components (v2.0):
+- Slippage Models: Fixed, Volatility-based, Market Impact
+- Fee Calculators: Fixed, Maker/Taker, Tiered
+- Order Book: Limit orders, Stop orders, Partial fills
+- Market Microstructure: Spread simulation, Gap handling
 """
 
-from .config import BacktestConfig
+# Config
+from .config import (
+    BacktestConfig,
+    SlippageModelType,
+    FeeModelType,
+    IntraBarSequence,
+)
+
+# Results
 from .result import BacktestResult, Trade, WalkForwardResult, WalkForwardPeriod
+
+# Position
 from .position import PositionManager, Position
-from .order import OrderSimulator, Signal, SignalType
+
+# Order (core)
+from .order import (
+    OrderSimulator,
+    Signal,
+    SignalType,
+    # New order types
+    OrderType,
+    OrderSide,
+    OrderTimeInForce,
+    OrderStatus,
+    PendingOrder,
+    Fill,
+    OrderBook,
+)
+
+# Slippage Models
+from .slippage import (
+    SlippageModel,
+    SlippageContext,
+    FixedSlippage,
+    VolatilityBasedSlippage,
+    MarketImpactSlippage,
+    create_slippage_model,
+)
+
+# Fee Calculators
+from .fees import (
+    FeeCalculator,
+    FeeContext,
+    FeeTier,
+    FixedFeeCalculator,
+    MakerTakerFeeCalculator,
+    TieredFeeCalculator,
+    create_fee_calculator,
+)
+
+# Market Microstructure
+from .microstructure import (
+    MarketMicrostructure,
+    SpreadContext,
+    PriceSequence,
+    create_microstructure_from_config,
+)
+
+# Metrics
 from .metrics import MetricsCalculator
+
+# Strategy
 from .strategy.base import BacktestStrategy, BacktestContext
+
+# Engine
 from .engine import BacktestEngine
 
 __all__ = [
     # Config
     "BacktestConfig",
+    "SlippageModelType",
+    "FeeModelType",
+    "IntraBarSequence",
     # Results
     "BacktestResult",
     "Trade",
@@ -33,10 +101,38 @@ __all__ = [
     # Position
     "PositionManager",
     "Position",
-    # Order
+    # Order (core)
     "OrderSimulator",
     "Signal",
     "SignalType",
+    # Order (advanced)
+    "OrderType",
+    "OrderSide",
+    "OrderTimeInForce",
+    "OrderStatus",
+    "PendingOrder",
+    "Fill",
+    "OrderBook",
+    # Slippage Models
+    "SlippageModel",
+    "SlippageContext",
+    "FixedSlippage",
+    "VolatilityBasedSlippage",
+    "MarketImpactSlippage",
+    "create_slippage_model",
+    # Fee Calculators
+    "FeeCalculator",
+    "FeeContext",
+    "FeeTier",
+    "FixedFeeCalculator",
+    "MakerTakerFeeCalculator",
+    "TieredFeeCalculator",
+    "create_fee_calculator",
+    # Market Microstructure
+    "MarketMicrostructure",
+    "SpreadContext",
+    "PriceSequence",
+    "create_microstructure_from_config",
     # Metrics
     "MetricsCalculator",
     # Strategy
