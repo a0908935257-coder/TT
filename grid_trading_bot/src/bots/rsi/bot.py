@@ -89,6 +89,14 @@ class RSIBot(BaseBot):
         self._win_count = 0
         self._loss_count = 0
 
+        # Risk control tracking (每日虧損 + 連續虧損)
+        self._daily_pnl = Decimal("0")
+        self._daily_start_time: datetime = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        self._consecutive_losses: int = 0
+        self._risk_paused: bool = False
+
         # State persistence
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
@@ -316,6 +324,18 @@ class RSIBot(BaseBot):
 
     async def _open_position(self, side: PositionSide, price: Decimal, rsi: Decimal):
         """Open a new position."""
+        # Check risk limits before opening
+        if self._check_risk_limits():
+            logger.warning(f"Trading paused due to risk limits - skipping {side.value} signal")
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title="RSI: Risk Limit",
+                    message=f"Signal skipped: {side.value}\n"
+                            f"Daily PnL: {self._daily_pnl:+.2f}\n"
+                            f"Consecutive losses: {self._consecutive_losses}",
+                )
+            return
+
         try:
             # Calculate position size
             balance = await self._get_available_balance()
@@ -448,6 +468,9 @@ class RSIBot(BaseBot):
                     self._win_count += 1
                 else:
                     self._loss_count += 1
+
+                # Update risk tracking
+                self._update_risk_tracking(net_pnl)
 
                 # Set cooldown after exit
                 self._signal_cooldown_bars = self._cooldown_period
@@ -614,6 +637,75 @@ class RSIBot(BaseBot):
         }
 
     # =========================================================================
+    # Risk Control (每日虧損限制 + 連續虧損保護)
+    # =========================================================================
+
+    def _reset_daily_stats_if_needed(self) -> None:
+        """Reset daily stats if it's a new day (UTC)."""
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if today_start > self._daily_start_time:
+            logger.info(f"New trading day - resetting daily stats")
+            self._daily_pnl = Decimal("0")
+            self._daily_start_time = today_start
+
+    def _check_risk_limits(self) -> bool:
+        """
+        Check if risk limits have been exceeded.
+
+        Returns:
+            True if trading should be blocked
+        """
+        # Reset daily stats if new day
+        self._reset_daily_stats_if_needed()
+
+        # Check if already paused
+        if self._risk_paused:
+            return True
+
+        # Get capital for percentage calculation
+        capital = self._config.max_capital or Decimal("1000")
+
+        # Check daily loss limit
+        daily_loss_pct = abs(self._daily_pnl) / capital if self._daily_pnl < 0 else Decimal("0")
+        if daily_loss_pct >= self._config.daily_loss_limit_pct:
+            logger.warning(
+                f"Daily loss limit reached: {daily_loss_pct:.1%} >= {self._config.daily_loss_limit_pct:.1%}"
+            )
+            self._risk_paused = True
+            return True
+
+        # Check consecutive losses
+        if self._consecutive_losses >= self._config.max_consecutive_losses:
+            logger.warning(
+                f"Max consecutive losses reached: {self._consecutive_losses} >= {self._config.max_consecutive_losses}"
+            )
+            self._risk_paused = True
+            return True
+
+        return False
+
+    def _update_risk_tracking(self, pnl: Decimal) -> None:
+        """
+        Update risk tracking after a trade.
+
+        Args:
+            pnl: Profit/loss from the trade
+        """
+        self._daily_pnl += pnl
+
+        if pnl < 0:
+            self._consecutive_losses += 1
+        else:
+            self._consecutive_losses = 0
+
+        logger.debug(
+            f"Risk tracking updated: daily_pnl={self._daily_pnl:.2f}, "
+            f"consecutive_losses={self._consecutive_losses}"
+        )
+
+    # =========================================================================
     # Abstract Methods (Required by BaseBot)
     # =========================================================================
 
@@ -651,6 +743,10 @@ class RSIBot(BaseBot):
             "total_pnl": float(self._total_pnl),
             "win_count": self._win_count,
             "loss_count": self._loss_count,
+            # Risk control status
+            "daily_pnl": float(self._daily_pnl),
+            "consecutive_losses": self._consecutive_losses,
+            "risk_paused": self._risk_paused,
         }
 
     async def _extra_health_checks(self) -> dict:
@@ -735,6 +831,11 @@ class RSIBot(BaseBot):
                 "prev_rsi": str(self._prev_rsi),
                 "signal_cooldown_bars": self._signal_cooldown_bars,
                 "saved_at": datetime.now(timezone.utc).isoformat(),
+                # Risk control state
+                "daily_pnl": str(self._daily_pnl),
+                "daily_start_time": self._daily_start_time.isoformat(),
+                "consecutive_losses": self._consecutive_losses,
+                "risk_paused": self._risk_paused,
             }
 
             if self._position:
@@ -834,6 +935,13 @@ class RSIBot(BaseBot):
             bot._loss_count = saved_state.get("loss_count", 0)
             bot._prev_rsi = Decimal(saved_state.get("prev_rsi", "50"))
             bot._signal_cooldown_bars = saved_state.get("signal_cooldown_bars", 0)
+
+            # Restore risk control state
+            bot._daily_pnl = Decimal(saved_state.get("daily_pnl", "0"))
+            if saved_state.get("daily_start_time"):
+                bot._daily_start_time = datetime.fromisoformat(saved_state["daily_start_time"])
+            bot._consecutive_losses = saved_state.get("consecutive_losses", 0)
+            bot._risk_paused = saved_state.get("risk_paused", False)
 
             # Restore position if exists
             position_data = saved_state.get("position")

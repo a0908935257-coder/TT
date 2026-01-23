@@ -113,6 +113,10 @@ class BollingerConfig:
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
 
+    # Risk control (風險控制)
+    daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
+    max_consecutive_losses: int = 5  # 最大連續虧損次數
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.bb_std, Decimal):
@@ -127,6 +131,8 @@ class BollingerConfig:
             self.max_position_pct = Decimal(str(self.max_position_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if not isinstance(self.daily_loss_limit_pct, Decimal):
+            self.daily_loss_limit_pct = Decimal(str(self.daily_loss_limit_pct))
 
         self._validate()
 

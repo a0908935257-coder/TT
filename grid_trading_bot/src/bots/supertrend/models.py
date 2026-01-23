@@ -93,6 +93,10 @@ class SupertrendConfig:
     use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # Walk-Forward validated: 3%
 
+    # Risk control (風險控制)
+    daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
+    max_consecutive_losses: int = 5  # 最大連續虧損次數
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.atr_multiplier, Decimal):
@@ -105,6 +109,8 @@ class SupertrendConfig:
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.max_position_pct, Decimal):
             self.max_position_pct = Decimal(str(self.max_position_pct))
+        if not isinstance(self.daily_loss_limit_pct, Decimal):
+            self.daily_loss_limit_pct = Decimal(str(self.daily_loss_limit_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
 

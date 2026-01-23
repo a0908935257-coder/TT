@@ -192,6 +192,14 @@ class BollingerBot(BaseBot):
         # Statistics
         self._bollinger_stats = BollingerBotStats()
 
+        # Risk control tracking (每日虧損 + 連續虧損)
+        self._daily_pnl = Decimal("0")
+        self._daily_start_time: datetime = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        self._consecutive_losses: int = 0
+        self._risk_paused: bool = False
+
         # State persistence
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
@@ -355,6 +363,11 @@ class BollingerBot(BaseBot):
             if st:
                 status["supertrend_value"] = str(st.supertrend)
 
+        # Risk control status
+        status["daily_pnl"] = float(self._daily_pnl)
+        status["consecutive_losses"] = self._consecutive_losses
+        status["risk_paused"] = self._risk_paused
+
         return status
 
     async def _extra_health_checks(self) -> Dict[str, bool]:
@@ -461,6 +474,18 @@ class BollingerBot(BaseBot):
 
     async def _enter_position(self, signal) -> None:
         """Enter a new position."""
+        # Check risk limits before entering
+        if self._check_risk_limits():
+            logger.warning(f"Trading paused due to risk limits - skipping {signal.signal_type.value} signal")
+            if self._notifier:
+                await self._notifier.send(
+                    title="⚠️ Bollinger: Risk Limit",
+                    message=f"Signal skipped: {signal.signal_type.value}\n"
+                            f"Daily PnL: {self._daily_pnl:+.2f}\n"
+                            f"Consecutive losses: {self._consecutive_losses}",
+                )
+            return
+
         try:
             # 1. Calculate position and create
             position = await self._position_manager.open_position(signal)
@@ -576,9 +601,81 @@ class BollingerBot(BaseBot):
         # Update bollinger-specific stats
         self._bollinger_stats.record_trade(record.pnl)
 
+        # Update risk tracking
+        self._update_risk_tracking(record.pnl)
+
     def get_bollinger_stats(self) -> Dict[str, Any]:
         """Get Bollinger-specific statistics."""
         return self._bollinger_stats.to_dict()
+
+    # =========================================================================
+    # Risk Control (每日虧損限制 + 連續虧損保護)
+    # =========================================================================
+
+    def _reset_daily_stats_if_needed(self) -> None:
+        """Reset daily stats if it's a new day (UTC)."""
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if today_start > self._daily_start_time:
+            logger.info(f"New trading day - resetting daily stats")
+            self._daily_pnl = Decimal("0")
+            self._daily_start_time = today_start
+
+    def _check_risk_limits(self) -> bool:
+        """
+        Check if risk limits have been exceeded.
+
+        Returns:
+            True if trading should be blocked
+        """
+        # Reset daily stats if new day
+        self._reset_daily_stats_if_needed()
+
+        # Check if already paused
+        if self._risk_paused:
+            return True
+
+        # Get capital for percentage calculation
+        capital = self._config.max_capital or Decimal("1000")
+
+        # Check daily loss limit
+        daily_loss_pct = abs(self._daily_pnl) / capital if self._daily_pnl < 0 else Decimal("0")
+        if daily_loss_pct >= self._config.daily_loss_limit_pct:
+            logger.warning(
+                f"Daily loss limit reached: {daily_loss_pct:.1%} >= {self._config.daily_loss_limit_pct:.1%}"
+            )
+            self._risk_paused = True
+            return True
+
+        # Check consecutive losses
+        if self._consecutive_losses >= self._config.max_consecutive_losses:
+            logger.warning(
+                f"Max consecutive losses reached: {self._consecutive_losses} >= {self._config.max_consecutive_losses}"
+            )
+            self._risk_paused = True
+            return True
+
+        return False
+
+    def _update_risk_tracking(self, pnl: Decimal) -> None:
+        """
+        Update risk tracking after a trade.
+
+        Args:
+            pnl: Profit/loss from the trade
+        """
+        self._daily_pnl += pnl
+
+        if pnl < 0:
+            self._consecutive_losses += 1
+        else:
+            self._consecutive_losses = 0
+
+        logger.debug(
+            f"Risk tracking updated: daily_pnl={self._daily_pnl:.2f}, "
+            f"consecutive_losses={self._consecutive_losses}"
+        )
 
     # =========================================================================
     # FundManager Integration
@@ -627,6 +724,11 @@ class BollingerBot(BaseBot):
                 "entry_order_bar": self._entry_order_bar,
                 "stats": self._bollinger_stats.to_dict(),
                 "saved_at": datetime.now(timezone.utc).isoformat(),
+                # Risk control state
+                "daily_pnl": str(self._daily_pnl),
+                "daily_start_time": self._daily_start_time.isoformat(),
+                "consecutive_losses": self._consecutive_losses,
+                "risk_paused": self._risk_paused,
             }
 
             position = self._position_manager.get_position()
@@ -729,6 +831,13 @@ class BollingerBot(BaseBot):
             bot._bollinger_stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._bollinger_stats.losing_trades = stats_data.get("losing_trades", 0)
             bot._bollinger_stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+
+            # Restore risk control state
+            bot._daily_pnl = Decimal(saved_state.get("daily_pnl", "0"))
+            if saved_state.get("daily_start_time"):
+                bot._daily_start_time = datetime.fromisoformat(saved_state["daily_start_time"])
+            bot._consecutive_losses = saved_state.get("consecutive_losses", 0)
+            bot._risk_paused = saved_state.get("risk_paused", False)
 
             logger.info(f"Restored BollingerBot: {bot_id}, PnL={bot._bollinger_stats.total_pnl}")
             return bot
