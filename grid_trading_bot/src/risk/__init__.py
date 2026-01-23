@@ -6,6 +6,7 @@ Provides global risk management for the grid trading bot system:
 - Drawdown calculation
 - Circuit breaker protection
 - Emergency stop functionality
+- Unified SLTP (Stop Loss / Take Profit) management
 """
 
 from src.risk.capital_monitor import CapitalMonitor
@@ -24,8 +25,25 @@ from src.risk.models import (
     RiskLevel,
 )
 from src.risk.risk_engine import RiskEngine
+from src.risk.sltp import (
+    ExchangeAdapter,
+    MockExchangeAdapter,
+    SLTPCalculator,
+    SLTPConfig,
+    SLTPExchangeAdapter,
+    SLTPManager,
+    SLTPState,
+    StopLossConfig,
+    StopLossType,
+    TakeProfitConfig,
+    TakeProfitLevel,
+    TakeProfitType,
+    TrailingStopConfig,
+    TrailingStopType,
+)
 
 __all__ = [
+    # Risk models
     "RiskLevel",
     "RiskAction",
     "RiskConfig",
@@ -35,6 +53,7 @@ __all__ = [
     "RiskAlert",
     "CircuitBreakerState",
     "GlobalRiskStatus",
+    # Risk components
     "CapitalMonitor",
     "DrawdownCalculator",
     "CircuitBreaker",
@@ -44,4 +63,22 @@ __all__ = [
     "EmergencyStop",
     "EmergencyStopStatus",
     "RiskEngine",
+    # SLTP types
+    "StopLossType",
+    "TakeProfitType",
+    "TrailingStopType",
+    # SLTP configs
+    "StopLossConfig",
+    "TakeProfitConfig",
+    "TakeProfitLevel",
+    "TrailingStopConfig",
+    "SLTPConfig",
+    # SLTP state
+    "SLTPState",
+    # SLTP components
+    "SLTPCalculator",
+    "SLTPManager",
+    "ExchangeAdapter",
+    "SLTPExchangeAdapter",
+    "MockExchangeAdapter",
 ]
