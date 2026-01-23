@@ -20,6 +20,12 @@ from .anomaly import (
     AnomalyType,
     AnomalyRecord,
 )
+from .stream_processor import (
+    StreamProcessor,
+    StreamConfig,
+    StreamAction,
+    ValidatedWebSocketWrapper,
+)
 
 __all__ = [
     # Validators
@@ -35,4 +41,9 @@ __all__ = [
     "AnomalyDetector",
     "AnomalyType",
     "AnomalyRecord",
+    # Stream Processing
+    "StreamProcessor",
+    "StreamConfig",
+    "StreamAction",
+    "ValidatedWebSocketWrapper",
 ]
