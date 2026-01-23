@@ -1,0 +1,162 @@
+# =============================================================================
+# Fund Manager Configuration
+# =============================================================================
+# Version: 1.0
+# Description: Configuration for centralized fund allocation and distribution
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# System Settings
+# -----------------------------------------------------------------------------
+system:
+  # Interval in seconds to check for balance changes
+  poll_interval: 60
+
+  # Minimum amount to trigger allocation (avoid small amounts)
+  min_allocation_unit: 10.0
+
+  # Reserved funds - minimum balance to keep in pool (not for allocation)
+  reserve_amount: 100.0
+
+  # Reserve ratio - percentage of total funds to keep in reserve (0.0 - 1.0)
+  reserve_ratio: 0.1
+
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_level: INFO
+
+  # Data storage path for SQLite database
+  data_path: data/fund_manager.db
+
+  # Notification output directory for file-based notifications
+  notification_path: data/fund_notifications/
+
+# -----------------------------------------------------------------------------
+# Exchange Settings
+# -----------------------------------------------------------------------------
+exchange:
+  # Exchange name: binance, okx, bybit, etc.
+  name: binance
+
+  # Path to API credentials file (never put keys directly here)
+  api_key_path: config/api_keys.json
+
+  # Currency to monitor for balance
+  base_currency: USDT
+
+  # Market type: spot, futures
+  market_type: futures
+
+# -----------------------------------------------------------------------------
+# Allocation Strategy
+# -----------------------------------------------------------------------------
+strategy:
+  # Strategy type: fixed_ratio, fixed_amount, dynamic_weight
+  type: fixed_ratio
+
+  # Auto dispatch when deposit detected
+  auto_dispatch: true
+
+  # Delay in seconds after detecting new funds before dispatching
+  # (to ensure funds are fully settled)
+  new_fund_delay: 30
+
+  # Rebalance frequency: daily, weekly, monthly, never
+  rebalance_frequency: weekly
+
+  # Day for weekly rebalance (0=Monday, 6=Sunday)
+  rebalance_day: 0
+
+  # Hour for rebalance (24-hour format)
+  rebalance_hour: 0
+
+# -----------------------------------------------------------------------------
+# Bot Allocations
+# -----------------------------------------------------------------------------
+# Each bot configuration:
+#   - bot_id: Unique identifier (required)
+#   - name: Display name
+#   - ratio: Allocation ratio for fixed_ratio strategy (0.0 - 1.0)
+#   - fixed_amount: Fixed amount for fixed_amount strategy
+#   - min_capital: Minimum capital to allocate
+#   - max_capital: Maximum capital to allocate
+#   - priority: Higher priority gets allocated first (for fixed_amount)
+#   - status: active, inactive, paused
+#   - notify_method: file, api, none
+#   - notify_target: File path or API endpoint
+# -----------------------------------------------------------------------------
+bots:
+  - bot_id: grid_btc_usdt
+    name: "Grid Trading - BTC/USDT"
+    ratio: 0.30
+    min_capital: 100
+    max_capital: 10000
+    priority: 10
+    status: active
+    notify_method: file
+    notify_target: data/fund_notifications/grid_btc_usdt.json
+
+  - bot_id: grid_eth_usdt
+    name: "Grid Trading - ETH/USDT"
+    ratio: 0.25
+    min_capital: 100
+    max_capital: 8000
+    priority: 9
+    status: active
+    notify_method: file
+    notify_target: data/fund_notifications/grid_eth_usdt.json
+
+  - bot_id: bollinger_btc
+    name: "Bollinger Strategy - BTC"
+    ratio: 0.20
+    min_capital: 50
+    max_capital: 5000
+    priority: 8
+    status: active
+    notify_method: file
+    notify_target: data/fund_notifications/bollinger_btc.json
+
+  - bot_id: rsi_multi
+    name: "RSI Multi-Symbol Strategy"
+    ratio: 0.15
+    min_capital: 50
+    max_capital: 3000
+    priority: 7
+    status: active
+    notify_method: file
+    notify_target: data/fund_notifications/rsi_multi.json
+
+# Remaining 10% (0.10) stays as unallocated reserve
+
+# -----------------------------------------------------------------------------
+# Notification Settings
+# -----------------------------------------------------------------------------
+notifications:
+  # Enable/disable notifications
+  enabled: true
+
+  # Retry settings for failed notifications
+  retry_count: 3
+  retry_interval: 60  # seconds
+
+  # Notify on these events
+  events:
+    - deposit_detected
+    - allocation_complete
+    - allocation_failed
+    - rebalance_complete
+
+# -----------------------------------------------------------------------------
+# Safety Limits
+# -----------------------------------------------------------------------------
+limits:
+  # Maximum single allocation amount
+  max_single_allocation: 5000
+
+  # Maximum daily allocation total
+  max_daily_allocation: 20000
+
+  # Alert threshold - notify if balance drops by this percentage
+  balance_drop_alert_threshold: 0.20
+
+  # Require confirmation for allocations above this amount
+  confirm_threshold: 1000

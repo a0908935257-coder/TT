@@ -19,6 +19,7 @@ from .core.fund_pool import FundPool
 from .manager import FundManager
 from .models.config import AllocationStrategy, BotAllocation, FundManagerConfig
 from .models.records import AllocationRecord, BalanceSnapshot, DispatchResult
+from .notifier.bot_notifier import BotNotifier, FileNotifier, NotificationMessage
 from .storage.repository import AllocationRepository
 
 __all__ = [
@@ -43,6 +44,10 @@ __all__ = [
     "AllocationRecord",
     "BalanceSnapshot",
     "DispatchResult",
+    # Notifier
+    "BotNotifier",
+    "FileNotifier",
+    "NotificationMessage",
     # Storage
     "AllocationRepository",
 ]
