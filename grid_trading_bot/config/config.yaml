@@ -78,8 +78,9 @@ fund_manager:
   strategy: fixed_ratio                # Allocation strategy: fixed_ratio, fixed_amount, dynamic_weight
 
   # Bot allocation configurations (總計 90%, 保留 10%)
+  # 根據 OOS 績效調整: Bollinger (+44.6%) > Grid > RSI > Supertrend (-2.8%)
   allocations:
-    # Grid Futures - 網格合約策略 (最高優先)
+    # Grid Futures - 網格合約策略
     - bot_pattern: "grid_futures_*"
       ratio: 0.30                      # 30%
       min_capital: 100
@@ -87,20 +88,12 @@ fund_manager:
       priority: 4
       enabled: true
 
-    # Supertrend - 超級趨勢策略 (含 RSI 過濾器)
-    - bot_pattern: "supertrend_*"
-      ratio: 0.25                      # 25%
-      min_capital: 100
+    # Bollinger - 布林通道策略 (OOS +44.6%, 最佳績效)
+    - bot_pattern: "bollinger_*"
+      ratio: 0.30                      # 30% ↑ (原 20%)
+      min_capital: 50
       max_capital: 8000
       priority: 3
-      enabled: true
-
-    # Bollinger - 布林通道策略
-    - bot_pattern: "bollinger_*"
-      ratio: 0.20                      # 20%
-      min_capital: 50
-      max_capital: 5000
-      priority: 2
       enabled: true
 
     # RSI - RSI 均值回歸策略
@@ -108,5 +101,13 @@ fund_manager:
       ratio: 0.15                      # 15%
       min_capital: 50
       max_capital: 3000
+      priority: 2
+      enabled: true
+
+    # Supertrend - 超級趨勢策略 (OOS -2.8%, 績效較差)
+    - bot_pattern: "supertrend_*"
+      ratio: 0.15                      # 15% ↓ (原 25%)
+      min_capital: 100
+      max_capital: 5000
       priority: 1
       enabled: true

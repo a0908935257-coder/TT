@@ -88,7 +88,9 @@ strategy:
 #   - notify_target: File path or API endpoint
 # -----------------------------------------------------------------------------
 bots:
-  # Grid Futures Bot (合約網格) - 最高優先
+  # 根據 OOS 績效排序: Bollinger (+44.6%) > Grid > RSI > Supertrend (-2.8%)
+
+  # Grid Futures Bot (合約網格)
   - bot_id: grid_futures_*
     name: "Grid Futures Trading"
     ratio: 0.30                        # 30%
@@ -99,24 +101,13 @@ bots:
     notify_method: file
     notify_target: data/fund_notifications/grid_futures.json
 
-  # Supertrend Bot (超級趨勢策略 + RSI 過濾器)
-  - bot_id: supertrend_*
-    name: "Supertrend Strategy"
-    ratio: 0.25                        # 25%
-    min_capital: 100
-    max_capital: 8000
-    priority: 9
-    status: active
-    notify_method: file
-    notify_target: data/fund_notifications/supertrend.json
-
-  # Bollinger Bot (布林通道策略)
+  # Bollinger Bot (布林通道策略) - OOS 最佳績效 +44.6%
   - bot_id: bollinger_*
     name: "Bollinger Strategy"
-    ratio: 0.20                        # 20%
+    ratio: 0.30                        # 30% ↑ (原 20%)
     min_capital: 50
-    max_capital: 5000
-    priority: 8
+    max_capital: 8000
+    priority: 9
     status: active
     notify_method: file
     notify_target: data/fund_notifications/bollinger.json
@@ -127,10 +118,21 @@ bots:
     ratio: 0.15                        # 15%
     min_capital: 50
     max_capital: 3000
-    priority: 7
+    priority: 8
     status: active
     notify_method: file
     notify_target: data/fund_notifications/rsi.json
+
+  # Supertrend Bot (超級趨勢策略) - OOS 績效較差 -2.8%
+  - bot_id: supertrend_*
+    name: "Supertrend Strategy"
+    ratio: 0.15                        # 15% ↓ (原 25%)
+    min_capital: 100
+    max_capital: 5000
+    priority: 7
+    status: active
+    notify_method: file
+    notify_target: data/fund_notifications/supertrend.json
 
 # Total: 90% allocated, 10% reserve (unallocated)
 
