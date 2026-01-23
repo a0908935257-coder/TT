@@ -941,6 +941,126 @@ class NotificationManager:
         await self._send_embed(embed, NotificationLevel.SUCCESS)
 
     # =========================================================================
+    # Fund Manager Notifications
+    # =========================================================================
+
+    async def notify_deposit_detected(
+        self,
+        amount: Decimal | float | str,
+        total_balance: Decimal | float | str,
+    ) -> bool:
+        """
+        Send deposit detected notification.
+
+        Args:
+            amount: Deposit amount
+            total_balance: New total balance
+
+        Returns:
+            True if sent
+        """
+        embed = {
+            "title": "💰 入金偵測",
+            "description": f"偵測到新的入金",
+            "color": 0x2ECC71,  # Green
+            "fields": [
+                {"name": "入金金額", "value": f"{amount} USDT", "inline": True},
+                {"name": "總餘額", "value": f"{total_balance} USDT", "inline": True},
+            ],
+        }
+        return await self._send_embed(embed, NotificationLevel.SUCCESS)
+
+    async def notify_fund_allocated(
+        self,
+        bot_id: str,
+        amount: Decimal | float | str,
+        total_allocated: Decimal | float | str,
+    ) -> bool:
+        """
+        Send fund allocated notification.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount allocated
+            total_allocated: Total allocation for this bot
+
+        Returns:
+            True if sent
+        """
+        embed = {
+            "title": "📊 資金分配",
+            "description": f"已分配資金到機器人",
+            "color": 0x3498DB,  # Blue
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "分配金額", "value": f"{amount} USDT", "inline": True},
+                {"name": "總配額", "value": f"{total_allocated} USDT", "inline": True},
+            ],
+        }
+        dedup_key = self._hash_content("fund_allocated", bot_id, amount)
+        return await self._send_embed(embed, NotificationLevel.INFO, dedup_key)
+
+    async def notify_fund_dispatch_complete(
+        self,
+        total_dispatched: Decimal | float | str,
+        bot_count: int,
+        trigger: str = "manual",
+    ) -> bool:
+        """
+        Send fund dispatch complete notification.
+
+        Args:
+            total_dispatched: Total amount dispatched
+            bot_count: Number of bots that received funds
+            trigger: What triggered the dispatch
+
+        Returns:
+            True if sent
+        """
+        trigger_text = {
+            "manual": "手動觸發",
+            "deposit": "入金偵測",
+            "rebalance": "重新平衡",
+        }.get(trigger, trigger)
+
+        embed = {
+            "title": "✅ 資金調度完成",
+            "description": f"資金已成功分配到 {bot_count} 個機器人",
+            "color": 0x2ECC71,  # Green
+            "fields": [
+                {"name": "總分配金額", "value": f"{total_dispatched} USDT", "inline": True},
+                {"name": "機器人數量", "value": str(bot_count), "inline": True},
+                {"name": "觸發來源", "value": trigger_text, "inline": True},
+            ],
+        }
+        return await self._send_embed(embed, NotificationLevel.SUCCESS)
+
+    async def notify_fund_dispatch_failed(
+        self,
+        error_message: str,
+        failed_bots: int = 0,
+    ) -> bool:
+        """
+        Send fund dispatch failed notification.
+
+        Args:
+            error_message: Error description
+            failed_bots: Number of failed allocations
+
+        Returns:
+            True if sent
+        """
+        embed = {
+            "title": "❌ 資金調度失敗",
+            "description": error_message,
+            "color": 0xE74C3C,  # Red
+            "fields": [
+                {"name": "失敗數量", "value": str(failed_bots), "inline": True},
+            ],
+        }
+        return await self._send_embed(embed, NotificationLevel.ERROR)
+
+    # =========================================================================
     # Lifecycle
     # =========================================================================
 
