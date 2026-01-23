@@ -33,6 +33,7 @@ class OptimizationMethod(str, Enum):
     GRID = "grid"
     RANDOM = "random"
     BAYESIAN = "bayesian"  # Requires Optuna
+    GENETIC = "genetic"  # Genetic Algorithm
 
 
 class OptimizationDirection(str, Enum):
@@ -688,6 +689,7 @@ class WalkForwardOptimizer:
 def create_optimizer(
     method: OptimizationMethod = OptimizationMethod.RANDOM,
     seed: Optional[int] = None,
+    ga_config: Optional[Any] = None,
 ) -> Optimizer:
     """
     Factory function to create an optimizer.
@@ -695,6 +697,7 @@ def create_optimizer(
     Args:
         method: Optimization method to use
         seed: Random seed for reproducibility
+        ga_config: GAConfig for genetic algorithm (optional)
 
     Returns:
         Optimizer instance
@@ -705,6 +708,12 @@ def create_optimizer(
         return RandomSearchOptimizer(seed=seed)
     elif method == OptimizationMethod.BAYESIAN:
         return BayesianOptimizer(seed=seed)
+    elif method == OptimizationMethod.GENETIC:
+        from .genetic_optimizer import GeneticAlgorithmOptimizer, GAConfig
+
+        if ga_config is None:
+            ga_config = GAConfig(seed=seed)
+        return GeneticAlgorithmOptimizer(config=ga_config)
     else:
         raise ValueError(f"Unknown optimization method: {method}")
 
