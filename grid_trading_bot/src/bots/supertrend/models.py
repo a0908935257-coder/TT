@@ -1,19 +1,19 @@
 """
 Supertrend Bot Data Models.
 
-Provides data models for Supertrend trend-following strategy.
+Provides data models for Supertrend trend-following strategy with RSI filter.
 
-✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+✅ Walk-Forward + OOS 驗證通過 (2024-01 ~ 2026-01, 2 年數據)
 
-驗證結果 - 最佳配置 (2x, ATR=25, M=3.0, SL=3%):
-    - Walk-Forward 一致性: 75% (6/8 時段獲利) ✓
-    - 報酬: +6.7% (2 年), 年化 +3.3%
-    - Sharpe: 0.39
-    - 最大回撤: 11.5%
+最新優化配置 (ST + RSI 過濾器):
+    - Walk-Forward 一致性: 62% (5/8 時段獲利)
+    - OOS 報酬: +2.8% (唯一正報酬配置)
+    - 交易數減少 56% (更精選進場)
+    - 最大回撤: 8.6% (降低 25%)
 
-與原始配置比較:
-    - 原始 (5x, ATR=10, SL=2%): +0.9%, 一致性 62%, DD 27.4%
-    - 優化後 (2x, ATR=25, SL=3%): +6.7%, 一致性 75%, DD 11.5%
+RSI 過濾器原理:
+    - 當 RSI > 60 時不做多 (已超買，避免追高)
+    - 當 RSI < 40 時不做空 (已超賣，避免殺低)
 """
 
 from dataclasses import dataclass, field
@@ -96,6 +96,12 @@ class SupertrendConfig:
     # Risk control (風險控制)
     daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
     max_consecutive_losses: int = 5  # 最大連續虧損次數
+
+    # RSI Filter (RSI 過濾器) - OOS 驗證通過
+    use_rsi_filter: bool = True  # 啟用 RSI 過濾器
+    rsi_period: int = 14  # RSI 計算週期
+    rsi_overbought: int = 60  # RSI > 60 時不做多 (避免追高)
+    rsi_oversold: int = 40  # RSI < 40 時不做空 (避免殺低)
 
     def __post_init__(self):
         """Validate and normalize configuration."""

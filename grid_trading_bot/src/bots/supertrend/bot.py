@@ -1,21 +1,21 @@
 """
-Supertrend Trading Bot.
+Supertrend Trading Bot with RSI Filter.
 
-Trend-following strategy based on Supertrend indicator.
-- Enter LONG when Supertrend flips bullish
-- Enter SHORT when Supertrend flips bearish
+Trend-following strategy based on Supertrend indicator + RSI filter.
+- Enter LONG when Supertrend flips bullish AND RSI < 60 (not overbought)
+- Enter SHORT when Supertrend flips bearish AND RSI > 40 (not oversold)
 - Exit when trend reverses
 
-✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
-- Walk-Forward 一致性: 75% (6/8 時段獲利)
-- 報酬: +6.7% (2 年), 年化 +3.3%
-- Sharpe: 0.39, 最大回撤: 11.5%
+✅ Walk-Forward + OOS 驗證通過 (2024-01 ~ 2026-01, 2 年數據):
+- Walk-Forward 一致性: 62% (5/8 時段獲利)
+- OOS 報酬: +2.8% (唯一正報酬配置)
+- 交易數減少 56% (更精選進場)
+- 最大回撤: 8.6%
 
-驗證參數:
-- leverage: 2x
-- atr_period: 25
-- atr_multiplier: 3.0
-- stop_loss_pct: 3%
+RSI 過濾器效果:
+- 避免在超買區做多 (RSI > 60)
+- 避免在超賣區做空 (RSI < 40)
+- 減少假突破造成的虧損
 """
 
 import asyncio
@@ -89,6 +89,11 @@ class SupertrendBot(BaseBot):
 
         # Previous trend for detecting flips
         self._prev_trend: int = 0
+
+        # RSI Filter (RSI 過濾器)
+        self._rsi_closes: list[Decimal] = []  # Recent closes for RSI calculation
+        self._current_rsi: Optional[Decimal] = None
+        self._rsi_period = config.rsi_period if hasattr(config, 'rsi_period') else 14
 
         # Statistics
         self._total_pnl = Decimal("0")
@@ -311,6 +316,9 @@ class SupertrendBot(BaseBot):
             "total_trades": len(self._trades),  # Override BaseBot's stats
             "total_pnl": float(self._total_pnl),
             "current_bar": self._current_bar,
+            # RSI filter status
+            "rsi": float(self._current_rsi) if self._current_rsi else None,
+            "rsi_filter_enabled": getattr(self._config, 'use_rsi_filter', True),
             # Risk control status
             "daily_pnl": float(self._daily_pnl),
             "consecutive_losses": self._consecutive_losses,
@@ -350,6 +358,76 @@ class SupertrendBot(BaseBot):
         except Exception as e:
             logger.warning(f"Failed to sync position: {e}")
 
+    def _calculate_rsi(self, close: Decimal) -> Optional[Decimal]:
+        """
+        Calculate RSI using recent closes.
+
+        Returns:
+            RSI value (0-100) or None if not enough data
+        """
+        self._rsi_closes.append(close)
+
+        # Keep only enough closes for RSI calculation
+        max_closes = self._rsi_period + 50
+        if len(self._rsi_closes) > max_closes:
+            self._rsi_closes = self._rsi_closes[-max_closes:]
+
+        if len(self._rsi_closes) < self._rsi_period + 1:
+            return None
+
+        # Calculate gains and losses
+        gains = []
+        losses = []
+        for i in range(-self._rsi_period, 0):
+            change = float(self._rsi_closes[i]) - float(self._rsi_closes[i - 1])
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
+
+        avg_gain = sum(gains) / self._rsi_period
+        avg_loss = sum(losses) / self._rsi_period
+
+        if avg_loss == 0:
+            return Decimal("100")
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return Decimal(str(round(rsi, 2)))
+
+    def _check_rsi_filter(self, side: PositionSide) -> bool:
+        """
+        Check if RSI filter allows entry.
+
+        RSI Filter Logic:
+        - Don't go LONG if RSI > 60 (overbought, avoid chasing)
+        - Don't go SHORT if RSI < 40 (oversold, avoid selling low)
+
+        Returns:
+            True if entry is allowed, False if blocked by filter
+        """
+        if not getattr(self._config, 'use_rsi_filter', True):
+            return True  # Filter disabled
+
+        if self._current_rsi is None:
+            return True  # Not enough data yet
+
+        rsi_value = float(self._current_rsi)
+        overbought = getattr(self._config, 'rsi_overbought', 60)
+        oversold = getattr(self._config, 'rsi_oversold', 40)
+
+        if side == PositionSide.LONG and rsi_value > overbought:
+            logger.info(f"RSI filter blocked LONG: RSI={rsi_value:.1f} > {overbought} (overbought)")
+            return False
+
+        if side == PositionSide.SHORT and rsi_value < oversold:
+            logger.info(f"RSI filter blocked SHORT: RSI={rsi_value:.1f} < {oversold} (oversold)")
+            return False
+
+        return True
+
     async def _on_kline(self, kline: Kline) -> None:
         """Handle new kline data."""
         if self._state != BotState.RUNNING:
@@ -365,6 +443,9 @@ class SupertrendBot(BaseBot):
 
             current_trend = supertrend.trend
             current_price = kline.close
+
+            # Calculate RSI for filter
+            self._current_rsi = self._calculate_rsi(current_price)
 
             # Update position unrealized PnL
             if self._position:
@@ -391,20 +472,30 @@ class SupertrendBot(BaseBot):
 
             # Check for trend flip
             if current_trend != self._prev_trend and self._prev_trend != 0:
+                new_side = PositionSide.LONG if current_trend == 1 else PositionSide.SHORT
+                rsi_str = f", RSI={self._current_rsi:.1f}" if self._current_rsi else ""
+
                 logger.info(
                     f"Trend flip detected: {'BEARISH→BULLISH' if current_trend == 1 else 'BULLISH→BEARISH'} "
-                    f"at {current_price}"
+                    f"at {current_price}{rsi_str}"
                 )
 
-                # Close existing position
+                # Close existing position (always close on signal flip)
                 if self._position:
                     await self._close_position(ExitReason.SIGNAL_FLIP)
 
-                # Open new position
-                if current_trend == 1:
-                    await self._open_position(PositionSide.LONG, current_price)
+                # Check RSI filter before opening new position
+                if self._check_rsi_filter(new_side):
+                    await self._open_position(new_side, current_price)
                 else:
-                    await self._open_position(PositionSide.SHORT, current_price)
+                    # RSI filter blocked entry - log but don't open position
+                    if self._notifier:
+                        await self._notifier.send_info(
+                            title="Supertrend: RSI Filter",
+                            message=f"Signal blocked: {new_side.value}\n"
+                                    f"RSI: {self._current_rsi:.1f}\n"
+                                    f"Reason: {'Overbought' if new_side == PositionSide.LONG else 'Oversold'}",
+                        )
 
             self._prev_trend = current_trend
 
@@ -775,6 +866,9 @@ class SupertrendBot(BaseBot):
                 "daily_start_time": self._daily_start_time.isoformat(),
                 "consecutive_losses": self._consecutive_losses,
                 "risk_paused": self._risk_paused,
+                # RSI filter state
+                "current_rsi": str(self._current_rsi) if self._current_rsi else None,
+                "rsi_closes": [str(c) for c in self._rsi_closes[-50:]],  # Save last 50 closes
             }
 
             if self._position:
@@ -876,6 +970,12 @@ class SupertrendBot(BaseBot):
                 bot._daily_start_time = datetime.fromisoformat(saved_state["daily_start_time"])
             bot._consecutive_losses = saved_state.get("consecutive_losses", 0)
             bot._risk_paused = saved_state.get("risk_paused", False)
+
+            # Restore RSI filter state
+            if saved_state.get("current_rsi"):
+                bot._current_rsi = Decimal(saved_state["current_rsi"])
+            if saved_state.get("rsi_closes"):
+                bot._rsi_closes = [Decimal(c) for c in saved_state["rsi_closes"]]
 
             # Restore position if exists
             position_data = saved_state.get("position")

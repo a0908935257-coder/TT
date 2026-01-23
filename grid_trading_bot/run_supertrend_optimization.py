@@ -498,7 +498,7 @@ async def main():
     print("  階段 1: 參數網格搜索")
     print("=" * 70)
 
-    results = run_grid_search(klines, leverage=10)
+    results = run_grid_search(klines, leverage=2)  # 使用 2x 槓桿（Walk-Forward 驗證）
 
     # 過濾有效結果 (至少 50 筆交易，Sharpe > -5)
     valid_results = [r for r in results if r.trades >= 50 and r.sharpe > -5]
@@ -533,7 +533,7 @@ async def main():
 
     validated = []
     for i, config in enumerate(top_configs):
-        wf_result = walk_forward_validation(klines, config, n_splits=6, leverage=10)
+        wf_result = walk_forward_validation(klines, config, n_splits=6, leverage=2)
         validated.append(wf_result)
         print(f"\r  驗證配置 {i+1}/{len(top_configs)}...", end="")
     print()
@@ -563,7 +563,7 @@ async def main():
     print("=" * 70)
 
     best_config = validated[0]['config'] if validated else top_configs[0]
-    iso_result = in_sample_out_sample_test(klines, best_config, split_ratio=0.7, leverage=10)
+    iso_result = in_sample_out_sample_test(klines, best_config, split_ratio=0.7, leverage=2)
 
     print(f"""
   最佳配置 In-Sample/Out-of-Sample 測試:
@@ -620,7 +620,7 @@ async def main():
         print("\n  與當前配置比較:")
         print("-" * 50)
         current = {'atr_period': 10, 'atr_multiplier': 3.0, 'stop_loss_pct': 0.02, 'use_trailing_stop': False, 'trailing_stop_pct': 0.03}
-        current_wf = walk_forward_validation(klines, current, n_splits=6, leverage=10)
+        current_wf = walk_forward_validation(klines, current, n_splits=6, leverage=2)
 
         print(f"  │ 指標        │ 當前配置     │ 優化配置     │")
         print(f"  │─────────────│──────────────│──────────────│")
