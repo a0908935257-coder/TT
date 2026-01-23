@@ -70,10 +70,13 @@ strategy:
   rebalance_hour: 0
 
 # -----------------------------------------------------------------------------
-# Bot Allocations
+# Bot Allocations (Futures Only)
 # -----------------------------------------------------------------------------
+# Note: GridBot (spot) is excluded from fund management.
+#       Only futures bots are managed by FundManager.
+#
 # Each bot configuration:
-#   - bot_id: Unique identifier (required)
+#   - bot_id: Unique identifier (required), supports wildcards (e.g., grid_futures_*)
 #   - name: Display name
 #   - ratio: Allocation ratio for fixed_ratio strategy (0.0 - 1.0)
 #   - fixed_amount: Fixed amount for fixed_amount strategy
@@ -85,45 +88,49 @@ strategy:
 #   - notify_target: File path or API endpoint
 # -----------------------------------------------------------------------------
 bots:
-  - bot_id: grid_btc_usdt
-    name: "Grid Trading - BTC/USDT"
+  # Grid Futures Bot (合約網格)
+  - bot_id: grid_futures_*
+    name: "Grid Futures Trading"
     ratio: 0.30
     min_capital: 100
     max_capital: 10000
     priority: 10
     status: active
     notify_method: file
-    notify_target: data/fund_notifications/grid_btc_usdt.json
+    notify_target: data/fund_notifications/grid_futures.json
 
-  - bot_id: grid_eth_usdt
-    name: "Grid Trading - ETH/USDT"
+  # Supertrend Bot (超級趨勢策略)
+  - bot_id: supertrend_*
+    name: "Supertrend Strategy"
     ratio: 0.25
     min_capital: 100
     max_capital: 8000
     priority: 9
     status: active
     notify_method: file
-    notify_target: data/fund_notifications/grid_eth_usdt.json
+    notify_target: data/fund_notifications/supertrend.json
 
-  - bot_id: bollinger_btc
-    name: "Bollinger Strategy - BTC"
-    ratio: 0.20
+  # Bollinger Bot (布林通道策略)
+  - bot_id: bollinger_*
+    name: "Bollinger Strategy"
+    ratio: 0.25
     min_capital: 50
     max_capital: 5000
     priority: 8
     status: active
     notify_method: file
-    notify_target: data/fund_notifications/bollinger_btc.json
+    notify_target: data/fund_notifications/bollinger.json
 
-  - bot_id: rsi_multi
-    name: "RSI Multi-Symbol Strategy"
-    ratio: 0.15
+  # RSI Bot (RSI 策略)
+  - bot_id: rsi_*
+    name: "RSI Strategy"
+    ratio: 0.10
     min_capital: 50
     max_capital: 3000
     priority: 7
     status: active
     notify_method: file
-    notify_target: data/fund_notifications/rsi_multi.json
+    notify_target: data/fund_notifications/rsi.json
 
 # Remaining 10% (0.10) stays as unallocated reserve
 
