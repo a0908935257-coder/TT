@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Supertrend Bot 過度擬合驗證測試.
+
+包含 RSI 過濾器 (OOS 驗證通過):
+- RSI > 60 時不做多 (避免追高)
+- RSI < 40 時不做空 (避免殺低)
 """
 
 import asyncio
@@ -27,6 +31,33 @@ class BacktestResult:
     max_drawdown_pct: float
 
 
+def calculate_rsi(closes: List[float], period: int, index: int) -> float:
+    """計算 RSI 指標"""
+    if index < period:
+        return 50.0  # 預設中性值
+
+    gains = []
+    losses = []
+    for i in range(index - period + 1, index + 1):
+        change = closes[i] - closes[i - 1]
+        if change > 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(change))
+
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    if avg_loss == 0:
+        return 100.0
+
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
 def run_supertrend_backtest(klines: List[Kline], config: Dict[str, Any]) -> BacktestResult:
     """執行 Supertrend 回測"""
     leverage = config.get('leverage', 10)
@@ -36,6 +67,12 @@ def run_supertrend_backtest(klines: List[Kline], config: Dict[str, Any]) -> Back
     use_trailing_stop = config.get('use_trailing_stop', True)
     trailing_stop_pct = config.get('trailing_stop_pct', 0.03)
     fee_rate = 0.0004
+
+    # RSI Filter 參數 (OOS 驗證通過)
+    use_rsi_filter = config.get('use_rsi_filter', True)
+    rsi_period = config.get('rsi_period', 14)
+    rsi_overbought = config.get('rsi_overbought', 60)
+    rsi_oversold = config.get('rsi_oversold', 40)
 
     if len(klines) < atr_period + 50:
         return BacktestResult("insufficient_data", 0, 0, 0, 0, 0, 0)
@@ -133,12 +170,24 @@ def run_supertrend_backtest(klines: List[Kline], config: Dict[str, Any]) -> Back
                 equity.append(equity[-1] + net_pnl)
                 position = None
 
-        # Entry on trend change
+        # Entry on trend change (with RSI filter)
         if position is None and current_trend != prev_trend and prev_trend != 0:
-            if current_trend == 1:
-                position = {'side': 'long', 'entry': price, 'entry_bar': i, 'max_price': price, 'min_price': price}
-            elif current_trend == -1:
-                position = {'side': 'short', 'entry': price, 'entry_bar': i, 'max_price': price, 'min_price': price}
+            # Calculate RSI for entry filter
+            rsi_value = calculate_rsi(closes, rsi_period, i)
+
+            # Apply RSI filter
+            rsi_allows_entry = True
+            if use_rsi_filter:
+                if current_trend == 1 and rsi_value > rsi_overbought:
+                    rsi_allows_entry = False  # Don't go LONG when overbought
+                elif current_trend == -1 and rsi_value < rsi_oversold:
+                    rsi_allows_entry = False  # Don't go SHORT when oversold
+
+            if rsi_allows_entry:
+                if current_trend == 1:
+                    position = {'side': 'long', 'entry': price, 'entry_bar': i, 'max_price': price, 'min_price': price}
+                elif current_trend == -1:
+                    position = {'side': 'short', 'entry': price, 'entry_bar': i, 'max_price': price, 'min_price': price}
 
         prev_trend = current_trend
 
@@ -219,14 +268,14 @@ async def fetch_data(days: int = 730) -> List[Kline]:
 
 async def main():
     print("=" * 80)
-    print("  Supertrend Bot 過度擬合驗證測試")
+    print("  Supertrend Bot 過度擬合驗證測試 (含 RSI 過濾器)")
     print("=" * 80)
 
     print("\n正在獲取 BTCUSDT 15m 歷史數據 (2 年)...")
     klines = await fetch_data(days=730)
     print(f"  已獲取 {len(klines)} 根 K 線")
 
-    # ✅ Walk-Forward 驗證通過 (75% 一致性)
+    # ✅ Walk-Forward + OOS 驗證通過 (ST + RSI 過濾器)
     config = {
         'leverage': 2,  # Walk-Forward validated (降低風險)
         'position_size': 0.1,
@@ -235,6 +284,11 @@ async def main():
         'stop_loss_pct': 0.03,  # Walk-Forward validated (3%)
         'use_trailing_stop': False,
         'trailing_stop_pct': 0.03,
+        # RSI Filter (OOS 驗證通過)
+        'use_rsi_filter': True,
+        'rsi_period': 14,
+        'rsi_overbought': 60,  # RSI > 60 時不做多
+        'rsi_oversold': 40,  # RSI < 40 時不做空
     }
 
     # 測試 1: 樣本內 vs 樣本外
