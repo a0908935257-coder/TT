@@ -286,6 +286,33 @@ class GridFuturesBot(BaseBot):
         except Exception as e:
             logger.error(f"Failed to get balance: {e}")
 
+    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+        """
+        Handle capital update from FundManager.
+
+        When capital allocation changes:
+        1. Update internal capital tracking
+        2. Log the change for monitoring
+        3. Grid will adjust automatically on next rebuild cycle
+
+        Args:
+            new_max_capital: New maximum capital allocation
+        """
+        previous_capital = self._capital
+
+        # Update capital with new limit
+        await self._update_capital()
+
+        logger.info(
+            f"[FundManager] Capital updated for {self._bot_id}: "
+            f"max_capital={new_max_capital}, "
+            f"actual_capital: {previous_capital} -> {self._capital}"
+        )
+
+        # Note: Grid position sizing will automatically use new capital
+        # on next trade. No immediate grid rebuild needed as existing
+        # positions should continue with current sizing.
+
     # =========================================================================
     # Data Loading
     # =========================================================================

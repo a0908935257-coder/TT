@@ -76,6 +76,9 @@ class GridBotConfig:
     # State persistence
     save_interval_minutes: int = 5
 
+    # FundManager compatibility (alias for total_investment)
+    max_capital: Optional[Decimal] = None
+
     def __post_init__(self):
         """Ensure Decimal types."""
         if not isinstance(self.total_investment, Decimal):
@@ -84,6 +87,11 @@ class GridBotConfig:
             self.manual_upper = Decimal(str(self.manual_upper))
         if self.manual_lower and not isinstance(self.manual_lower, Decimal):
             self.manual_lower = Decimal(str(self.manual_lower))
+        if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
+            self.max_capital = Decimal(str(self.max_capital))
+        # Sync max_capital with total_investment if max_capital is set
+        if self.max_capital is not None:
+            self.total_investment = self.max_capital
 
     @property
     def has_manual_range(self) -> bool:
@@ -993,3 +1001,32 @@ class GridBot(BaseBot):
             )
         except Exception as e:
             logger.warning(f"Failed to send error notification: {e}")
+
+    # =========================================================================
+    # FundManager Integration
+    # =========================================================================
+
+    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+        """
+        Handle capital update from FundManager.
+
+        Updates total_investment which affects grid sizing.
+        Note: Existing grid will not be automatically rebuilt.
+        New capital takes effect on next grid rebuild.
+
+        Args:
+            new_max_capital: New maximum capital allocation
+        """
+        previous = self._config.total_investment
+
+        # Sync max_capital and total_investment
+        self._config.max_capital = new_max_capital
+        self._config.total_investment = new_max_capital
+
+        logger.info(
+            f"[FundManager] Capital updated for {self._bot_id}: "
+            f"{previous} -> {new_max_capital}"
+        )
+
+        # Note: Grid will use new capital on next rebuild.
+        # Consider notifying user if manual grid rebuild is recommended.

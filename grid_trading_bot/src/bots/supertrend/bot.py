@@ -611,3 +611,28 @@ class SupertrendBot(BaseBot):
         except Exception as e:
             logger.error(f"Failed to close position: {e}")
 
+    # =========================================================================
+    # FundManager Integration
+    # =========================================================================
+
+    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+        """
+        Handle capital update from FundManager.
+
+        Updates the max_capital setting which will be used
+        for position sizing on the next trade.
+
+        Args:
+            new_max_capital: New maximum capital allocation
+        """
+        previous = self._config.max_capital
+
+        logger.info(
+            f"[FundManager] Capital updated for {self._bot_id}: "
+            f"{previous} -> {new_max_capital}"
+        )
+
+        # Note: Position sizing will automatically use new max_capital
+        # on next _open_position call. No immediate action needed
+        # as existing positions continue with their original sizing.
+

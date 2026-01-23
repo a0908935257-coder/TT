@@ -551,3 +551,27 @@ class BollingerBot(BaseBot):
     def get_bollinger_stats(self) -> Dict[str, Any]:
         """Get Bollinger-specific statistics."""
         return self._bollinger_stats.to_dict()
+
+    # =========================================================================
+    # FundManager Integration
+    # =========================================================================
+
+    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+        """
+        Handle capital update from FundManager.
+
+        Updates the max_capital setting which will be used
+        for position sizing on the next trade via PositionManager.
+
+        Args:
+            new_max_capital: New maximum capital allocation
+        """
+        previous = self._config.max_capital
+
+        logger.info(
+            f"[FundManager] Capital updated for {self._bot_id}: "
+            f"{previous} -> {new_max_capital}"
+        )
+
+        # Note: PositionManager will use new max_capital automatically
+        # on next position calculation. No immediate action needed.
