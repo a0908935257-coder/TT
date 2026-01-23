@@ -107,10 +107,13 @@ class BacktestEngine:
             # 5. Update tracking prices
             self._update_position_tracking(kline)
 
-            # 6. Update equity curve
+            # 6. Update order simulator context for advanced models
+            self._order_simulator.update_context(kline)
+
+            # 7. Update equity curve
             self._update_equity(kline)
 
-            # 7. Strategy end-of-bar callback
+            # 8. Strategy end-of-bar callback
             context = self._create_context(bar_idx, klines)
             strategy.on_bar_close(kline, context)
 

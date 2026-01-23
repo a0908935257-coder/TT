@@ -8,11 +8,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..core.models import Kline
 from .config import BacktestConfig
+from .fees import FeeCalculator, FeeContext
 from .position import Position
+from .slippage import SlippageContext, SlippageModel
+
+if TYPE_CHECKING:
+    pass
 
 
 class SignalType(str, Enum):
@@ -89,7 +94,7 @@ class OrderSimulator:
     Simulates order matching using kline data.
 
     Uses kline high/low prices to simulate order fills,
-    applying configurable slippage and fees.
+    applying configurable slippage and fees via pluggable models.
     """
 
     def __init__(self, config: BacktestConfig) -> None:
@@ -100,19 +105,65 @@ class OrderSimulator:
             config: Backtest configuration
         """
         self._config = config
+        # Create models from config factory methods
+        self._slippage_model: SlippageModel = config.create_slippage_model()
+        self._fee_calculator: FeeCalculator = config.create_fee_calculator()
+        # Context for advanced slippage/fee calculation
+        self._recent_klines: list[Kline] = []
+        self._cumulative_volume: Decimal = Decimal("0")
 
     @property
     def fee_rate(self) -> Decimal:
-        """Get fee rate."""
-        return self._config.fee_rate
+        """Get base fee rate (for backward compatibility)."""
+        return self._fee_calculator.base_rate
 
     @property
     def slippage_pct(self) -> Decimal:
-        """Get slippage percentage."""
+        """Get slippage percentage (for backward compatibility)."""
         return self._config.slippage_pct
 
+    @property
+    def slippage_model(self) -> SlippageModel:
+        """Get the slippage model."""
+        return self._slippage_model
+
+    @property
+    def fee_calculator(self) -> FeeCalculator:
+        """Get the fee calculator."""
+        return self._fee_calculator
+
+    def update_context(
+        self,
+        kline: Kline,
+        max_klines: int = 20,
+    ) -> None:
+        """
+        Update context with recent kline data for advanced models.
+
+        Args:
+            kline: Current kline to add
+            max_klines: Maximum klines to keep for ATR calculation
+        """
+        self._recent_klines.append(kline)
+        if len(self._recent_klines) > max_klines:
+            self._recent_klines.pop(0)
+
+    def update_cumulative_volume(self, volume: Decimal) -> None:
+        """
+        Update cumulative trading volume for tiered fee calculation.
+
+        Args:
+            volume: Volume to add
+        """
+        self._cumulative_volume += volume
+
     def calculate_fill_price(
-        self, target_price: Decimal, is_buy: bool, kline: Kline
+        self,
+        target_price: Decimal,
+        is_buy: bool,
+        kline: Kline,
+        order_size: Optional[Decimal] = None,
+        avg_volume: Optional[Decimal] = None,
     ) -> Decimal:
         """
         Calculate the actual fill price with slippage.
@@ -121,25 +172,21 @@ class OrderSimulator:
             target_price: Target/signal price
             is_buy: Whether this is a buy order
             kline: Current kline for price bounds
+            order_size: Order size for market impact calculation
+            avg_volume: Average volume for market impact calculation
 
         Returns:
             Adjusted fill price
         """
-        # Apply slippage
-        if is_buy:
-            # Buy at slightly higher price
-            slippage_amount = target_price * self.slippage_pct
-            fill_price = target_price + slippage_amount
-            # Can't fill above kline high
-            fill_price = min(fill_price, kline.high)
-        else:
-            # Sell at slightly lower price
-            slippage_amount = target_price * self.slippage_pct
-            fill_price = target_price - slippage_amount
-            # Can't fill below kline low
-            fill_price = max(fill_price, kline.low)
+        # Build slippage context
+        context = SlippageContext(
+            order_size=order_size if order_size else Decimal("0"),
+            avg_volume=avg_volume,
+            recent_klines=self._recent_klines if self._recent_klines else None,
+        )
 
-        return fill_price
+        # Use slippage model to calculate fill price
+        return self._slippage_model.apply_slippage(target_price, is_buy, kline, context)
 
     def calculate_quantity(self, price: Decimal) -> Decimal:
         """
@@ -154,18 +201,28 @@ class OrderSimulator:
         notional = self._config.notional_per_trade
         return notional / price
 
-    def calculate_fee(self, price: Decimal, quantity: Decimal) -> Decimal:
+    def calculate_fee(
+        self,
+        price: Decimal,
+        quantity: Decimal,
+        is_maker: bool = False,
+    ) -> Decimal:
         """
         Calculate trading fee.
 
         Args:
             price: Fill price
             quantity: Order quantity
+            is_maker: Whether this is a maker order (limit order)
 
         Returns:
             Fee amount
         """
-        return price * quantity * self.fee_rate
+        context = FeeContext(
+            is_maker=is_maker,
+            cumulative_volume=self._cumulative_volume,
+        )
+        return self._fee_calculator.calculate_fee(price, quantity, context)
 
     def create_position(
         self,
