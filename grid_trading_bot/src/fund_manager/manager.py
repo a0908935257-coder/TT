@@ -13,6 +13,7 @@ from src.core import get_logger
 from src.core.models import MarketType
 
 from .core.allocator import BaseAllocator, create_allocator
+from .core.dispatcher import Dispatcher
 from .core.fund_pool import FundPool
 from .models.config import FundManagerConfig
 from .models.records import AllocationRecord, DispatchResult
@@ -124,6 +125,7 @@ class FundManager:
         # Core components
         self._fund_pool = FundPool(exchange, self._config, market_type)
         self._allocator: BaseAllocator = create_allocator(self._config)
+        self._dispatcher = Dispatcher(registry, notifier)
 
         # State
         self._running = False
@@ -167,6 +169,11 @@ class FundManager:
     def fund_pool(self) -> FundPool:
         """Get fund pool."""
         return self._fund_pool
+
+    @property
+    def dispatcher(self) -> Dispatcher:
+        """Get dispatcher."""
+        return self._dispatcher
 
     # =========================================================================
     # Lifecycle Methods
@@ -351,32 +358,43 @@ class FundManager:
             AllocationRecord with result
         """
         previous = self._fund_pool.get_allocation(bot_id)
+        new_total = previous + amount
 
         record = AllocationRecord(
             bot_id=bot_id,
             amount=amount,
             trigger=trigger,
             previous_allocation=previous,
-            new_allocation=previous + amount,
+            new_allocation=new_total,
         )
 
         try:
-            # Update fund pool allocation tracking
-            self._fund_pool.add_allocation(bot_id, amount)
+            # Notify bot via dispatcher (sends update_capital to bot)
+            dispatch_record = await self._dispatcher.notify_bot(
+                bot_id=bot_id,
+                amount=new_total,  # Send total allocation, not just increment
+                trigger=trigger,
+            )
+
+            if dispatch_record.success:
+                # Update fund pool allocation tracking
+                self._fund_pool.add_allocation(bot_id, amount)
+                record.success = True
+                logger.info(
+                    f"Allocated {amount} to {bot_id} "
+                    f"(previous: {previous}, new: {new_total})"
+                )
+            else:
+                record.success = False
+                record.error_message = dispatch_record.error_message
+                logger.warning(
+                    f"Bot {bot_id} rejected allocation: {record.error_message}"
+                )
 
             # Store record
             self._allocation_records.append(record)
             if len(self._allocation_records) > self._max_records:
                 self._allocation_records = self._allocation_records[-self._max_records:]
-
-            # Notify bot (will be implemented in Phase 2 with dispatcher)
-            # For now, just log it
-            logger.info(
-                f"Allocated {amount} to {bot_id} "
-                f"(previous: {previous}, new: {record.new_allocation})"
-            )
-
-            record.success = True
 
         except Exception as e:
             logger.error(f"Failed to allocate to {bot_id}: {e}")

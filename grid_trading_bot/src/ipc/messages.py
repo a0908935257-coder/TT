@@ -25,6 +25,7 @@ class CommandType(Enum):
     RESUME = "resume"
     STATUS = "status"
     SHUTDOWN = "shutdown"
+    FUND_UPDATE = "fund_update"  # Update bot capital allocation
 
 
 class EventType(Enum):

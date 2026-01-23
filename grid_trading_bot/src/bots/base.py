@@ -558,6 +558,67 @@ class BaseBot(ABC):
             return False
 
     # =========================================================================
+    # Capital Management
+    # =========================================================================
+
+    async def update_capital(self, new_max_capital: Decimal) -> bool:
+        """
+        Update maximum capital allocation for this bot.
+
+        Called by FundManager when capital allocation changes.
+        Subclasses can override to implement specific behavior.
+
+        Args:
+            new_max_capital: New maximum capital amount
+
+        Returns:
+            True if update was successful
+        """
+        try:
+            # Store previous value for logging
+            previous = getattr(self._config, "max_capital", None)
+
+            # Update config if it has max_capital attribute
+            if hasattr(self._config, "max_capital"):
+                self._config.max_capital = new_max_capital
+                logger.info(
+                    f"Bot {self._bot_id} capital updated: "
+                    f"{previous} -> {new_max_capital}"
+                )
+
+            # Notify subclass of capital change (they can override _on_capital_updated)
+            await self._on_capital_updated(new_max_capital)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to update capital for {self._bot_id}: {e}")
+            return False
+
+    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+        """
+        Hook for subclasses to handle capital updates.
+
+        Override this method to implement custom behavior when capital changes.
+        Default implementation does nothing.
+
+        Args:
+            new_max_capital: New maximum capital amount
+        """
+        pass
+
+    def get_max_capital(self) -> Optional[Decimal]:
+        """
+        Get current maximum capital allocation.
+
+        Returns:
+            Maximum capital or None if not configured
+        """
+        if hasattr(self._config, "max_capital"):
+            return self._config.max_capital
+        return None
+
+    # =========================================================================
     # Helper Methods
     # =========================================================================
 

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional, Protocol
 
 from src.core import get_logger
+from src.fund_manager import FundManager
+from src.fund_manager.models.config import FundManagerConfig
 from src.master.aggregator import MetricsAggregator
 from src.master.commander import BotCommander, CommandResult
 from src.master.dashboard import Dashboard, DashboardData
@@ -20,7 +22,7 @@ from src.master.models import BotInfo, BotState, BotType
 from src.master.registry import BotRegistry
 
 if TYPE_CHECKING:
-    pass
+    from src.fund_manager.models.records import DispatchResult
 
 logger = get_logger(__name__)
 
@@ -62,6 +64,7 @@ class MasterConfig:
         max_bots: Maximum number of bots allowed
         snapshot_interval: Dashboard snapshot interval in seconds
         restore_on_start: Whether to restore bots from database on start
+        fund_manager: Fund manager configuration
     """
 
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
@@ -69,6 +72,7 @@ class MasterConfig:
     max_bots: int = 100
     snapshot_interval: int = 3600
     restore_on_start: bool = True
+    fund_manager: Optional[FundManagerConfig] = None
 
 
 class Master:
@@ -145,6 +149,16 @@ class Master:
         self._aggregator = MetricsAggregator(self._registry)
         self._dashboard = Dashboard(self._registry, self._aggregator, self._health)
 
+        # Initialize fund manager if config provided
+        self._fund_manager: Optional[FundManager] = None
+        if self._config.fund_manager:
+            self._fund_manager = FundManager(
+                exchange=exchange,
+                registry=self._registry,
+                notifier=notifier,
+                config=self._config.fund_manager,
+            )
+
         # State
         self._running = False
         self._snapshot_task: Optional[asyncio.Task] = None
@@ -209,6 +223,11 @@ class Master:
         """Get master configuration."""
         return self._config
 
+    @property
+    def fund_manager(self) -> Optional[FundManager]:
+        """Get fund manager (if configured)."""
+        return self._fund_manager
+
     # =========================================================================
     # Lifecycle Methods
     # =========================================================================
@@ -247,6 +266,10 @@ class Master:
             if self._config.auto_restart:
                 self._heartbeat.on_timeout(self._handle_bot_timeout)
 
+            # Start fund manager if configured
+            if self._fund_manager:
+                await self._fund_manager.start()
+
             self._running = True
 
             # Send startup notification
@@ -271,6 +294,10 @@ class Master:
         logger.info("Stopping Master Control Console...")
 
         try:
+            # Stop fund manager first
+            if self._fund_manager:
+                await self._fund_manager.stop()
+
             # Stop all running bots
             await self._commander.stop_all()
 
@@ -660,6 +687,35 @@ class Master:
             True if acknowledged
         """
         return self._dashboard.acknowledge_alert(alert_id, by)
+
+    # =========================================================================
+    # Fund Management
+    # =========================================================================
+
+    async def dispatch_funds(self, trigger: str = "manual") -> Optional["DispatchResult"]:
+        """
+        Dispatch funds to running bots.
+
+        Args:
+            trigger: What triggered the dispatch
+
+        Returns:
+            DispatchResult if fund manager is configured
+        """
+        if self._fund_manager:
+            return await self._fund_manager.dispatch_funds(trigger)
+        return None
+
+    def get_fund_status(self) -> Optional[dict[str, Any]]:
+        """
+        Get fund manager status.
+
+        Returns:
+            Status dictionary if fund manager is configured
+        """
+        if self._fund_manager:
+            return self._fund_manager.get_status()
+        return None
 
     # =========================================================================
     # Helper Methods
