@@ -20,10 +20,11 @@ Enhanced Components (v2.0):
 - Market Microstructure: Spread simulation, Gap handling
 
 Strategy Layer Components (v2.1):
-- Parameter Optimization: Grid, Random, Bayesian (Optuna) search
+- Parameter Optimization: Grid, Random, Bayesian (Optuna), Genetic Algorithm
 - Walk-Forward Optimization: Overfitting detection
 - Strategy Versioning: Serialization, metadata, snapshots
 - Experiment Tracking: Result persistence, comparison reports
+- Monte Carlo Simulation: Robustness validation, confidence intervals
 """
 
 # Config
@@ -122,6 +123,18 @@ from .experiment import (
 # Metrics
 from .metrics import MetricsCalculator
 
+# Monte Carlo
+from .monte_carlo import (
+    MonteCarloSimulator,
+    MonteCarloConfig,
+    MonteCarloResult,
+    MonteCarloMethod,
+    MonteCarloDistribution,
+    ConfidenceInterval,
+    run_monte_carlo_validation,
+    generate_monte_carlo_report,
+)
+
 # Strategy
 from .strategy.base import BacktestStrategy, BacktestContext
 
@@ -202,6 +215,15 @@ __all__ = [
     "ExperimentStatus",
     # Metrics
     "MetricsCalculator",
+    # Monte Carlo
+    "MonteCarloSimulator",
+    "MonteCarloConfig",
+    "MonteCarloResult",
+    "MonteCarloMethod",
+    "MonteCarloDistribution",
+    "ConfidenceInterval",
+    "run_monte_carlo_validation",
+    "generate_monte_carlo_report",
     # Strategy
     "BacktestStrategy",
     "BacktestContext",
