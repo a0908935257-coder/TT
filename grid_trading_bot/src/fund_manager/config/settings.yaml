@@ -88,10 +88,10 @@ strategy:
 #   - notify_target: File path or API endpoint
 # -----------------------------------------------------------------------------
 bots:
-  # Grid Futures Bot (合約網格)
+  # Grid Futures Bot (合約網格) - 最高優先
   - bot_id: grid_futures_*
     name: "Grid Futures Trading"
-    ratio: 0.30
+    ratio: 0.30                        # 30%
     min_capital: 100
     max_capital: 10000
     priority: 10
@@ -99,10 +99,10 @@ bots:
     notify_method: file
     notify_target: data/fund_notifications/grid_futures.json
 
-  # Supertrend Bot (超級趨勢策略)
+  # Supertrend Bot (超級趨勢策略 + RSI 過濾器)
   - bot_id: supertrend_*
     name: "Supertrend Strategy"
-    ratio: 0.25
+    ratio: 0.25                        # 25%
     min_capital: 100
     max_capital: 8000
     priority: 9
@@ -113,7 +113,7 @@ bots:
   # Bollinger Bot (布林通道策略)
   - bot_id: bollinger_*
     name: "Bollinger Strategy"
-    ratio: 0.25
+    ratio: 0.20                        # 20%
     min_capital: 50
     max_capital: 5000
     priority: 8
@@ -121,10 +121,10 @@ bots:
     notify_method: file
     notify_target: data/fund_notifications/bollinger.json
 
-  # RSI Bot (RSI 策略)
+  # RSI Bot (RSI 均值回歸策略)
   - bot_id: rsi_*
     name: "RSI Strategy"
-    ratio: 0.10
+    ratio: 0.15                        # 15%
     min_capital: 50
     max_capital: 3000
     priority: 7
@@ -132,7 +132,7 @@ bots:
     notify_method: file
     notify_target: data/fund_notifications/rsi.json
 
-# Remaining 10% (0.10) stays as unallocated reserve
+# Total: 90% allocated, 10% reserve (unallocated)
 
 # -----------------------------------------------------------------------------
 # Notification Settings

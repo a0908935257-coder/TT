@@ -68,32 +68,45 @@ risk:
   circuit_breaker_enabled: true
   circuit_breaker_cooldown: 3600
 
-# Fund manager configuration
+# Fund manager configuration (集中式資金管理)
 fund_manager:
-  enabled: ${FUND_MANAGER_ENABLED:false}
+  enabled: ${FUND_MANAGER_ENABLED:true}
   poll_interval: 60                    # Balance check interval in seconds
   deposit_threshold: 10                # Minimum deposit amount to trigger auto-dispatch
   reserve_ratio: 0.1                   # Reserve ratio (10% kept as buffer)
   auto_dispatch: true                  # Automatically dispatch funds on deposit
   strategy: fixed_ratio                # Allocation strategy: fixed_ratio, fixed_amount, dynamic_weight
 
-  # Bot allocation configurations
+  # Bot allocation configurations (總計 90%, 保留 10%)
   allocations:
-    - bot_pattern: "bollinger_*"
-      ratio: 0.30
+    # Grid Futures - 網格合約策略 (最高優先)
+    - bot_pattern: "grid_futures_*"
+      ratio: 0.30                      # 30%
       min_capital: 100
       max_capital: 10000
-      priority: 1
+      priority: 4
       enabled: true
-    - bot_pattern: "grid_*"
-      ratio: 0.40
-      min_capital: 100
-      max_capital: 15000
-      priority: 2
-      enabled: true
-    - bot_pattern: "rsi_*"
-      ratio: 0.20
+
+    # Supertrend - 超級趨勢策略 (含 RSI 過濾器)
+    - bot_pattern: "supertrend_*"
+      ratio: 0.25                      # 25%
       min_capital: 100
       max_capital: 8000
-      priority: 0
+      priority: 3
+      enabled: true
+
+    # Bollinger - 布林通道策略
+    - bot_pattern: "bollinger_*"
+      ratio: 0.20                      # 20%
+      min_capital: 50
+      max_capital: 5000
+      priority: 2
+      enabled: true
+
+    # RSI - RSI 均值回歸策略
+    - bot_pattern: "rsi_*"
+      ratio: 0.15                      # 15%
+      min_capital: 50
+      max_capital: 3000
+      priority: 1
       enabled: true
