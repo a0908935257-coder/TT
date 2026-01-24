@@ -439,13 +439,14 @@ class GridOrderManager:
         )
 
         try:
-            # Place order via exchange
+            # Place order via exchange with bot_id for tracking
             if side == OrderSide.BUY:
                 order = await self._exchange.limit_buy(
                     self._symbol,
                     rounded_quantity,
                     rounded_price,
                     self._market_type,
+                    bot_id=self._bot_id,
                 )
             else:
                 order = await self._exchange.limit_sell(
@@ -453,6 +454,7 @@ class GridOrderManager:
                     rounded_quantity,
                     rounded_price,
                     self._market_type,
+                    bot_id=self._bot_id,
                 )
 
             # Update mappings
@@ -658,10 +660,11 @@ class GridOrderManager:
         if self._setup is None:
             return {"synced": 0, "filled": 0, "external": 0}
 
-        # Get open orders from exchange
-        exchange_orders = await self._exchange.get_open_orders(
-            self._symbol,
-            self._market_type,
+        # Get open orders from exchange - ONLY this bot's orders
+        exchange_orders = await self._exchange.get_open_orders_for_bot(
+            bot_id=self._bot_id,
+            symbol=self._symbol,
+            market=self._market_type,
         )
         exchange_order_ids = {o.order_id for o in exchange_orders}
 
@@ -801,13 +804,14 @@ class GridOrderManager:
             )
 
             try:
-                # Place order
+                # Place order with bot_id for tracking
                 if side == OrderSide.BUY:
                     order = await self._exchange.limit_buy(
                         self._symbol,
                         rounded_quantity,
                         rounded_price,
                         self._market_type,
+                        bot_id=self._bot_id,
                     )
                 else:
                     order = await self._exchange.limit_sell(
@@ -815,6 +819,7 @@ class GridOrderManager:
                         rounded_quantity,
                         rounded_price,
                         self._market_type,
+                        bot_id=self._bot_id,
                     )
 
                 # Update mappings

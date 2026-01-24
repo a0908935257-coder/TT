@@ -78,11 +78,16 @@ class ExchangeProtocol(Protocol):
         stop_price: Optional[Decimal] = None,
         time_in_force: Optional[str] = None,
         reduce_only: bool = False,
+        bot_id: str = "unknown",
     ) -> Any: ...
 
-    async def futures_cancel_order(self, symbol: str, order_id: str) -> Any: ...
+    async def futures_cancel_order(
+        self, symbol: str, order_id: str, bot_id: str = "unknown"
+    ) -> Any: ...
 
-    async def futures_cancel_algo_order(self, symbol: str, algo_id: str) -> Any: ...
+    async def futures_cancel_algo_order(
+        self, symbol: str, algo_id: str, bot_id: str = "unknown"
+    ) -> Any: ...
 
     async def futures_get_order(self, symbol: str, order_id: str) -> Any: ...
 
@@ -123,6 +128,7 @@ class OrderExecutor:
         config: BollingerConfig,
         exchange: ExchangeProtocol,
         notifier: Optional[NotifierProtocol] = None,
+        bot_id: str = "bollinger",
     ):
         """
         Initialize OrderExecutor.
@@ -131,10 +137,12 @@ class OrderExecutor:
             config: BollingerConfig with trading parameters
             exchange: Exchange client for API calls
             notifier: Optional notification manager
+            bot_id: Bot identifier for order tracking
         """
         self._config = config
         self._exchange = exchange
         self._notifier = notifier
+        self._bot_id = bot_id
 
         # Order tracking
         self._pending_entry_order: Optional[str] = None
@@ -191,7 +199,7 @@ class OrderExecutor:
         else:
             side = "SELL"
 
-        # Place limit order
+        # Place limit order with bot_id for tracking
         order = await self._exchange.futures_create_order(
             symbol=symbol,
             side=side,
@@ -199,6 +207,7 @@ class OrderExecutor:
             quantity=quantity,
             price=signal.entry_price,
             time_in_force="GTC",
+            bot_id=self._bot_id,
         )
 
         self._pending_entry_order = order.order_id
@@ -265,6 +274,7 @@ class OrderExecutor:
                 price=position.take_profit_price,
                 time_in_force="GTC",
                 reduce_only=True,
+                bot_id=self._bot_id,
             )
             self._take_profit_order = tp_order.order_id
             logger.info(
@@ -280,6 +290,7 @@ class OrderExecutor:
                 quantity=quantity,
                 stop_price=position.stop_loss_price,
                 reduce_only=True,
+                bot_id=self._bot_id,
             )
             self._stop_loss_order = sl_order.order_id
             logger.info(
@@ -294,6 +305,7 @@ class OrderExecutor:
                 await self._exchange.futures_cancel_order(
                     symbol=self._config.symbol,
                     order_id=self._take_profit_order,
+                    bot_id=self._bot_id,
                 )
                 logger.info(f"Take profit order cancelled: {self._take_profit_order}")
             except Exception as e:
@@ -306,6 +318,7 @@ class OrderExecutor:
                 await self._exchange.futures_cancel_algo_order(
                     symbol=self._config.symbol,
                     algo_id=self._stop_loss_order,
+                    bot_id=self._bot_id,
                 )
                 logger.info(f"Stop loss order cancelled: {self._stop_loss_order}")
             except Exception as e:
@@ -335,13 +348,14 @@ class OrderExecutor:
         else:
             close_side = "BUY"
 
-        # Market close
+        # Market close with bot_id for tracking
         order = await self._exchange.futures_create_order(
             symbol=self._config.symbol,
             side=close_side,
             order_type="MARKET",
             quantity=position.quantity,
             reduce_only=True,
+            bot_id=self._bot_id,
         )
 
         logger.info(f"Market close: {close_side} {position.quantity}")

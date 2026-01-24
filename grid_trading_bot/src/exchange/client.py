@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Optional
 from datetime import datetime, timezone
+import uuid
 
 from src.core import get_logger
 from src.core.models import (
@@ -496,15 +497,23 @@ class ExchangeClient:
         """Execute a single order request."""
         params = request.params
         operation = request.operation
+        bot_id = request.bot_id
+
+        # Generate client_order_id with bot prefix for order tracking
+        client_order_id = self.generate_client_order_id(bot_id)
 
         if operation == "create":
             api = self._get_api(params.get("market", MarketType.SPOT))
+            kwargs = params.get("kwargs", {})
+            # Add client_order_id if not already provided
+            if "client_order_id" not in kwargs:
+                kwargs["client_order_id"] = client_order_id
             return await api.create_order(
                 symbol=params["symbol"],
                 side=params["side"],
                 order_type=params["order_type"],
                 quantity=params["quantity"],
-                **params.get("kwargs", {}),
+                **kwargs,
             )
         elif operation == "cancel":
             api = self._get_api(params.get("market", MarketType.SPOT))
@@ -522,6 +531,7 @@ class ExchangeClient:
                 stop_price=params.get("stop_price"),
                 time_in_force=params.get("time_in_force"),
                 reduce_only=params.get("reduce_only", False),
+                client_order_id=params.get("client_order_id", client_order_id),
             )
         elif operation == "futures_cancel":
             return await self._futures.cancel_order(
@@ -598,6 +608,47 @@ class ExchangeClient:
     def get_order_queue_stats(self) -> OrderQueueStats:
         """Get current order queue statistics."""
         return self._queue_stats
+
+    @staticmethod
+    def generate_client_order_id(bot_id: str) -> str:
+        """
+        Generate a unique client order ID with bot identifier prefix.
+
+        Format: {bot_id}_{timestamp}_{random}
+        Example: grid_futures_001_1706123456_a3f2
+
+        This allows filtering orders by bot when syncing with exchange.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            Unique client order ID string (max 36 chars for Binance)
+        """
+        # Shorten bot_id if needed (max ~20 chars for prefix)
+        short_bot_id = bot_id[:20] if len(bot_id) > 20 else bot_id
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        random_suffix = uuid.uuid4().hex[:4]
+        return f"{short_bot_id}_{timestamp}_{random_suffix}"
+
+    @staticmethod
+    def get_bot_id_from_client_order_id(client_order_id: str) -> Optional[str]:
+        """
+        Extract bot ID from a client order ID.
+
+        Args:
+            client_order_id: Client order ID in format {bot_id}_{timestamp}_{random}
+
+        Returns:
+            Bot ID or None if format doesn't match
+        """
+        if not client_order_id:
+            return None
+        parts = client_order_id.rsplit("_", 2)
+        if len(parts) >= 3:
+            # Reconstruct bot_id from all parts except last 2
+            return "_".join(client_order_id.rsplit("_", 2)[:-2]) or parts[0]
+        return None
 
     # =========================================================================
     # Direct Order Methods (bypass queue - use with caution)
@@ -753,6 +804,42 @@ class ExchangeClient:
         """
         api = self._get_api(market)
         return await api.get_open_orders(symbol)
+
+    async def get_open_orders_for_bot(
+        self,
+        bot_id: str,
+        symbol: Optional[str] = None,
+        market: MarketType = MarketType.SPOT,
+    ) -> list[Order]:
+        """
+        Get open orders belonging to a specific bot.
+
+        Filters orders by checking if their client_order_id starts with the bot_id.
+        This ensures each bot only sees its own orders.
+
+        Args:
+            bot_id: Bot identifier to filter by
+            symbol: Trading pair (optional, returns all if None)
+            market: SPOT or FUTURES
+
+        Returns:
+            List of open Order objects belonging to the specified bot
+        """
+        all_orders = await self.get_open_orders(symbol, market)
+
+        # Filter orders by bot_id prefix in client_order_id
+        bot_orders = []
+        for order in all_orders:
+            if order.client_order_id:
+                extracted_bot_id = self.get_bot_id_from_client_order_id(order.client_order_id)
+                if extracted_bot_id == bot_id:
+                    bot_orders.append(order)
+
+        logger.debug(
+            f"Filtered orders for {bot_id}: {len(bot_orders)}/{len(all_orders)} "
+            f"(symbol={symbol}, market={market.value})"
+        )
+        return bot_orders
 
     # =========================================================================
     # Futures Order Wrapper Methods (for OrderExecutor Protocol, thread-safe)
