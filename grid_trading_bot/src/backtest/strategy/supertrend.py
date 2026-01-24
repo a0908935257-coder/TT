@@ -399,9 +399,19 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         return None
 
     def _on_kline_trend_flip(self, kline: Kline, current_price: Decimal) -> Optional[Signal]:
-        """Legacy TREND_FLIP mode - trade on Supertrend direction flip."""
+        """
+        TREND_FLIP mode - trade on Supertrend direction flip with RSI filter.
+
+        Matches live bot logic:
+        - Entry on trend flip only
+        - RSI filter to avoid overbought/oversold entries
+        """
         if self._prev_trend != 0 and self._current_trend != self._prev_trend:
             if self._current_trend == 1:
+                # Check RSI filter before LONG entry
+                if not self._check_rsi_filter("LONG"):
+                    return None
+
                 stop_loss = current_price * (Decimal("1") - self._config.stop_loss_pct)
                 return Signal.long_entry(
                     price=current_price,
@@ -409,6 +419,10 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                     reason="supertrend_bullish_flip",
                 )
             elif self._current_trend == -1:
+                # Check RSI filter before SHORT entry
+                if not self._check_rsi_filter("SHORT"):
+                    return None
+
                 stop_loss = current_price * (Decimal("1") + self._config.stop_loss_pct)
                 return Signal.short_entry(
                     price=current_price,

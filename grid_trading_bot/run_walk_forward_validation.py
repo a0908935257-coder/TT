@@ -48,6 +48,7 @@ from src.backtest.strategy import (
     GridFuturesStrategyConfig,
     GridDirection,
 )
+from src.backtest.strategy.supertrend import SupertrendMode
 from src.backtest.strategy.rsi_grid import (
     RSIGridBacktestStrategy,
     RSIGridStrategyConfig,
@@ -153,9 +154,28 @@ def create_all_strategies() -> dict:
         stop_loss_pct=Decimal("0.05"),
     )
 
+    # Supertrend: 使用 settings.yaml 實盤參數
+    # 模式: TREND_GRID (與實盤 Bot 一致)
+    # timeframe=1h, atr_period=14, stop_loss=5%, RSI filter enabled
+    supertrend_config = SupertrendStrategyConfig(
+        mode=SupertrendMode.TREND_GRID,  # 與實盤 Bot 一致
+        atr_period=14,
+        atr_multiplier=Decimal("3.0"),
+        grid_count=10,
+        grid_atr_multiplier=Decimal("3.0"),
+        take_profit_grids=1,
+        stop_loss_pct=Decimal("0.05"),
+        # RSI Filter (與實盤 Bot 一致)
+        use_rsi_filter=True,
+        rsi_period=14,
+        rsi_overbought=60,
+        rsi_oversold=40,
+        min_trend_bars=2,
+    )
+
     return {
         "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig()),
-        "supertrend": SupertrendBacktestStrategy(SupertrendStrategyConfig()),
+        "supertrend": SupertrendBacktestStrategy(supertrend_config),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
         "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig()),
         "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),

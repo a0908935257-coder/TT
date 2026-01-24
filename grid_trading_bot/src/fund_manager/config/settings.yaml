@@ -202,15 +202,15 @@ bots:
       rebuild_threshold_pct: 0.02
 
   # ===========================================================================
-  # Supertrend Bot (超級趨勢 + RSI 過濾策略)
+  # Supertrend TREND_GRID Bot (超級趨勢 + 網格 + RSI 過濾策略)
   # ===========================================================================
-  # Walk-Forward 驗證 (2024-01 ~ 2026-01, 2年數據):
+  # Walk-Forward 驗證 (2024-01-25 ~ 2026-01-24, 2年數據):
   # - 一致性: 70% (7/10 時段), OOS Sharpe: 5.84
   # - 過度擬合: NO, 穩健性: ROBUST
   # - 獲利機率: 100%, 勝率: ~94%
   # ===========================================================================
   - bot_id: supertrend_*
-    name: "Supertrend Strategy"
+    name: "Supertrend GRID Strategy"
     status: active
 
     # --- 資金分配 ---
@@ -231,11 +231,19 @@ bots:
       atr_period: 14                     # ATR 週期
       atr_multiplier: 3.0                # ATR 乘數
 
+      # Grid Settings (TREND_GRID 模式)
+      grid_count: 10                     # 網格數量
+      grid_atr_multiplier: 3.0           # 網格範圍 ATR 乘數
+      take_profit_grids: 1               # 止盈網格數
+
       # RSI Filter (減少假訊號)
       use_rsi_filter: true
       rsi_period: 14
       rsi_overbought: 60                 # RSI > 60 不做多
       rsi_oversold: 40                   # RSI < 40 不做空
+
+      # Trend confirmation
+      min_trend_bars: 2                  # 趨勢確認所需最少 K 線數
 
       # Risk Management
       stop_loss_pct: 0.05                # 5%
