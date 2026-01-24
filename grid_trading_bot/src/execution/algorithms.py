@@ -99,6 +99,41 @@ class OrderExecutor(Protocol):
         ...
 
 
+class OrderBookProvider(Protocol):
+    """Protocol for order book data."""
+
+    async def get_best_bid(self, symbol: str) -> Optional[Tuple[Decimal, Decimal]]:
+        """
+        Get best bid price and quantity.
+
+        Returns:
+            Tuple of (price, quantity) or None
+        """
+        ...
+
+    async def get_best_ask(self, symbol: str) -> Optional[Tuple[Decimal, Decimal]]:
+        """
+        Get best ask price and quantity.
+
+        Returns:
+            Tuple of (price, quantity) or None
+        """
+        ...
+
+    async def get_order_book(
+        self,
+        symbol: str,
+        limit: int = 10,
+    ) -> Dict[str, List[Tuple[Decimal, Decimal]]]:
+        """
+        Get order book depth.
+
+        Returns:
+            Dict with 'bids' and 'asks' lists of (price, quantity) tuples
+        """
+        ...
+
+
 # =============================================================================
 # Algorithm State
 # =============================================================================
@@ -1188,6 +1223,673 @@ class IcebergAlgorithm(BaseExecutionAlgorithm):
 
 
 # =============================================================================
+# Sniper Algorithm
+# =============================================================================
+
+
+@dataclass
+class SniperConfig:
+    """Configuration for Sniper algorithm."""
+
+    # Price trigger settings
+    trigger_price: Optional[Decimal] = None  # Price to trigger execution
+    trigger_spread_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # Trigger when spread below this
+    price_improvement_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # Try to improve by this %
+
+    # Timing settings
+    max_wait_seconds: int = 300              # Max time to wait for trigger
+    poll_interval_seconds: float = 0.1       # How often to check conditions
+    execution_timeout_seconds: int = 5       # Timeout per execution attempt
+
+    # Size settings
+    capture_full_level: bool = True          # Try to capture entire best level
+    max_slices: int = 5                      # Max execution attempts
+    min_quantity_pct: Decimal = field(default_factory=lambda: Decimal("0.20"))  # Min 20% per slice
+
+    # Behavior settings
+    aggressive_mode: bool = True             # Use market orders when triggered
+    chase_price: bool = True                 # Chase price if it moves away
+    max_chase_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max chase 0.5%
+
+
+class SniperAlgorithm(BaseExecutionAlgorithm):
+    """
+    Sniper Order Algorithm.
+
+    Monitors the market and executes aggressively when specific conditions
+    are met. Designed to capture liquidity at optimal prices.
+
+    Features:
+    - Price trigger monitoring
+    - Spread condition monitoring
+    - Aggressive execution when triggered
+    - Price chasing within limits
+    - Full level capture
+
+    Use Cases:
+    - Capturing large resting orders
+    - Executing when spread tightens
+    - Opportunistic limit order fills
+    - Momentum entry/exit
+
+    Example:
+        >>> config = SniperConfig(trigger_price=Decimal("50000"))
+        >>> algo = SniperAlgorithm(request, executor, config=config, orderbook=provider)
+        >>> progress = await algo.execute()
+    """
+
+    def __init__(
+        self,
+        request: ExecutionRequest,
+        executor: OrderExecutor,
+        config: Optional[SniperConfig] = None,
+        price_provider: Optional[PriceProvider] = None,
+        orderbook_provider: Optional[OrderBookProvider] = None,
+        on_slice_complete: Optional[Callable[[ChildOrder], None]] = None,
+        on_progress: Optional[Callable[[AlgorithmProgress], None]] = None,
+    ):
+        """
+        Initialize Sniper algorithm.
+
+        Args:
+            request: Execution request
+            executor: Order executor
+            config: Sniper configuration
+            price_provider: Price provider
+            orderbook_provider: Order book provider
+            on_slice_complete: Slice completion callback
+            on_progress: Progress callback
+        """
+        super().__init__(
+            request=request,
+            executor=executor,
+            price_provider=price_provider,
+            on_slice_complete=on_slice_complete,
+            on_progress=on_progress,
+        )
+
+        self._config = config or SniperConfig()
+        self._orderbook_provider = orderbook_provider
+        self._slice_index = 0
+        self._trigger_activated = False
+
+    def get_algorithm_type(self) -> ExecutionAlgorithm:
+        return ExecutionAlgorithm.SNIPER
+
+    async def execute(self) -> AlgorithmProgress:
+        """Execute Sniper algorithm."""
+        self._progress.state = AlgorithmState.RUNNING
+        self._progress.start_time = datetime.now(timezone.utc)
+
+        logger.info(
+            f"Starting Sniper: {self._request.quantity} {self._request.symbol} "
+            f"trigger={self._config.trigger_price}, aggressive={self._config.aggressive_mode}"
+        )
+
+        try:
+            start_time = datetime.now(timezone.utc)
+            max_wait = timedelta(seconds=self._config.max_wait_seconds)
+
+            while self._progress.remaining_quantity > 0:
+                if self._cancelled:
+                    break
+
+                # Check timeout
+                elapsed = datetime.now(timezone.utc) - start_time
+                if elapsed > max_wait:
+                    logger.warning("Sniper timed out waiting for trigger")
+                    break
+
+                # Wait while paused
+                while self._paused and not self._cancelled:
+                    await asyncio.sleep(0.5)
+
+                # Check trigger conditions
+                should_execute, execution_price = await self._check_trigger_conditions()
+
+                if should_execute:
+                    if not self._trigger_activated:
+                        self._trigger_activated = True
+                        logger.info(f"Sniper triggered at price {execution_price}")
+
+                    # Calculate slice quantity
+                    slice_qty = await self._calculate_slice_quantity()
+
+                    if slice_qty <= 0:
+                        break
+
+                    # Create and execute slice
+                    child = self._create_child(self._slice_index, slice_qty)
+
+                    # Set price based on mode
+                    if self._config.aggressive_mode:
+                        child.order_type = OrderType.MARKET
+                        child.price = None
+                    else:
+                        child.price = execution_price
+
+                    self._children.append(child)
+
+                    logger.info(f"Executing Sniper slice {self._slice_index+1}: {slice_qty}")
+                    success = await self._execute_slice(
+                        child,
+                        wait_for_fill=True,
+                        fill_timeout=self._config.execution_timeout_seconds,
+                    )
+
+                    if success and self._on_slice_complete:
+                        self._on_slice_complete(child)
+
+                    self._update_progress()
+                    self._slice_index += 1
+
+                    # Check max slices
+                    if self._slice_index >= self._config.max_slices:
+                        logger.info("Sniper reached max slices")
+                        break
+
+                else:
+                    # Wait before next check
+                    await self._cancellable_sleep(
+                        self._config.poll_interval_seconds,
+                        check_interval=0.05,
+                    )
+
+            # Finalize
+            self._progress.end_time = datetime.now(timezone.utc)
+            self._progress.total_slices = len(self._children)
+
+            if self._cancelled:
+                self._progress.state = AlgorithmState.CANCELLED
+            else:
+                self._progress.state = AlgorithmState.COMPLETED
+
+            logger.info(
+                f"Sniper complete: filled {self._progress.filled_quantity}/{self._request.quantity} "
+                f"({self._progress.fill_pct:.1f}%)"
+            )
+
+        except Exception as e:
+            self._progress.state = AlgorithmState.ERROR
+            self._progress.end_time = datetime.now(timezone.utc)
+            logger.error(f"Sniper execution error: {e}")
+
+        return self._progress
+
+    async def _check_trigger_conditions(self) -> Tuple[bool, Optional[Decimal]]:
+        """
+        Check if trigger conditions are met.
+
+        Returns:
+            Tuple of (should_execute, execution_price)
+        """
+        # If already triggered, continue executing
+        if self._trigger_activated:
+            return await self._check_chase_conditions()
+
+        # Get current market data
+        if not self._orderbook_provider:
+            # No orderbook, fall back to price trigger only
+            if self._price_provider and self._config.trigger_price:
+                try:
+                    current_price = await self._price_provider.get_price(self._request.symbol)
+                    if self._request.side == OrderSide.BUY:
+                        if current_price <= self._config.trigger_price:
+                            return True, current_price
+                    else:
+                        if current_price >= self._config.trigger_price:
+                            return True, current_price
+                except Exception as e:
+                    logger.warning(f"Failed to get price: {e}")
+            return False, None
+
+        try:
+            # Get order book
+            if self._request.side == OrderSide.BUY:
+                level = await self._orderbook_provider.get_best_ask(self._request.symbol)
+            else:
+                level = await self._orderbook_provider.get_best_bid(self._request.symbol)
+
+            if not level:
+                return False, None
+
+            price, quantity = level
+
+            # Check price trigger
+            if self._config.trigger_price:
+                if self._request.side == OrderSide.BUY:
+                    if price > self._config.trigger_price:
+                        return False, None
+                else:
+                    if price < self._config.trigger_price:
+                        return False, None
+                # Price condition met, trigger!
+                return True, price
+
+            # Check spread trigger
+            best_bid = await self._orderbook_provider.get_best_bid(self._request.symbol)
+            best_ask = await self._orderbook_provider.get_best_ask(self._request.symbol)
+
+            if best_bid and best_ask:
+                bid_price = best_bid[0]
+                ask_price = best_ask[0]
+                spread_pct = ((ask_price - bid_price) / bid_price) * Decimal("100")
+
+                if spread_pct <= self._config.trigger_spread_pct:
+                    # Tight spread, trigger!
+                    return True, price
+
+            return False, None
+
+        except Exception as e:
+            logger.warning(f"Failed to check trigger: {e}")
+            return False, None
+
+    async def _check_chase_conditions(self) -> Tuple[bool, Optional[Decimal]]:
+        """
+        Check if we should continue chasing the price.
+
+        Returns:
+            Tuple of (should_execute, execution_price)
+        """
+        if not self._config.chase_price:
+            return True, self._request.price
+
+        if not self._price_provider:
+            return True, self._request.price
+
+        try:
+            current_price = await self._price_provider.get_price(self._request.symbol)
+            base_price = self._request.price or current_price
+
+            # Calculate how far price has moved
+            if self._request.side == OrderSide.BUY:
+                chase_pct = ((current_price - base_price) / base_price) * Decimal("100")
+            else:
+                chase_pct = ((base_price - current_price) / base_price) * Decimal("100")
+
+            if chase_pct > self._config.max_chase_pct:
+                logger.warning(f"Price moved too far ({chase_pct:.2f}%), stopping chase")
+                return False, None
+
+            return True, current_price
+
+        except Exception:
+            return True, self._request.price
+
+    async def _calculate_slice_quantity(self) -> Decimal:
+        """Calculate quantity for next slice."""
+        remaining = self._progress.remaining_quantity
+
+        if remaining <= 0:
+            return Decimal("0")
+
+        # Base slice is minimum percentage of total
+        min_slice = self._request.quantity * self._config.min_quantity_pct
+
+        # Try to capture full level if enabled
+        if self._config.capture_full_level and self._orderbook_provider:
+            try:
+                if self._request.side == OrderSide.BUY:
+                    level = await self._orderbook_provider.get_best_ask(self._request.symbol)
+                else:
+                    level = await self._orderbook_provider.get_best_bid(self._request.symbol)
+
+                if level:
+                    _, level_qty = level
+                    # Take the level quantity, but at least min_slice
+                    slice_qty = max(level_qty, min_slice)
+                    return min(slice_qty, remaining)
+
+            except Exception:
+                pass
+
+        # Fallback to min slice
+        return min(min_slice, remaining)
+
+
+# =============================================================================
+# POV (Percentage of Volume) Algorithm
+# =============================================================================
+
+
+@dataclass
+class POVConfig:
+    """Configuration for POV (Percentage of Volume) algorithm."""
+
+    target_participation_rate: Decimal = field(default_factory=lambda: Decimal("0.10"))  # 10%
+    min_participation_rate: Decimal = field(default_factory=lambda: Decimal("0.05"))     # 5%
+    max_participation_rate: Decimal = field(default_factory=lambda: Decimal("0.25"))     # 25%
+
+    # Volume tracking
+    volume_window_seconds: int = 60          # Window for volume calculation
+    volume_update_interval: float = 1.0      # How often to update volume
+    use_real_time_volume: bool = True        # Use real-time vs historical
+
+    # Execution settings
+    min_slice_interval_seconds: float = 1.0  # Minimum time between slices
+    max_slice_interval_seconds: float = 30.0 # Maximum time between slices
+    execution_timeout_seconds: int = 60      # Timeout per slice
+
+    # Duration
+    duration_minutes: float = 60             # Total execution duration
+    end_time: Optional[datetime] = None      # Specific end time
+
+    # Behavior
+    aggressive_completion: bool = True       # Be more aggressive near end
+    aggression_threshold_pct: Decimal = field(default_factory=lambda: Decimal("80"))  # % of time passed
+
+
+class POVAlgorithm(BaseExecutionAlgorithm):
+    """
+    Percentage of Volume (POV) Algorithm.
+
+    Executes orders as a fixed percentage of market trading volume.
+    More aggressive than VWAP, directly tracking real-time volume.
+
+    Features:
+    - Real-time volume tracking
+    - Dynamic participation rate adjustment
+    - Aggressive completion mode
+    - Volume-weighted execution
+
+    Use Cases:
+    - Executing large orders while matching market activity
+    - Avoiding excessive market impact
+    - Benchmark participation strategies
+    - Block trading execution
+
+    Example:
+        >>> config = POVConfig(target_participation_rate=Decimal("0.15"))
+        >>> algo = POVAlgorithm(request, executor, config=config, volume_provider=provider)
+        >>> progress = await algo.execute()
+    """
+
+    def __init__(
+        self,
+        request: ExecutionRequest,
+        executor: OrderExecutor,
+        config: Optional[POVConfig] = None,
+        price_provider: Optional[PriceProvider] = None,
+        volume_provider: Optional[VolumeProvider] = None,
+        on_slice_complete: Optional[Callable[[ChildOrder], None]] = None,
+        on_progress: Optional[Callable[[AlgorithmProgress], None]] = None,
+    ):
+        """
+        Initialize POV algorithm.
+
+        Args:
+            request: Execution request
+            executor: Order executor
+            config: POV configuration
+            price_provider: Price provider
+            volume_provider: Volume data provider
+            on_slice_complete: Slice completion callback
+            on_progress: Progress callback
+        """
+        super().__init__(
+            request=request,
+            executor=executor,
+            price_provider=price_provider,
+            on_slice_complete=on_slice_complete,
+            on_progress=on_progress,
+        )
+
+        self._config = config or POVConfig(
+            target_participation_rate=request.pov_participation_rate,
+        )
+        self._volume_provider = volume_provider
+
+        self._slice_index = 0
+        self._last_volume = Decimal("0")
+        self._volume_history: List[Tuple[datetime, Decimal]] = []
+        self._current_participation_rate = self._config.target_participation_rate
+
+    def get_algorithm_type(self) -> ExecutionAlgorithm:
+        return ExecutionAlgorithm.POV
+
+    async def execute(self) -> AlgorithmProgress:
+        """Execute POV algorithm."""
+        self._progress.state = AlgorithmState.RUNNING
+        self._progress.start_time = datetime.now(timezone.utc)
+
+        logger.info(
+            f"Starting POV: {self._request.quantity} {self._request.symbol} "
+            f"at {self._config.target_participation_rate*100}% participation"
+        )
+
+        try:
+            # Calculate end time
+            if self._config.end_time:
+                end_time = self._config.end_time
+            else:
+                end_time = datetime.now(timezone.utc) + timedelta(
+                    minutes=self._config.duration_minutes
+                )
+
+            # Get initial volume
+            await self._update_volume()
+
+            while datetime.now(timezone.utc) < end_time:
+                if self._cancelled:
+                    break
+
+                # Check if we're done
+                if self._progress.remaining_quantity <= 0:
+                    break
+
+                # Wait while paused
+                while self._paused and not self._cancelled:
+                    await asyncio.sleep(0.5)
+
+                # Check price limits
+                if not await self._check_price_limit():
+                    await asyncio.sleep(self._config.min_slice_interval_seconds)
+                    continue
+
+                # Update volume and calculate participation
+                await self._update_volume()
+                self._adjust_participation_rate(end_time)
+
+                # Calculate slice size based on volume
+                slice_qty = await self._calculate_slice_quantity()
+
+                if slice_qty <= 0:
+                    # No volume, wait and retry
+                    await self._cancellable_sleep(
+                        self._config.min_slice_interval_seconds,
+                        check_interval=0.5,
+                    )
+                    continue
+
+                # Create and execute slice
+                child = self._create_child(self._slice_index, slice_qty)
+                self._children.append(child)
+
+                logger.info(
+                    f"Executing POV slice {self._slice_index+1}: {slice_qty} "
+                    f"(participation: {self._current_participation_rate*100:.1f}%)"
+                )
+                success = await self._execute_slice(
+                    child,
+                    wait_for_fill=True,
+                    fill_timeout=self._config.execution_timeout_seconds,
+                )
+
+                if success and self._on_slice_complete:
+                    self._on_slice_complete(child)
+
+                self._update_progress()
+                self._slice_index += 1
+
+                # Calculate wait time based on volume
+                wait_time = self._calculate_wait_time()
+                await self._cancellable_sleep(wait_time, check_interval=0.5)
+
+            # Finalize
+            self._progress.end_time = datetime.now(timezone.utc)
+            self._progress.total_slices = len(self._children)
+
+            if self._cancelled:
+                self._progress.state = AlgorithmState.CANCELLED
+            else:
+                self._progress.state = AlgorithmState.COMPLETED
+
+            logger.info(
+                f"POV complete: filled {self._progress.filled_quantity}/{self._request.quantity} "
+                f"({self._progress.fill_pct:.1f}%)"
+            )
+
+        except Exception as e:
+            self._progress.state = AlgorithmState.ERROR
+            self._progress.end_time = datetime.now(timezone.utc)
+            logger.error(f"POV execution error: {e}")
+
+        return self._progress
+
+    async def _update_volume(self) -> None:
+        """Update current market volume."""
+        if not self._volume_provider:
+            return
+
+        try:
+            current_volume = await self._volume_provider.get_current_volume(
+                self._request.symbol
+            )
+
+            # Store in history
+            now = datetime.now(timezone.utc)
+            self._volume_history.append((now, current_volume))
+
+            # Clean old entries
+            cutoff = now - timedelta(seconds=self._config.volume_window_seconds)
+            self._volume_history = [
+                (t, v) for t, v in self._volume_history if t > cutoff
+            ]
+
+            self._last_volume = current_volume
+
+        except Exception as e:
+            logger.warning(f"Failed to update volume: {e}")
+
+    def _adjust_participation_rate(self, end_time: datetime) -> None:
+        """Adjust participation rate based on progress."""
+        if not self._config.aggressive_completion:
+            return
+
+        now = datetime.now(timezone.utc)
+        start_time = self._progress.start_time or now
+        total_duration = (end_time - start_time).total_seconds()
+
+        if total_duration <= 0:
+            return
+
+        elapsed_seconds = (now - start_time).total_seconds()
+        elapsed_pct = Decimal(str(elapsed_seconds / total_duration)) * Decimal("100")
+
+        # Check if we should be more aggressive
+        if elapsed_pct >= self._config.aggression_threshold_pct:
+            # Calculate how behind we are
+            expected_fill_pct = elapsed_pct
+            actual_fill_pct = self._progress.fill_pct
+
+            if actual_fill_pct < expected_fill_pct * Decimal("0.8"):
+                # Behind schedule, increase participation
+                shortfall_factor = (expected_fill_pct / max(actual_fill_pct, Decimal("1")))
+                new_rate = self._config.target_participation_rate * min(shortfall_factor, Decimal("2"))
+                self._current_participation_rate = min(
+                    new_rate,
+                    self._config.max_participation_rate
+                )
+                logger.debug(
+                    f"Increased participation to {self._current_participation_rate*100:.1f}% "
+                    f"(behind schedule: {actual_fill_pct:.1f}% vs {expected_fill_pct:.1f}%)"
+                )
+            else:
+                # On track or ahead
+                self._current_participation_rate = self._config.target_participation_rate
+
+    async def _calculate_slice_quantity(self) -> Decimal:
+        """Calculate quantity for next slice based on volume."""
+        remaining = self._progress.remaining_quantity
+
+        if remaining <= 0:
+            return Decimal("0")
+
+        # Calculate volume delta
+        if self._volume_provider and len(self._volume_history) >= 2:
+            try:
+                # Get volume change over recent window
+                oldest_time, oldest_vol = self._volume_history[0]
+                newest_time, newest_vol = self._volume_history[-1]
+
+                time_delta = (newest_time - oldest_time).total_seconds()
+
+                if time_delta > 0:
+                    # Volume per second
+                    volume_rate = (newest_vol - oldest_vol) / Decimal(str(time_delta))
+
+                    # Our participation
+                    slice_qty = volume_rate * self._current_participation_rate
+
+                    # Minimum slice based on interval
+                    min_slice = remaining / Decimal(str(max(1, 60 / self._config.min_slice_interval_seconds)))
+
+                    slice_qty = max(slice_qty, min_slice)
+                    return min(slice_qty, remaining)
+
+            except Exception as e:
+                logger.warning(f"Failed to calculate volume-based slice: {e}")
+
+        # Fallback: time-based calculation
+        if self._progress.start_time:
+            end_time = self._config.end_time or (
+                self._progress.start_time + timedelta(minutes=self._config.duration_minutes)
+            )
+            remaining_seconds = (end_time - datetime.now(timezone.utc)).total_seconds()
+
+            if remaining_seconds > 0:
+                # Estimate slices remaining
+                slices_remaining = max(
+                    1,
+                    int(remaining_seconds / self._config.min_slice_interval_seconds)
+                )
+                return remaining / Decimal(str(slices_remaining))
+
+        return remaining
+
+    def _calculate_wait_time(self) -> float:
+        """Calculate wait time until next slice."""
+        # Higher volume = more frequent execution
+        if self._last_volume > 0 and len(self._volume_history) >= 2:
+            # Calculate volume rate
+            oldest_time, oldest_vol = self._volume_history[0]
+            newest_time, newest_vol = self._volume_history[-1]
+            time_delta = (newest_time - oldest_time).total_seconds()
+
+            if time_delta > 0:
+                volume_rate = float((newest_vol - oldest_vol) / Decimal(str(time_delta)))
+
+                if volume_rate > 0:
+                    # Wait time inversely proportional to volume
+                    base_wait = (
+                        self._config.min_slice_interval_seconds +
+                        self._config.max_slice_interval_seconds
+                    ) / 2
+
+                    # Scale based on participation
+                    wait = base_wait / float(self._current_participation_rate * Decimal("10"))
+
+                    return max(
+                        self._config.min_slice_interval_seconds,
+                        min(self._config.max_slice_interval_seconds, wait)
+                    )
+
+        # Default wait
+        return self._config.min_slice_interval_seconds
+
+
+# =============================================================================
 # Factory Function
 # =============================================================================
 
@@ -1198,6 +1900,7 @@ def create_algorithm(
     executor: OrderExecutor,
     price_provider: Optional[PriceProvider] = None,
     volume_provider: Optional[VolumeProvider] = None,
+    orderbook_provider: Optional[OrderBookProvider] = None,
     **kwargs: Any,
 ) -> BaseExecutionAlgorithm:
     """
@@ -1208,7 +1911,8 @@ def create_algorithm(
         request: Execution request
         executor: Order executor
         price_provider: Price provider
-        volume_provider: Volume provider (for VWAP)
+        volume_provider: Volume provider (for VWAP/POV)
+        orderbook_provider: Order book provider (for Sniper)
         **kwargs: Additional arguments passed to algorithm
 
     Returns:
@@ -1247,6 +1951,30 @@ def create_algorithm(
             executor=executor,
             config=config,
             price_provider=price_provider,
+            **kwargs,
+        )
+
+    elif algorithm_type == ExecutionAlgorithm.SNIPER:
+        config = SniperConfig()
+        return SniperAlgorithm(
+            request=request,
+            executor=executor,
+            config=config,
+            price_provider=price_provider,
+            orderbook_provider=orderbook_provider,
+            **kwargs,
+        )
+
+    elif algorithm_type == ExecutionAlgorithm.POV:
+        config = POVConfig(
+            target_participation_rate=request.pov_participation_rate,
+        )
+        return POVAlgorithm(
+            request=request,
+            executor=executor,
+            config=config,
+            price_provider=price_provider,
+            volume_provider=volume_provider,
             **kwargs,
         )
 

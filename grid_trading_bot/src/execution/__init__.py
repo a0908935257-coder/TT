@@ -72,7 +72,14 @@ from src.execution.algorithms import (
     # Iceberg
     IcebergAlgorithm,
     IcebergConfig,
+    # Sniper
+    SniperAlgorithm,
+    SniperConfig,
+    # POV
+    POVAlgorithm,
+    POVConfig,
     # Protocols
+    OrderBookProvider,
     OrderExecutor,
     PriceProvider,
     VolumeProvider,
@@ -122,7 +129,14 @@ __all__ = [
     # Iceberg
     "IcebergAlgorithm",
     "IcebergConfig",
+    # Sniper
+    "SniperAlgorithm",
+    "SniperConfig",
+    # POV
+    "POVAlgorithm",
+    "POVConfig",
     # Algorithm protocols
+    "OrderBookProvider",
     "OrderExecutor",
     "PriceProvider",
     "VolumeProvider",
