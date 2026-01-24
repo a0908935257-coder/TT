@@ -37,6 +37,40 @@ from src.fund_manager.models.config import FundManagerConfig
 
 logger = get_logger(__name__)
 
+# Cache for YAML configuration
+_yaml_config: dict | None = None
+
+
+def _load_yaml_config() -> dict:
+    """Load and cache the settings.yaml configuration."""
+    global _yaml_config
+    if _yaml_config is None:
+        import yaml
+        with open("src/fund_manager/config/settings.yaml", "r") as f:
+            _yaml_config = yaml.safe_load(f)
+    return _yaml_config
+
+
+def _get_bot_strategy_params(bot_pattern: str) -> dict:
+    """
+    Get strategy parameters for a bot by its pattern.
+
+    Args:
+        bot_pattern: Bot ID pattern (e.g., "bollinger_*", "rsi_*")
+
+    Returns:
+        Strategy parameters dict from settings.yaml
+    """
+    config = _load_yaml_config()
+    bots = config.get("bots", [])
+
+    for bot in bots:
+        if bot.get("bot_id") == bot_pattern:
+            return bot.get("strategy_params", {})
+
+    logger.warning(f"Bot pattern {bot_pattern} not found in settings.yaml")
+    return {}
+
 # Global references for cleanup
 _master: Master | None = None
 _exchange: ExchangeClient | None = None
@@ -134,7 +168,7 @@ def create_notifier() -> NotificationManager:
 
 def get_bollinger_config() -> dict:
     """
-    Get Bollinger Trend Bot config from .env.
+    Get Bollinger Trend Bot config from settings.yaml.
 
     ✅ Walk-Forward 驗證通過 (75% 一致性, OOS 96%, Sharpe 1.81):
     - BOLLINGER_TREND 策略 (Supertrend + BB)
@@ -143,29 +177,30 @@ def get_bollinger_config() -> dict:
     - leverage: 2x
     - 報酬: +35.1%, 最大回撤: 6.7%
     """
+    params = _get_bot_strategy_params("bollinger_*")
     return {
-        "symbol": os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
-        "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '15m'),
-        "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '2')),  # Walk-Forward validated
-        "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
+        "symbol": params.get("symbol", "BTCUSDT"),
+        "timeframe": params.get("timeframe", "15m"),
+        "leverage": params.get("leverage", 2),
+        "position_size_pct": params.get("position_size_pct", 0.1),
         # Bollinger Bands (Walk-Forward validated)
-        "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),  # Validated: 20
-        "bb_std": os.getenv('BOLLINGER_BB_STD', '3.0'),  # Validated: 3.0
+        "bb_period": params.get("bb_period", 20),
+        "bb_std": params.get("bb_std", 3.0),
         # Supertrend (Walk-Forward validated)
-        "st_atr_period": int(os.getenv('BOLLINGER_ST_ATR_PERIOD', '20')),  # Validated: 20
-        "st_atr_multiplier": os.getenv('BOLLINGER_ST_ATR_MULTIPLIER', '3.5'),  # Validated: 3.5
+        "st_atr_period": params.get("st_atr_period", 20),
+        "st_atr_multiplier": params.get("st_atr_multiplier", 3.5),
         # ATR Stop Loss
-        "atr_stop_multiplier": os.getenv('BOLLINGER_ATR_STOP_MULTIPLIER', '2.0'),  # Validated: 2.0
-        # BBW filter (retained for compatibility)
-        "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-        "bbw_threshold_pct": int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
+        "atr_stop_multiplier": params.get("atr_stop_multiplier", 2.0),
+        # BBW filter
+        "bbw_lookback": params.get("bbw_lookback", 200),
+        "bbw_threshold_pct": params.get("bbw_threshold_pct", 20),
         # max_capital is managed by FundManager
     }
 
 
 def get_rsi_config() -> dict:
     """
-    Get RSI Momentum Bot config from .env.
+    Get RSI Momentum Bot config from settings.yaml.
 
     ✅ Walk-Forward 驗證通過 (88% 一致性, OOS 效率 140%):
     - RSI Period: 21
@@ -173,24 +208,25 @@ def get_rsi_config() -> dict:
     - Leverage: 2x (降低風險)
     - Stop Loss: 4%, Take Profit: 8%
     """
+    params = _get_bot_strategy_params("rsi_*")
     return {
-        "symbol": os.getenv('RSI_SYMBOL', 'BTCUSDT'),
-        "timeframe": os.getenv('RSI_TIMEFRAME', '15m'),
-        "rsi_period": int(os.getenv('RSI_PERIOD', '21')),  # Walk-Forward validated
-        "entry_level": int(os.getenv('RSI_ENTRY_LEVEL', '50')),  # Momentum crossover level
-        "momentum_threshold": int(os.getenv('RSI_MOMENTUM_THRESHOLD', '5')),  # Crossover threshold
-        "leverage": int(os.getenv('RSI_LEVERAGE', '2')),  # 降低槓桿提高穩定性
-        "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
+        "symbol": params.get("symbol", "BTCUSDT"),
+        "timeframe": params.get("timeframe", "15m"),
+        "rsi_period": params.get("rsi_period", 21),
+        "entry_level": params.get("entry_level", 50),
+        "momentum_threshold": params.get("momentum_threshold", 5),
+        "leverage": params.get("leverage", 2),
+        "margin_type": params.get("margin_type", "ISOLATED"),
         # max_capital is managed by FundManager
-        "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
-        "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.04'),  # 4% (Walk-Forward validated)
-        "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.08'),  # 8% (Walk-Forward validated)
+        "position_size_pct": params.get("position_size_pct", 0.1),
+        "stop_loss_pct": params.get("stop_loss_pct", 0.04),
+        "take_profit_pct": params.get("take_profit_pct", 0.08),
     }
 
 
 def get_grid_futures_config() -> dict:
     """
-    Get Grid Futures Bot config from .env.
+    Get Grid Futures Bot config from settings.yaml.
 
     ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
 
@@ -205,30 +241,31 @@ def get_grid_futures_config() -> dict:
     - trend_period: 20 (更靈敏)
     - atr_multiplier: 3.0 (更寬範圍)
     """
+    params = _get_bot_strategy_params("grid_futures_*")
     return {
-        "symbol": os.getenv('GRID_FUTURES_SYMBOL', 'BTCUSDT'),
-        "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-        "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '2')),  # Validated: 2x (100% 一致性)
-        "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
-        "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '10')),  # Validated: 10 grids (優化後)
-        "direction": os.getenv('GRID_FUTURES_DIRECTION', 'trend_follow'),  # Validated
-        "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'true').lower() == 'true',
-        "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),  # Validated: 20 (更靈敏)
-        "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-        "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
-        "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '3.0'),  # Validated: 3.0 (更寬範圍)
-        "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
+        "symbol": params.get("symbol", "BTCUSDT"),
+        "timeframe": params.get("timeframe", "1h"),
+        "leverage": params.get("leverage", 2),
+        "margin_type": params.get("margin_type", "ISOLATED"),
+        "grid_count": params.get("grid_count", 10),
+        "direction": params.get("direction", "trend_follow"),
+        "use_trend_filter": params.get("use_trend_filter", True),
+        "trend_period": params.get("trend_period", 20),
+        "use_atr_range": params.get("use_atr_range", True),
+        "atr_period": params.get("atr_period", 14),
+        "atr_multiplier": params.get("atr_multiplier", 3.0),
+        "fallback_range_pct": params.get("fallback_range_pct", 0.08),
         # max_capital is managed by FundManager
-        "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
-        "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
-        "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.05'),
-        "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
+        "position_size_pct": params.get("position_size_pct", 0.1),
+        "max_position_pct": params.get("max_position_pct", 0.5),
+        "stop_loss_pct": params.get("stop_loss_pct", 0.05),
+        "rebuild_threshold_pct": params.get("rebuild_threshold_pct", 0.02),
     }
 
 
 def get_supertrend_config() -> dict:
     """
-    Get Supertrend Bot config from .env.
+    Get Supertrend Bot config from settings.yaml.
 
     ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
 
@@ -243,18 +280,19 @@ def get_supertrend_config() -> dict:
     - atr_multiplier: 3.0
     - stop_loss_pct: 3%
     """
+    params = _get_bot_strategy_params("supertrend_*")
     return {
-        "symbol": os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
-        "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '15m'),
-        "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '2')),  # Validated: 2x (降低風險)
-        "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
-        "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '25')),  # Validated: 25 (更長週期)
-        "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),  # Validated: 3.0
+        "symbol": params.get("symbol", "BTCUSDT"),
+        "timeframe": params.get("timeframe", "15m"),
+        "leverage": params.get("leverage", 2),
+        "margin_type": params.get("margin_type", "ISOLATED"),
+        "atr_period": params.get("atr_period", 25),
+        "atr_multiplier": params.get("atr_multiplier", 3.0),
         # max_capital is managed by FundManager
-        "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
-        "stop_loss_pct": os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.03'),  # Validated: 3%
-        "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
-        "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.02'),
+        "position_size_pct": params.get("position_size_pct", 0.1),
+        "stop_loss_pct": params.get("stop_loss_pct", 0.03),
+        "use_trailing_stop": params.get("use_trailing_stop", False),
+        "trailing_stop_pct": params.get("trailing_stop_pct", 0.02),
     }
 
 
@@ -463,9 +501,7 @@ async def main():
 
         # 5. Initialize Fund Manager (centralized capital allocation)
         print("正在初始化資金管理系統...")
-        import yaml
-        with open("src/fund_manager/config/settings.yaml", "r") as f:
-            yaml_config = yaml.safe_load(f)
+        yaml_config = _load_yaml_config()
         fund_config = FundManagerConfig.from_yaml(yaml_config)
         _fund_manager = FundManager(
             exchange=_exchange,

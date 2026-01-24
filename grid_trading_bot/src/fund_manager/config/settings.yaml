@@ -1,8 +1,8 @@
 # =============================================================================
-# Fund Manager Configuration
+# Trading System Configuration
 # =============================================================================
-# Version: 1.0
-# Description: Configuration for centralized fund allocation and distribution
+# Version: 2.0
+# Description: Centralized configuration for fund allocation and bot strategies
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -37,9 +37,6 @@ exchange:
   # Exchange name: binance, okx, bybit, etc.
   name: binance
 
-  # Path to API credentials file (never put keys directly here)
-  api_key_path: config/api_keys.json
-
   # Currency to monitor for balance
   base_currency: USDT
 
@@ -57,7 +54,6 @@ strategy:
   auto_dispatch: true
 
   # Delay in seconds after detecting new funds before dispatching
-  # (to ensure funds are fully settled)
   new_fund_delay: 30
 
   # Rebalance frequency: daily, weekly, monthly, never
@@ -70,69 +66,161 @@ strategy:
   rebalance_hour: 0
 
 # -----------------------------------------------------------------------------
-# Bot Allocations (Futures Only)
+# Bot Configurations
 # -----------------------------------------------------------------------------
-# Note: GridBot (spot) is excluded from fund management.
-#       Only futures bots are managed by FundManager.
-#
-# Each bot configuration:
-#   - bot_id: Unique identifier (required), supports wildcards (e.g., grid_futures_*)
-#   - name: Display name
-#   - ratio: Allocation ratio for fixed_ratio strategy (0.0 - 1.0)
-#   - fixed_amount: Fixed amount for fixed_amount strategy
-#   - min_capital: Minimum capital to allocate
-#   - max_capital: Maximum capital to allocate
-#   - priority: Higher priority gets allocated first (for fixed_amount)
-#   - status: active, inactive, paused
-#   - notify_method: file, api, none
-#   - notify_target: File path or API endpoint
+# Each bot includes:
+#   - Fund allocation settings (ratio, min/max capital)
+#   - Strategy parameters (Walk-Forward validated)
 # -----------------------------------------------------------------------------
 bots:
-  # 根據 OOS 績效排序: Bollinger (+44.6%) > Grid > RSI > Supertrend (-2.8%)
 
-  # Grid Futures Bot (合約網格)
-  - bot_id: grid_futures_*
-    name: "Grid Futures Trading"
-    ratio: 0.30                        # 30%
-    min_capital: 100
-    max_capital: 10000
-    priority: 10
-    status: active
-    notify_method: file
-    notify_target: data/fund_notifications/grid_futures.json
-
-  # Bollinger Bot (布林通道策略) - OOS 最佳績效 +44.6%
+  # ===========================================================================
+  # Bollinger Bot (布林通道 + Supertrend 趨勢策略)
+  # ===========================================================================
+  # Walk-Forward 驗證: 75% 一致性, Sharpe 1.81, OOS 96%
+  # 報酬: +35.1%, 最大回撤: 6.7%
+  # ===========================================================================
   - bot_id: bollinger_*
     name: "Bollinger Strategy"
-    ratio: 0.30                        # 30% ↑ (原 20%)
+    status: active
+
+    # --- 資金分配 ---
+    ratio: 0.30                          # 30%
     min_capital: 50
     max_capital: 8000
     priority: 9
-    status: active
-    notify_method: file
-    notify_target: data/fund_notifications/bollinger.json
 
-  # RSI Bot (RSI 均值回歸策略)
+    # --- 策略參數 (Walk-Forward validated) ---
+    strategy_params:
+      symbol: BTCUSDT
+      timeframe: 15m
+      leverage: 2
+      margin_type: ISOLATED
+      position_size_pct: 0.1
+
+      # Bollinger Bands
+      bb_period: 20
+      bb_std: 3.0
+
+      # Supertrend Filter
+      st_atr_period: 20
+      st_atr_multiplier: 3.5
+
+      # ATR Stop Loss
+      atr_stop_multiplier: 2.0
+
+      # BBW Filter
+      bbw_lookback: 200
+      bbw_threshold_pct: 20
+
+  # ===========================================================================
+  # RSI Momentum Bot (RSI 動量策略)
+  # ===========================================================================
+  # Walk-Forward 驗證: 88% 一致性, Sharpe 0.81, OOS 140%
+  # 報酬: +7.86%, Stop Loss: 4%, Take Profit: 8%
+  # ===========================================================================
   - bot_id: rsi_*
-    name: "RSI Strategy"
-    ratio: 0.15                        # 15%
+    name: "RSI Momentum Strategy"
+    status: active
+
+    # --- 資金分配 ---
+    ratio: 0.15                          # 15%
     min_capital: 50
     max_capital: 3000
     priority: 8
-    status: active
-    notify_method: file
-    notify_target: data/fund_notifications/rsi.json
 
-  # Supertrend Bot (超級趨勢策略) - OOS 績效較差 -2.8%
+    # --- 策略參數 (Walk-Forward validated) ---
+    strategy_params:
+      symbol: BTCUSDT
+      timeframe: 15m
+      leverage: 2
+      margin_type: ISOLATED
+      position_size_pct: 0.1
+
+      # RSI Settings
+      rsi_period: 21
+      entry_level: 50
+      momentum_threshold: 5
+
+      # Risk Management
+      stop_loss_pct: 0.04                # 4%
+      take_profit_pct: 0.08              # 8%
+
+  # ===========================================================================
+  # Grid Futures Bot (趨勢網格策略)
+  # ===========================================================================
+  # Walk-Forward 驗證: 100% 一致性, Sharpe 4.50
+  # 報酬: +123.9% (2年), 最大回撤: 3.5%
+  # ===========================================================================
+  - bot_id: grid_futures_*
+    name: "Grid Futures Trading"
+    status: active
+
+    # --- 資金分配 ---
+    ratio: 0.30                          # 30%
+    min_capital: 100
+    max_capital: 10000
+    priority: 10
+
+    # --- 策略參數 (Walk-Forward validated) ---
+    strategy_params:
+      symbol: BTCUSDT
+      timeframe: 1h
+      leverage: 2
+      margin_type: ISOLATED
+      position_size_pct: 0.1
+      max_position_pct: 0.5
+
+      # Grid Settings
+      grid_count: 10
+      direction: trend_follow
+
+      # Trend Filter
+      use_trend_filter: true
+      trend_period: 20
+
+      # ATR Range
+      use_atr_range: true
+      atr_period: 14
+      atr_multiplier: 3.0
+      fallback_range_pct: 0.08
+
+      # Risk Management
+      stop_loss_pct: 0.05
+      rebuild_threshold_pct: 0.02
+
+  # ===========================================================================
+  # Supertrend Bot (超級趨勢策略)
+  # ===========================================================================
+  # Walk-Forward 驗證: 75% 一致性, Sharpe 0.39
+  # 報酬: +6.7% (2年), 最大回撤: 11.5%
+  # ===========================================================================
   - bot_id: supertrend_*
     name: "Supertrend Strategy"
-    ratio: 0.15                        # 15% ↓ (原 25%)
+    status: active
+
+    # --- 資金分配 ---
+    ratio: 0.15                          # 15%
     min_capital: 100
     max_capital: 5000
     priority: 7
-    status: active
-    notify_method: file
-    notify_target: data/fund_notifications/supertrend.json
+
+    # --- 策略參數 (Walk-Forward validated) ---
+    strategy_params:
+      symbol: BTCUSDT
+      timeframe: 15m
+      leverage: 2
+      margin_type: ISOLATED
+      position_size_pct: 0.1
+
+      # Supertrend Settings
+      atr_period: 25
+      atr_multiplier: 3.0
+
+      # Risk Management
+      stop_loss_pct: 0.03                # 3%
+      use_trailing_stop: false
+      trailing_stop_pct: 0.02
 
 # Total: 90% allocated, 10% reserve (unallocated)
 
@@ -140,14 +228,9 @@ bots:
 # Notification Settings
 # -----------------------------------------------------------------------------
 notifications:
-  # Enable/disable notifications
   enabled: true
-
-  # Retry settings for failed notifications
   retry_count: 3
-  retry_interval: 60  # seconds
-
-  # Notify on these events
+  retry_interval: 60
   events:
     - deposit_detected
     - allocation_complete
@@ -158,14 +241,7 @@ notifications:
 # Safety Limits
 # -----------------------------------------------------------------------------
 limits:
-  # Maximum single allocation amount
   max_single_allocation: 5000
-
-  # Maximum daily allocation total
   max_daily_allocation: 20000
-
-  # Alert threshold - notify if balance drops by this percentage
   balance_drop_alert_threshold: 0.20
-
-  # Require confirmation for allocations above this amount
   confirm_threshold: 1000
