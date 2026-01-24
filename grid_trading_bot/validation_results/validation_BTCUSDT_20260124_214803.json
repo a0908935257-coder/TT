@@ -1,0 +1,238 @@
+{
+  "metadata": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "days": 730,
+    "periods": 10,
+    "data_bars": 17520,
+    "timestamp": "2026-01-24T21:48:03.575003"
+  },
+  "results": [
+    {
+      "strategy": "supertrend",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "walk_forward": {
+        "total_periods": 10,
+        "consistent_periods": 7,
+        "consistency_pct": 70.0,
+        "avg_oos_sharpe": 5.8390167014064875,
+        "period_details": [
+          {
+            "period": 1,
+            "is_start": "2024-01-25T13:00:00+00:00",
+            "is_end": "2024-03-16T14:59:59.999000+00:00",
+            "oos_start": "2024-03-16T15:00:00+00:00",
+            "oos_end": "2024-04-07T12:59:59.999000+00:00",
+            "is_sharpe": 11.56500776881903,
+            "oos_sharpe": 11.337300642360914,
+            "is_return_pct": 26.944514052097574,
+            "oos_return_pct": 24.11197329451469,
+            "is_win_rate": 93.44262295081967,
+            "oos_win_rate": 97.5,
+            "is_trades": 61,
+            "oos_trades": 40,
+            "oos_is_ratio": 0.9803106810639549,
+            "is_consistent": true
+          },
+          {
+            "period": 2,
+            "is_start": "2024-04-07T13:00:00+00:00",
+            "is_end": "2024-05-28T14:59:59.999000+00:00",
+            "oos_start": "2024-05-28T15:00:00+00:00",
+            "oos_end": "2024-06-19T12:59:59.999000+00:00",
+            "is_sharpe": 11.226978117879687,
+            "oos_sharpe": 6.304676469572259,
+            "is_return_pct": 30.603067268070944,
+            "oos_return_pct": 7.147836553919717,
+            "is_win_rate": 98.50746268656717,
+            "oos_win_rate": 93.33333333333333,
+            "is_trades": 67,
+            "oos_trades": 30,
+            "oos_is_ratio": 0.5615648666431134,
+            "is_consistent": true
+          },
+          {
+            "period": 3,
+            "is_start": "2024-06-19T13:00:00+00:00",
+            "is_end": "2024-08-09T14:59:59.999000+00:00",
+            "oos_start": "2024-08-09T15:00:00+00:00",
+            "oos_end": "2024-08-31T12:59:59.999000+00:00",
+            "is_sharpe": 2.769813457088239,
+            "oos_sharpe": 20.933606871056654,
+            "is_return_pct": 13.118086311002198,
+            "oos_return_pct": 18.1539201421001,
+            "is_win_rate": 90.47619047619048,
+            "oos_win_rate": 100.0,
+            "is_trades": 63,
+            "oos_trades": 31,
+            "oos_is_ratio": 7.557767768614666,
+            "is_consistent": true
+          },
+          {
+            "period": 4,
+            "is_start": "2024-08-31T13:00:00+00:00",
+            "is_end": "2024-10-21T14:59:59.999000+00:00",
+            "oos_start": "2024-10-21T15:00:00+00:00",
+            "oos_end": "2024-11-12T12:59:59.999000+00:00",
+            "is_sharpe": 0.448190482265682,
+            "oos_sharpe": 7.395343001728839,
+            "is_return_pct": 1.9927339233549495,
+            "oos_return_pct": 8.947645094241949,
+            "is_win_rate": 91.66666666666667,
+            "oos_win_rate": 94.28571428571429,
+            "is_trades": 60,
+            "oos_trades": 35,
+            "oos_is_ratio": 16.500446337780478,
+            "is_consistent": true
+          },
+          {
+            "period": 5,
+            "is_start": "2024-11-12T13:00:00+00:00",
+            "is_end": "2025-01-02T14:59:59.999000+00:00",
+            "oos_start": "2025-01-02T15:00:00+00:00",
+            "oos_end": "2025-01-24T12:59:59.999000+00:00",
+            "is_sharpe": 1.6213733358772149,
+            "oos_sharpe": 5.080815175803605,
+            "is_return_pct": 6.864799955885129,
+            "oos_return_pct": 11.292300673347736,
+            "is_win_rate": 88.88888888888889,
+            "oos_win_rate": 95.34883720930233,
+            "is_trades": 63,
+            "oos_trades": 43,
+            "oos_is_ratio": 3.133649149999572,
+            "is_consistent": true
+          },
+          {
+            "period": 6,
+            "is_start": "2025-01-24T13:00:00+00:00",
+            "is_end": "2025-03-16T14:59:59.999000+00:00",
+            "oos_start": "2025-03-16T15:00:00+00:00",
+            "oos_end": "2025-04-07T12:59:59.999000+00:00",
+            "is_sharpe": 5.328444524792418,
+            "oos_sharpe": 0.48920999181826674,
+            "is_return_pct": 16.59450080826372,
+            "oos_return_pct": 0.6578481379948906,
+            "is_win_rate": 92.3076923076923,
+            "oos_win_rate": 89.47368421052632,
+            "is_trades": 52,
+            "oos_trades": 19,
+            "oos_is_ratio": 0.0918110321956153,
+            "is_consistent": false
+          },
+          {
+            "period": 7,
+            "is_start": "2025-04-07T13:00:00+00:00",
+            "is_end": "2025-05-28T14:59:59.999000+00:00",
+            "oos_start": "2025-05-28T15:00:00+00:00",
+            "oos_end": "2025-06-19T12:59:59.999000+00:00",
+            "is_sharpe": 3.278316899350278,
+            "oos_sharpe": 1.9693819896571099,
+            "is_return_pct": 7.907436395134325,
+            "oos_return_pct": 2.3437238995944263,
+            "is_win_rate": 93.87755102040816,
+            "oos_win_rate": 95.83333333333333,
+            "is_trades": 49,
+            "oos_trades": 24,
+            "oos_is_ratio": 0.6007295969609946,
+            "is_consistent": true
+          },
+          {
+            "period": 8,
+            "is_start": "2025-06-19T13:00:00+00:00",
+            "is_end": "2025-08-09T14:59:59.999000+00:00",
+            "oos_start": "2025-08-09T15:00:00+00:00",
+            "oos_end": "2025-08-31T12:59:59.999000+00:00",
+            "is_sharpe": 5.5163441928913794,
+            "oos_sharpe": 0.8103633470014128,
+            "is_return_pct": 10.362583794732492,
+            "oos_return_pct": 1.1579070540988659,
+            "is_win_rate": 98.03921568627452,
+            "oos_win_rate": 92.3076923076923,
+            "is_trades": 51,
+            "oos_trades": 26,
+            "oos_is_ratio": 0.146902245158249,
+            "is_consistent": false
+          },
+          {
+            "period": 9,
+            "is_start": "2025-08-31T13:00:00+00:00",
+            "is_end": "2025-10-21T14:59:59.999000+00:00",
+            "oos_start": "2025-10-21T15:00:00+00:00",
+            "oos_end": "2025-11-12T12:59:59.999000+00:00",
+            "is_sharpe": 7.635813983975207,
+            "oos_sharpe": -0.493008398778615,
+            "is_return_pct": 14.853499160918584,
+            "oos_return_pct": -0.8504378557625141,
+            "is_win_rate": 98.21428571428571,
+            "oos_win_rate": 88.88888888888889,
+            "is_trades": 56,
+            "oos_trades": 27,
+            "oos_is_ratio": -0.06456527094730963,
+            "is_consistent": false
+          },
+          {
+            "period": 10,
+            "is_start": "2025-11-12T13:00:00+00:00",
+            "is_end": "2026-01-02T14:59:59.999000+00:00",
+            "oos_start": "2026-01-02T15:00:00+00:00",
+            "oos_end": "2026-01-24T12:59:59.999000+00:00",
+            "is_sharpe": 3.7623857776042726,
+            "oos_sharpe": 4.56247792384443,
+            "is_return_pct": 14.0850161878666,
+            "oos_return_pct": 6.283878882218699,
+            "is_win_rate": 92.3076923076923,
+            "oos_win_rate": 94.87179487179488,
+            "is_trades": 65,
+            "oos_trades": 39,
+            "oos_is_ratio": 1.212655531233063,
+            "is_consistent": true
+          }
+        ]
+      },
+      "overfitting_analysis": {
+        "avg_is_sharpe": 5.315266854054341,
+        "avg_oos_sharpe": 5.8390167014064875,
+        "avg_is_return_pct": 14.33262378573265,
+        "avg_oos_return_pct": 7.924659587626856,
+        "oos_is_sharpe_ratio": 1.09853688661984,
+        "oos_is_return_ratio": 0.5529105979545368,
+        "is_overfit": false,
+        "overfit_severity": "LOW"
+      },
+      "monte_carlo": {
+        "strategy": "supertrend",
+        "base_result": {
+          "sharpe_ratio": 4.079210080721662,
+          "total_return_pct": 204.75550635333946,
+          "max_drawdown_pct": 7.68458236490545,
+          "win_rate": 93.5665914221219,
+          "total_trades": 886
+        },
+        "trade_shuffle": {
+          "probability_of_profit": 1.0,
+          "probability_of_ruin": 0.0,
+          "worst_case_metrics": {
+            "total_return": 204.75550635333946,
+            "sharpe_ratio": 3.0094133273619685,
+            "max_drawdown": 17.690501260962755,
+            "profit_factor": 1.8688588786527764
+          }
+        },
+        "returns_bootstrap": {
+          "probability_of_profit": 0.99,
+          "probability_of_ruin": 1.0,
+          "worst_case_metrics": {
+            "total_return": 2302.6114853236477,
+            "sharpe_ratio": 1.9393257498367107,
+            "max_drawdown": 99.71431399500183
+          }
+        },
+        "robustness": {
+          "is_robust": true,
+          "assessment": "ROBUST"
+        }
+      }
+    }
+  ]
+}
