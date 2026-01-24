@@ -226,6 +226,10 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         """
         Process kline and generate signal.
 
+        Grid Futures Entry Logic (買跌賣漲):
+        - 上升趨勢: 價格下跌穿越 grid level 時做多 (buy the dip)
+        - 下降趨勢: 價格上漲穿越 grid level 時做空 (sell the rally)
+
         Args:
             kline: Current kline
             context: Backtest context
@@ -235,14 +239,14 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         """
         current_price = kline.close
         closes = context.get_closes(self._config.trend_period + 5)
-        klines = context.get_klines_window(self._config.atr_period + 5)
+        klines_window = context.get_klines_window(self._config.atr_period + 5)
 
         # Update trend
         self._update_trend(closes, current_price)
 
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
-            self._initialize_grid(klines, current_price)
+            self._initialize_grid(klines_window, current_price)
             return None
 
         # Already have position - don't generate new signals
@@ -261,6 +265,7 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
             allowed_long = True
             allowed_short = True
         elif self._config.direction == GridDirection.TREND_FOLLOW:
+            # 趨勢跟隨: 上升趨勢做多，下降趨勢做空
             if self._current_trend > 0:
                 allowed_long = True
             elif self._current_trend < 0:
@@ -271,45 +276,52 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         if level_idx is None:
             return None
 
-        # Check for entry signals
+        # Check for entry signals using kline low/high for better detection
         prev_klines = context.get_klines_window(2)
         if len(prev_klines) < 2:
             return None
 
-        prev_close = prev_klines[-2].close
+        prev_low = prev_klines[-2].low
+        prev_high = prev_klines[-2].high
+        curr_low = kline.low
+        curr_high = kline.high
 
-        # Long entry: price dropped to a grid level
+        # Long entry: 上升趨勢中，價格下跌觸及 grid level (買跌)
+        # 條件: kline 的 low 觸及或穿越 grid level
         if allowed_long and level_idx > 0:
             entry_level = self._grid_levels[level_idx]
-            if not entry_level.is_filled and prev_close > entry_level.price >= current_price:
+            # 當前 K 線的 low 觸及 grid level (價格下探)
+            if not entry_level.is_filled and curr_low <= entry_level.price:
                 entry_level.is_filled = True
                 # Take profit at next grid level up
                 tp_level = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
                 tp_price = self._grid_levels[tp_level].price
-                sl_price = current_price * (Decimal("1") - self._config.stop_loss_pct)
+                sl_price = entry_level.price * (Decimal("1") - self._config.stop_loss_pct)
 
                 return Signal.long_entry(
-                    price=current_price,
+                    price=entry_level.price,  # 使用 grid level 價格
                     stop_loss=sl_price,
                     take_profit=tp_price,
-                    reason="grid_long_entry",
+                    reason="grid_long_dip_buy",
                 )
 
-        # Short entry: price rose to a grid level
+        # Short entry: 下降趨勢中，價格上漲觸及 grid level (賣漲)
+        # 條件: kline 的 high 觸及或穿越 grid level
         if allowed_short and level_idx < len(self._grid_levels) - 1:
             entry_level = self._grid_levels[level_idx + 1]
-            if not entry_level.is_filled and prev_close < entry_level.price <= current_price:
+            # 當前 K 線的 high 觸及 grid level (價格反彈)
+            if not entry_level.is_filled and curr_high >= entry_level.price:
                 entry_level.is_filled = True
                 # Take profit at next grid level down
                 tp_level = max(level_idx + 1 - self._config.take_profit_grids, 0)
                 tp_price = self._grid_levels[tp_level].price
-                sl_price = current_price * (Decimal("1") + self._config.stop_loss_pct)
+                sl_price = entry_level.price * (Decimal("1") + self._config.stop_loss_pct)
 
                 return Signal.short_entry(
-                    price=current_price,
+                    price=entry_level.price,  # 使用 grid level 價格
                     stop_loss=sl_price,
                     take_profit=tp_price,
-                    reason="grid_short_entry",
+                    reason="grid_short_rally_sell",
                 )
 
         return None
