@@ -7,6 +7,7 @@ Features:
 - Trend-following mode
 - Dynamic ATR-based grid range
 - Automatic grid rebuilding
+- Kline-based grid detection (與回測一致)
 
 ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
 - Walk-Forward 一致性: 100% (8/8 時段獲利)
@@ -18,6 +19,11 @@ Features:
 - grid_count: 10
 - trend_period: 20
 - atr_multiplier: 3.0
+
+進場邏輯 (與回測一致):
+- Long entry: K 線低點觸及 grid level (買跌)
+- Short entry: K 線高點觸及 grid level (賣漲)
+- 使用 grid level 價格進場（非市場價格）
 """
 
 import asyncio
@@ -28,7 +34,8 @@ from typing import Any, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
 from src.core import get_logger
-from src.core.models import Kline, OrderSide
+from src.core.models import Kline, MarketType, OrderSide
+from typing import Callable
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master.models import BotState
@@ -100,6 +107,9 @@ class GridFuturesBot(BaseBot):
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
+        # Kline subscription callback
+        self._kline_callback: Optional[Callable] = None
+
         # State persistence
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
@@ -152,13 +162,26 @@ class GridFuturesBot(BaseBot):
         # Check existing position
         await self._sync_position()
 
-        # Start monitoring
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        # Subscribe to kline updates (使用 K 線高低點檢測，與回測一致)
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync
+        await self._data_manager.klines.subscribe_kline(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            callback=on_kline_sync,
+            market_type=MarketType.FUTURES,
+        )
+
+        # Start background monitoring (capital update, drawdown tracking)
+        self._monitor_task = asyncio.create_task(self._background_monitor())
 
         # Start periodic state saving
         self._start_save_task()
 
         logger.info("Grid Futures Bot started successfully")
+        logger.info(f"  Subscribed to {self._config.symbol} {self._config.timeframe} klines")
 
     async def _do_stop(self, clear_position: bool = False) -> None:
         """
@@ -168,6 +191,17 @@ class GridFuturesBot(BaseBot):
             clear_position: If True, close any open position before stopping
         """
         logger.info("Stopping Grid Futures Bot")
+
+        # Unsubscribe from kline updates
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from klines: {e}")
 
         # Close position if requested
         if clear_position and self._position:
@@ -194,17 +228,45 @@ class GridFuturesBot(BaseBot):
     async def _do_pause(self) -> None:
         """Pause the bot."""
         logger.info("Pausing Grid Futures Bot")
+
+        # Unsubscribe from kline updates
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe: {e}")
+
         if self._monitor_task:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
+        logger.info("Grid Futures Bot paused")
 
     async def _do_resume(self) -> None:
         """Resume the bot."""
         logger.info("Resuming Grid Futures Bot")
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+
+        # Re-subscribe to kline updates
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync
+        await self._data_manager.klines.subscribe_kline(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            callback=on_kline_sync,
+            market_type=MarketType.FUTURES,
+        )
+
+        # Restart background monitor
+        self._monitor_task = asyncio.create_task(self._background_monitor())
+        logger.info("Grid Futures Bot resumed")
 
     async def _do_health_check(self) -> bool:
         """Check bot health."""
@@ -709,55 +771,128 @@ class GridFuturesBot(BaseBot):
         return False
 
     # =========================================================================
-    # Grid Trading Logic
+    # Kline Event Handler (與回測一致的進場邏輯)
     # =========================================================================
 
-    async def _process_grid(self, current_price: Decimal) -> None:
-        """Process grid trading logic."""
+    async def _on_kline(self, kline: Kline) -> None:
+        """
+        Process kline update - main trading logic.
+
+        使用 K 線高低點檢測網格觸發，與回測策略一致:
+        - Long entry: kline.low 觸及 grid level
+        - Short entry: kline.high 觸及 grid level
+        - 使用 grid level 價格進場（非市場價格）
+        """
+        if self._state != BotState.RUNNING:
+            return
+
+        try:
+            current_price = kline.close
+            kline_low = kline.low
+            kline_high = kline.high
+
+            # Update closes for indicators
+            self._closes.append(current_price)
+            if len(self._closes) > 500:
+                self._closes = self._closes[-500:]
+
+            # Update trend
+            old_trend = self._current_trend
+            self._current_trend = self._determine_trend(current_price)
+
+            if old_trend != self._current_trend and self._current_trend != 0:
+                trend_str = "BULLISH" if self._current_trend == 1 else "BEARISH"
+                logger.info(f"Trend changed to {trend_str}")
+
+            # Check if grid needs rebuild
+            if self._check_rebuild_needed(current_price):
+                logger.info(f"Price {current_price} out of range, rebuilding grid")
+                if self._position:
+                    await self._close_position(current_price, ExitReason.GRID_REBUILD)
+                self._initialize_grid(current_price)
+                return
+
+            # Process grid logic with kline high/low (與回測一致)
+            await self._process_grid_kline(kline_low, kline_high, current_price)
+
+            # Update position PnL and check stop loss
+            if self._position:
+                self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
+                if await self._check_stop_loss(current_price):
+                    logger.warning(f"Stop loss triggered at {current_price}")
+
+        except Exception as e:
+            logger.error(f"Error processing kline: {e}")
+
+    # =========================================================================
+    # Grid Trading Logic (與回測一致)
+    # =========================================================================
+
+    async def _process_grid_kline(
+        self,
+        kline_low: Decimal,
+        kline_high: Decimal,
+        current_price: Decimal,
+    ) -> None:
+        """
+        Process grid trading logic using kline high/low.
+
+        與回測策略一致的進場邏輯:
+        - Long entry: K 線低點觸及 grid level (買跌)
+        - Short entry: K 線高點觸及 grid level (賣漲)
+        - 使用 grid level 價格進場
+
+        Args:
+            kline_low: K 線最低價
+            kline_high: K 線最高價
+            current_price: K 線收盤價
+        """
         if not self._grid:
             return
 
-        for level in self._grid.levels:
+        for i, level in enumerate(self._grid.levels):
             grid_price = level.price
 
-            # Long entry: price at or below grid level
-            if current_price <= grid_price and level.state == GridLevelState.EMPTY:
+            # Long entry: K 線低點觸及 grid level (買跌，與回測一致)
+            if level.state == GridLevelState.EMPTY and kline_low <= grid_price:
                 if self._should_trade_direction("long"):
-                    success = await self._open_position(PositionSide.LONG, current_price)
+                    # 使用 grid level 價格進場（與回測一致）
+                    success = await self._open_position(PositionSide.LONG, grid_price)
                     if success:
                         level.state = GridLevelState.LONG_FILLED
                         level.filled_at = datetime.now(timezone.utc)
+                        logger.info(f"Long entry at grid level {i}: {grid_price}")
 
-            # Long exit: price at or above grid level
-            elif current_price >= grid_price and level.state == GridLevelState.LONG_FILLED:
+            # Long exit: K 線高點觸及 grid level
+            elif level.state == GridLevelState.LONG_FILLED and kline_high >= grid_price:
                 if self._position and self._position.side == PositionSide.LONG:
-                    # Calculate partial quantity based on filled grid levels, not total grid count
                     filled_long_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.LONG_FILLED)
                     if filled_long_count > 0:
                         partial_qty = self._position.quantity / Decimal(filled_long_count)
                     else:
                         partial_qty = self._position.quantity
-                    await self._close_position(current_price, ExitReason.GRID_PROFIT, partial_qty)
+                    await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
 
-            # Short entry: price at or above grid level
-            if current_price >= grid_price and level.state == GridLevelState.EMPTY:
+            # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
+            if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
                 if self._should_trade_direction("short"):
-                    success = await self._open_position(PositionSide.SHORT, current_price)
+                    # 使用 grid level 價格進場（與回測一致）
+                    success = await self._open_position(PositionSide.SHORT, grid_price)
                     if success:
                         level.state = GridLevelState.SHORT_FILLED
                         level.filled_at = datetime.now(timezone.utc)
+                        logger.info(f"Short entry at grid level {i}: {grid_price}")
 
-            # Short exit: price at or below grid level
-            elif current_price <= grid_price and level.state == GridLevelState.SHORT_FILLED:
+            # Short exit: K 線低點觸及 grid level
+            elif level.state == GridLevelState.SHORT_FILLED and kline_low <= grid_price:
                 if self._position and self._position.side == PositionSide.SHORT:
-                    # Calculate partial quantity based on filled grid levels, not total grid count
                     filled_short_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.SHORT_FILLED)
                     if filled_short_count > 0:
                         partial_qty = self._position.quantity / Decimal(filled_short_count)
                     else:
                         partial_qty = self._position.quantity
-                    await self._close_position(current_price, ExitReason.GRID_PROFIT, partial_qty)
+                    await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
 
     # =========================================================================
@@ -872,71 +1007,33 @@ class GridFuturesBot(BaseBot):
             logger.debug(f"Failed to cancel stop loss order: {e}")
 
     # =========================================================================
-    # Main Loop
+    # Background Monitor (資金更新、回撤追蹤)
     # =========================================================================
 
-    async def _monitor_loop(self) -> None:
-        """Main monitoring loop."""
-        logger.info("Starting monitor loop")
+    async def _background_monitor(self) -> None:
+        """
+        Background monitoring loop for capital updates and drawdown tracking.
+
+        Note: Trading logic is now handled by _on_kline callback.
+        """
+        logger.info("Starting background monitor")
 
         while self._state == BotState.RUNNING:
             try:
-                # Get current price
-                current_price = await self._get_current_price()
-                if current_price <= 0:
-                    await asyncio.sleep(5)
-                    continue
-
-                # Update closes for indicators
-                self._closes.append(current_price)
-                if len(self._closes) > 500:
-                    self._closes = self._closes[-500:]
-
-                # Update trend
-                old_trend = self._current_trend
-                self._current_trend = self._determine_trend(current_price)
-
-                # Log trend change
-                if old_trend != self._current_trend and self._current_trend != 0:
-                    trend_str = "BULLISH" if self._current_trend == 1 else "BEARISH"
-                    logger.info(f"Trend changed to {trend_str}")
-
-                # Check if grid needs rebuild
-                if self._check_rebuild_needed(current_price):
-                    logger.info(f"Price {current_price} out of range, rebuilding grid")
-
-                    # Close position before rebuild
-                    if self._position:
-                        await self._close_position(current_price, ExitReason.GRID_REBUILD)
-
-                    # Rebuild grid
-                    self._initialize_grid(current_price)
-
-                # Process grid logic
-                await self._process_grid(current_price)
-
-                # Update capital and drawdown
+                # Update capital and drawdown periodically
                 await self._update_capital()
                 self._grid_stats.update_drawdown(self._capital, self._initial_capital)
 
-                # Update position PnL and check stop loss
-                if self._position:
-                    self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
-
-                    # Check stop loss
-                    if await self._check_stop_loss(current_price):
-                        logger.warning(f"Stop loss triggered at {current_price}")
-
-                # Wait for next tick (heartbeat is handled by BaseBot)
-                await asyncio.sleep(1)
+                # Wait 30 seconds between updates
+                await asyncio.sleep(30)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in monitor loop: {e}")
-                await asyncio.sleep(5)
+                logger.error(f"Error in background monitor: {e}")
+                await asyncio.sleep(30)
 
-        logger.info("Monitor loop stopped")
+        logger.info("Background monitor stopped")
 
     # =========================================================================
     # BaseBot Abstract Methods - Extra Status and Health Checks
