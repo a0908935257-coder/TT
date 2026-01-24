@@ -69,7 +69,7 @@ class SupertrendStrategyConfig:
     atr_period: int = 14
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
     grid_count: int = 10
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
     take_profit_grids: int = 1
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
 
