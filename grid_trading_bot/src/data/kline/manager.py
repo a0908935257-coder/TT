@@ -13,7 +13,7 @@ from typing import Callable, Optional
 from sqlalchemy import select
 
 from src.core import get_logger
-from src.core.models import Kline, KlineInterval
+from src.core.models import Kline, KlineInterval, MarketType
 from src.data.cache import MarketCache, RedisManager
 from src.data.database import DatabaseManager, KlineModel
 from src.exchange import ExchangeClient
@@ -242,6 +242,7 @@ class KlineManager:
         symbol: str,
         interval: str | KlineInterval,
         callback: Callable[[Kline], None],
+        market_type: MarketType = MarketType.SPOT,
     ) -> None:
         """
         Subscribe to K-line updates.
@@ -250,11 +251,12 @@ class KlineManager:
             symbol: Trading pair
             interval: K-line interval
             callback: Callback function(kline)
+            market_type: Market type (SPOT or FUTURES)
         """
         symbol = symbol.upper()
         interval_str = interval.value if isinstance(interval, KlineInterval) else interval
 
-        key = f"{symbol}:{interval_str}"
+        key = f"{symbol}:{interval_str}:{market_type.value}"
 
         if key not in self._subscriptions:
             self._subscriptions[key] = []
@@ -277,16 +279,22 @@ class KlineManager:
                     except Exception as e:
                         logger.error(f"Kline callback error: {e}")
 
-            await self._exchange.ws.subscribe_kline(symbol, interval_str, on_kline)
+            # Use appropriate WebSocket based on market type
+            ws = self._exchange.futures_ws if market_type == MarketType.FUTURES else self._exchange.ws
+            if ws:
+                await ws.subscribe_kline(symbol, interval_str, on_kline)
+            else:
+                logger.error(f"WebSocket not available for {market_type.value}")
 
         self._subscriptions[key].append(callback)
-        logger.debug(f"Subscribed to {symbol} {interval_str} klines")
+        logger.debug(f"Subscribed to {symbol} {interval_str} klines ({market_type.value})")
 
     async def unsubscribe_kline(
         self,
         symbol: str,
         interval: str | KlineInterval,
         callback: Optional[Callable] = None,
+        market_type: MarketType = MarketType.SPOT,
     ) -> None:
         """
         Unsubscribe from K-line updates.
@@ -295,11 +303,12 @@ class KlineManager:
             symbol: Trading pair
             interval: K-line interval
             callback: Specific callback to remove (None removes all)
+            market_type: Market type (SPOT or FUTURES)
         """
         symbol = symbol.upper()
         interval_str = interval.value if isinstance(interval, KlineInterval) else interval
 
-        key = f"{symbol}:{interval_str}"
+        key = f"{symbol}:{interval_str}:{market_type.value}"
 
         if key in self._subscriptions:
             if callback:
@@ -310,8 +319,9 @@ class KlineManager:
             if not self._subscriptions[key]:
                 del self._subscriptions[key]
                 # Unsubscribe from WebSocket
-                if self._exchange.ws:
-                    await self._exchange.ws.unsubscribe_kline(symbol, interval_str)
+                ws = self._exchange.futures_ws if market_type == MarketType.FUTURES else self._exchange.ws
+                if ws:
+                    await ws.unsubscribe_kline(symbol, interval_str)
 
     # =========================================================================
     # Private Methods - Data Sources

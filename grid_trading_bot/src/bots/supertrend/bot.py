@@ -29,7 +29,7 @@ from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from src.core import get_logger
-from src.core.models import Kline, KlineInterval, OrderType, OrderSide
+from src.core.models import Kline, KlineInterval, MarketType, OrderType, OrderSide
 from src.bots.base import BaseBot
 from src.master.models import BotState
 from src.exchange import ExchangeClient
@@ -216,6 +216,7 @@ class SupertrendBot(BaseBot):
             symbol=self._config.symbol,
             interval=self._config.timeframe,
             callback=on_kline_sync,
+            market_type=MarketType.FUTURES,  # Futures trading
         )
 
         logger.info(f"Supertrend Bot initialized successfully")
@@ -250,6 +251,7 @@ class SupertrendBot(BaseBot):
                 symbol=self._config.symbol,
                 interval=self._config.timeframe,
                 callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
             )
         except Exception as e:
             logger.warning(f"Failed to unsubscribe: {e}")
@@ -285,6 +287,7 @@ class SupertrendBot(BaseBot):
                 symbol=self._config.symbol,
                 interval=self._config.timeframe,
                 callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
             )
         except Exception as e:
             logger.warning(f"Failed to unsubscribe: {e}")
@@ -307,6 +310,7 @@ class SupertrendBot(BaseBot):
             symbol=self._config.symbol,
             interval=self._config.timeframe,
             callback=on_kline_sync,
+            market_type=MarketType.FUTURES,
         )
 
         logger.info("Supertrend Bot resumed")

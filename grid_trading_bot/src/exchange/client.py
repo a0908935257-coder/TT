@@ -172,6 +172,11 @@ class ExchangeClient:
         return self._spot_ws
 
     @property
+    def futures_ws(self) -> Optional[BinanceWebSocket]:
+        """Get Futures WebSocket client."""
+        return self._futures_ws
+
+    @property
     def is_connected(self) -> bool:
         """Check if client is connected."""
         return self._connected
