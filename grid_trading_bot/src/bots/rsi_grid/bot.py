@@ -6,8 +6,14 @@ A futures trading bot combining RSI zone filtering with Grid entry mechanism.
 Strategy Logic:
 - RSI Zone Filter: Oversold=LONG only, Overbought=SHORT only, Neutral=follow trend
 - Trend Filter: SMA-based trend direction
-- Grid Entry: ATR-based dynamic grid levels
+- Grid Entry: ATR-based dynamic grid levels, kline high/low detection
 - Risk Management: ATR-based stop loss, grid-based take profit
+- WebSocket subscription for real-time kline updates
+
+Entry Logic (與回測一致):
+- Long entry: K 線低點觸及 grid level (買跌)
+- Short entry: K 線高點觸及 grid level (賣漲)
+- 使用 grid level 價格進場
 
 Design Goals:
 - Target Sharpe > 3.0
@@ -22,9 +28,11 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
+from typing import Callable
+
 from src.bots.base import BaseBot
 from src.core import get_logger
-from src.core.models import Kline, OrderSide
+from src.core.models import Kline, MarketType, OrderSide
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master.models import BotState
@@ -120,6 +128,9 @@ class RSIGridBot(BaseBot):
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
+        # Kline subscription callback
+        self._kline_callback: Optional[Callable] = None
+
         # State persistence
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
@@ -183,8 +194,20 @@ class RSIGridBot(BaseBot):
         # Check existing position
         await self._sync_position()
 
-        # Start monitoring
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        # Subscribe to kline updates (WebSocket, 與回測一致)
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync
+        await self._data_manager.klines.subscribe_kline(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            callback=on_kline_sync,
+            market_type=MarketType.FUTURES,
+        )
+
+        # Start background monitoring (capital update, drawdown tracking)
+        self._monitor_task = asyncio.create_task(self._background_monitor())
 
         # Start periodic state saving
         self._start_save_task()
@@ -195,10 +218,22 @@ class RSIGridBot(BaseBot):
         logger.info(f"  RSI: period={self._config.rsi_period}, oversold={self._config.oversold_level}, overbought={self._config.overbought_level}")
         logger.info(f"  Grid: count={self._config.grid_count}, ATR mult={self._config.atr_multiplier}")
         logger.info(f"  Trend SMA: {self._config.trend_sma_period}")
+        logger.info(f"  Subscribed to {self._config.symbol} {self._config.timeframe} klines (WebSocket)")
 
     async def _do_stop(self, clear_position: bool = False) -> None:
         """Stop the bot."""
         logger.info("Stopping RSI-Grid Bot")
+
+        # Unsubscribe from kline updates
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe from klines: {e}")
 
         # Close position if requested
         if clear_position and self._position:
@@ -224,17 +259,45 @@ class RSIGridBot(BaseBot):
     async def _do_pause(self) -> None:
         """Pause the bot."""
         logger.info("Pausing RSI-Grid Bot")
+
+        # Unsubscribe from kline updates
+        try:
+            await self._data_manager.klines.unsubscribe_kline(
+                symbol=self._config.symbol,
+                interval=self._config.timeframe,
+                callback=self._kline_callback,
+                market_type=MarketType.FUTURES,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe: {e}")
+
         if self._monitor_task:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
+        logger.info("RSI-Grid Bot paused")
 
     async def _do_resume(self) -> None:
         """Resume the bot."""
         logger.info("Resuming RSI-Grid Bot")
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+
+        # Re-subscribe to kline updates
+        def on_kline_sync(kline: Kline) -> None:
+            asyncio.create_task(self._on_kline(kline))
+
+        self._kline_callback = on_kline_sync
+        await self._data_manager.klines.subscribe_kline(
+            symbol=self._config.symbol,
+            interval=self._config.timeframe,
+            callback=on_kline_sync,
+            market_type=MarketType.FUTURES,
+        )
+
+        # Restart background monitor
+        self._monitor_task = asyncio.create_task(self._background_monitor())
+        logger.info("RSI-Grid Bot resumed")
 
     async def _do_health_check(self) -> bool:
         """Check bot health."""
@@ -837,42 +900,54 @@ class RSIGridBot(BaseBot):
             self._consecutive_losses = 0
 
     # =========================================================================
-    # Main Loop
+    # Kline Event Handler (WebSocket 訂閱模式)
     # =========================================================================
 
-    async def _monitor_loop(self) -> None:
-        """Main monitoring loop."""
-        logger.info("Starting RSI-Grid monitor loop")
+    async def _on_kline(self, kline: Kline) -> None:
+        """
+        Process kline update from WebSocket subscription.
 
-        # Calculate sleep interval based on timeframe
-        interval_seconds = self._parse_timeframe_seconds(self._config.timeframe)
+        This is the main trading logic handler, called on each kline update.
+        """
+        if self._state != BotState.RUNNING:
+            return
+
+        try:
+            await self._process_kline(kline)
+        except Exception as e:
+            logger.error(f"Error processing kline: {e}")
+
+    # =========================================================================
+    # Background Monitor (資金更新、回撤追蹤)
+    # =========================================================================
+
+    async def _background_monitor(self) -> None:
+        """
+        Background monitoring loop for capital updates and heartbeat.
+
+        Note: Trading logic is handled by _on_kline callback.
+        """
+        logger.info("Starting RSI-Grid background monitor")
 
         while self._state == BotState.RUNNING:
             try:
-                # Get latest kline
-                klines = await self._exchange.futures.get_klines(
-                    symbol=self._config.symbol,
-                    interval=self._config.timeframe,
-                    limit=2,
-                )
-
-                if klines and len(klines) >= 2:
-                    kline = klines[-2]  # Use completed kline
-                    await self._process_kline(kline)
+                # Update capital and drawdown periodically
+                await self._update_capital()
+                self._stats.update_drawdown(self._capital, self._initial_capital)
 
                 # Send heartbeat
                 self._send_heartbeat()
 
-                # Sleep
-                await asyncio.sleep(min(interval_seconds / 4, 60))
+                # Wait 30 seconds between updates
+                await asyncio.sleep(30)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in monitor loop: {e}")
-                await asyncio.sleep(10)
+                logger.error(f"Error in background monitor: {e}")
+                await asyncio.sleep(30)
 
-        logger.info("Monitor loop stopped")
+        logger.info("Background monitor stopped")
 
     async def _process_kline(self, kline: Kline) -> None:
         """Process new kline data."""
@@ -900,10 +975,6 @@ class RSIGridBot(BaseBot):
             self._initialize_grid(current_price)
             self._prev_rsi = current_rsi
             return
-
-        # Update capital and drawdown
-        await self._update_capital()
-        self._stats.update_drawdown(self._capital, self._initial_capital)
 
         # Position management
         if self._position:
