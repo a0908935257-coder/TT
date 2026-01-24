@@ -721,6 +721,7 @@ class BinanceFuturesAPI:
         stop_price: Decimal | str | None = None,
         time_in_force: str = "GTC",
         client_order_id: str | None = None,
+        self_trade_prevention: str | None = "EXPIRE_TAKER",
     ) -> Order:
         """
         Create a new futures order.
@@ -739,6 +740,11 @@ class BinanceFuturesAPI:
             stop_price: Stop price for stop orders (trigger price)
             time_in_force: Time in force (GTC, IOC, FOK)
             client_order_id: Custom order ID
+            self_trade_prevention: STP mode (EXPIRE_TAKER, EXPIRE_MAKER, EXPIRE_BOTH, NONE)
+                - EXPIRE_TAKER: Cancel the new order (default, protects existing orders)
+                - EXPIRE_MAKER: Cancel the existing order
+                - EXPIRE_BOTH: Cancel both orders
+                - NONE: Allow self-trade
 
         Returns:
             Created Order object
@@ -759,6 +765,7 @@ class BinanceFuturesAPI:
                 reduce_only=reduce_only,
                 trigger_price=stop_price,
                 client_order_id=client_order_id,
+                self_trade_prevention=self_trade_prevention,
             )
 
         # Standard order flow for LIMIT/MARKET orders
@@ -786,6 +793,10 @@ class BinanceFuturesAPI:
         if client_order_id:
             params["newClientOrderId"] = client_order_id
 
+        # Add self-trade prevention mode
+        if self_trade_prevention:
+            params["selfTradePreventionMode"] = self_trade_prevention
+
         # Request full order response
         params["newOrderRespType"] = "RESULT"
 
@@ -808,6 +819,7 @@ class BinanceFuturesAPI:
         reduce_only: bool = False,
         trigger_price: Decimal | str | None = None,
         client_order_id: str | None = None,
+        self_trade_prevention: str | None = "EXPIRE_TAKER",
     ) -> Order:
         """
         Create an Algo Order (for conditional orders like STOP_MARKET, TAKE_PROFIT_MARKET).
@@ -824,6 +836,7 @@ class BinanceFuturesAPI:
             reduce_only: Only reduce position
             trigger_price: Price that triggers the order
             client_order_id: Custom order ID
+            self_trade_prevention: STP mode (EXPIRE_TAKER, EXPIRE_MAKER, EXPIRE_BOTH, NONE)
 
         Returns:
             Created Order object
@@ -852,6 +865,10 @@ class BinanceFuturesAPI:
         # Add client order ID
         if client_order_id:
             params["newClientOrderId"] = client_order_id
+
+        # Add self-trade prevention mode
+        if self_trade_prevention:
+            params["selfTradePreventionMode"] = self_trade_prevention
 
         data = await self._request(
             "POST",

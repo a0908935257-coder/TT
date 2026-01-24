@@ -461,6 +461,7 @@ class BinanceSpotAPI:
         time_in_force: str = "GTC",
         client_order_id: str | None = None,
         stop_price: Decimal | str | None = None,
+        self_trade_prevention: str | None = "EXPIRE_TAKER",
     ) -> Order:
         """
         Create a new order.
@@ -474,6 +475,11 @@ class BinanceSpotAPI:
             time_in_force: Time in force (GTC, IOC, FOK)
             client_order_id: Custom order ID
             stop_price: Stop price for stop orders
+            self_trade_prevention: STP mode (EXPIRE_TAKER, EXPIRE_MAKER, EXPIRE_BOTH, NONE)
+                - EXPIRE_TAKER: Cancel the new order (default, protects existing orders)
+                - EXPIRE_MAKER: Cancel the existing order
+                - EXPIRE_BOTH: Cancel both orders
+                - NONE: Allow self-trade
 
         Returns:
             Created Order object
@@ -509,6 +515,10 @@ class BinanceSpotAPI:
         # Add client order ID
         if client_order_id:
             params["newClientOrderId"] = client_order_id
+
+        # Add self-trade prevention mode
+        if self_trade_prevention:
+            params["selfTradePreventionMode"] = self_trade_prevention
 
         # Request full order response
         params["newOrderRespType"] = "FULL"
