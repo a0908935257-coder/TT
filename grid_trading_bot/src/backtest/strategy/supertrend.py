@@ -5,16 +5,22 @@ Adapts the Supertrend trend-following strategy for the unified backtest framewor
 
 Strategy Logic:
 - Entry: Supertrend flip (bullish = LONG, bearish = SHORT)
-- Filter: RSI overbought/oversold filter
+- Filters: RSI overbought/oversold, ADX trend strength
 - Exit: Supertrend flip or stop loss
 
-VALIDATION STATUS: NOT PASSED
-- Best config found: 1h, ATR(14, 2.0x), RSI filter (16% return)
-- Walk-Forward consistency: 0% (failed overfitting test)
-- Issue: Trend-following struggles in ranging crypto markets
+VALIDATION STATUS: NOT PASSED (2024-01-05 ~ 2026-01-24)
+- Multiple configurations tested with RSI and ADX filters
+- Walk-Forward consistency: 0-17% (failed overfitting test)
+- Issue: Trend-following struggles in crypto markets due to:
+  * Many false breakouts in ranging periods
+  * High volatility causing frequent whipsaws
+  * Low win rate (2-10%) even with filters
+- Tested improvements: ADX filter (>25), RSI filter, various ATR settings
+  * ADX filter reduced false signals but also reduced trade count
+  * All configurations failed to achieve positive returns with >30 trades
 - Recommendation: Use GridFutures (range) or RSI (momentum) instead
-- Note: May perform well in strong trending markets but failed
-        2-year Walk-Forward validation (2024-2026)
+- Note: Pure trend-following strategies generally don't work well in
+        crypto markets which spend ~70% of time ranging
 """
 
 from dataclasses import dataclass, field
@@ -51,6 +57,9 @@ class SupertrendStrategyConfig:
     rsi_period: int = 14
     rsi_overbought: int = 60
     rsi_oversold: int = 40
+    use_adx_filter: bool = False  # ADX trend strength filter
+    adx_period: int = 14
+    adx_threshold: int = 25  # Only trade when ADX > threshold
 
 
 class RSICalculator:
@@ -95,6 +104,100 @@ class RSICalculator:
         return rsi
 
 
+class ADXCalculator:
+    """ADX (Average Directional Index) calculator for trend strength filtering."""
+
+    def __init__(self, period: int = 14):
+        self._period = period
+
+    def calculate(self, highs: list[Decimal], lows: list[Decimal], closes: list[Decimal]) -> Optional[Decimal]:
+        """
+        Calculate ADX from OHLC data.
+
+        ADX measures trend strength:
+        - ADX > 25: Strong trend (good for trend following)
+        - ADX < 20: Weak trend / ranging (avoid trading)
+
+        Args:
+            highs: List of high prices
+            lows: List of low prices
+            closes: List of close prices
+
+        Returns:
+            ADX value (0-100) or None if insufficient data
+        """
+        n = len(closes)
+        if n < self._period * 2 + 1:
+            return None
+
+        # Calculate True Range and Directional Movement
+        tr_list = []
+        plus_dm_list = []
+        minus_dm_list = []
+
+        for i in range(1, n):
+            high = highs[i]
+            low = lows[i]
+            prev_high = highs[i - 1]
+            prev_low = lows[i - 1]
+            prev_close = closes[i - 1]
+
+            # True Range
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            tr_list.append(tr)
+
+            # Directional Movement
+            up_move = high - prev_high
+            down_move = prev_low - low
+
+            plus_dm = up_move if up_move > down_move and up_move > 0 else Decimal("0")
+            minus_dm = down_move if down_move > up_move and down_move > 0 else Decimal("0")
+
+            plus_dm_list.append(plus_dm)
+            minus_dm_list.append(minus_dm)
+
+        # Calculate smoothed averages (Wilder's smoothing)
+        period = self._period
+
+        # Initial sums
+        atr = sum(tr_list[:period]) / Decimal(period)
+        plus_di_sum = sum(plus_dm_list[:period])
+        minus_di_sum = sum(minus_dm_list[:period])
+
+        # Calculate DI values over time
+        dx_list = []
+
+        for i in range(period, len(tr_list)):
+            # Wilder's smoothing
+            atr = (atr * Decimal(period - 1) + tr_list[i]) / Decimal(period)
+            plus_di_sum = (plus_di_sum * Decimal(period - 1) + plus_dm_list[i]) / Decimal(period)
+            minus_di_sum = (minus_di_sum * Decimal(period - 1) + minus_dm_list[i]) / Decimal(period)
+
+            if atr == 0:
+                continue
+
+            plus_di = (plus_di_sum / atr) * Decimal("100")
+            minus_di = (minus_di_sum / atr) * Decimal("100")
+
+            di_sum = plus_di + minus_di
+            if di_sum == 0:
+                dx_list.append(Decimal("0"))
+            else:
+                dx = abs(plus_di - minus_di) / di_sum * Decimal("100")
+                dx_list.append(dx)
+
+        if len(dx_list) < period:
+            return None
+
+        # ADX is smoothed average of DX
+        adx = sum(dx_list[-period:]) / Decimal(period)
+        return adx
+
+
 class SupertrendBacktestStrategy(BacktestStrategy):
     """
     Supertrend trend-following strategy adapter.
@@ -126,9 +229,13 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # RSI calculator
         self._rsi = RSICalculator(period=self._config.rsi_period)
 
+        # ADX calculator
+        self._adx = ADXCalculator(period=self._config.adx_period)
+
         # State tracking
         self._prev_trend: int = 0
         self._current_rsi: Optional[Decimal] = None
+        self._current_adx: Optional[Decimal] = None
 
     @property
     def config(self) -> SupertrendStrategyConfig:
@@ -137,7 +244,11 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
     def warmup_period(self) -> int:
         """Return warmup period needed for indicators."""
-        return max(self._config.atr_period + 20, self._config.rsi_period + 10)
+        return max(
+            self._config.atr_period + 20,
+            self._config.rsi_period + 10,
+            self._config.adx_period * 2 + 10  # ADX needs 2x period
+        )
 
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
@@ -173,6 +284,21 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         if self._config.use_rsi_filter:
             closes = context.get_closes(self._config.rsi_period + 5)
             self._current_rsi = self._rsi.calculate(closes)
+
+        # Calculate ADX if filter enabled
+        if self._config.use_adx_filter:
+            klines_window = context.get_klines_window(self._config.adx_period * 2 + 5)
+            if len(klines_window) >= self._config.adx_period * 2 + 1:
+                highs = [k.high for k in klines_window]
+                lows = [k.low for k in klines_window]
+                closes = [k.close for k in klines_window]
+                self._current_adx = self._adx.calculate(highs, lows, closes)
+
+            # Skip if ADX is below threshold (weak trend)
+            if self._current_adx is not None:
+                if self._current_adx < self._config.adx_threshold:
+                    self._prev_trend = current_trend
+                    return None
 
         # Check for trend flip
         if self._prev_trend != 0 and current_trend != self._prev_trend:
@@ -257,3 +383,4 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         self._supertrend.reset()
         self._prev_trend = 0
         self._current_rsi = None
+        self._current_adx = None

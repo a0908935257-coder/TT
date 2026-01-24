@@ -1,24 +1,36 @@
 """
 Bollinger Band Strategy Adapter.
 
-Adapts the Bollinger Band + Supertrend strategy for the unified backtest framework.
+Adapts the Bollinger Band strategy for the unified backtest framework.
 
-Strategy Logic (BOLLINGER_TREND mode):
-- Entry: Supertrend bullish + price touches BB lower (LONG)
-         Supertrend bearish + price touches BB upper (SHORT)
-- Exit: Supertrend flip (primary) or ATR stop loss (protection)
+Strategy Modes:
+1. TREND_BOUNCE: Supertrend + BB combination
+   - Entry: Supertrend bullish + price touches BB lower (LONG)
+            Supertrend bearish + price touches BB upper (SHORT)
+   - Exit: Supertrend flip or ATR stop loss
 
-VALIDATION STATUS: NOT PASSED
-- Best config found: 4h, period=30, std=1.5 (25% return)
-- Walk-Forward consistency: 0% (failed overfitting test)
-- Recommendation: Use GridFutures or RSI strategy instead
-- Note: This strategy may work in specific market conditions but
-        failed 2-year Walk-Forward validation (2024-2026)
+2. MEAN_REVERSION (default): Pure Bollinger Band mean reversion
+   - Entry: Price touches/crosses BB lower (LONG), upper (SHORT)
+   - Exit: Price reaches BB middle (SMA) or opposite band
+
+VALIDATION STATUS: NOT PASSED (2024-01-05 ~ 2026-01-24)
+- TREND_BOUNCE mode: 0% Walk-Forward consistency
+- MEAN_REVERSION mode: Negative returns across all configurations
+  * Exit at middle: -5% to -17% return, 36-44% win rate
+  * Exit at opposite band: -1% to -6% return, 30-33% win rate
+- Issue: Mean reversion conflicts with crypto's trending behavior
+  * Price often doesn't return to mean before stop loss
+  * Low win rates across all tested parameter combinations
+- Tested: Various periods (14-30), std (1.5-3.0), stop losses (2-5%)
+- Recommendation: Use GridFutures (range trading) or RSI instead
+- Note: Bollinger Bands work better as volatility indicator than
+        standalone trading strategy in crypto markets
 """
 
 import math
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum
 from typing import Optional
 
 from ...bots.bollinger.indicators import BollingerCalculator
@@ -29,28 +41,40 @@ from ..result import Trade
 from .base import BacktestContext, BacktestStrategy
 
 
+class BollingerMode(str, Enum):
+    """Bollinger Band strategy modes."""
+    TREND_BOUNCE = "trend_bounce"      # Original: Supertrend + BB
+    MEAN_REVERSION = "mean_reversion"  # Pure BB mean reversion
+
+
 @dataclass
 class BollingerStrategyConfig:
     """
     Configuration for Bollinger backtest strategy.
 
     Attributes:
+        mode: Strategy mode (TREND_BOUNCE or MEAN_REVERSION)
         bb_period: Bollinger Band period
         bb_std: Standard deviation multiplier
-        st_atr_period: Supertrend ATR period
-        st_atr_multiplier: Supertrend ATR multiplier
+        st_atr_period: Supertrend ATR period (TREND_BOUNCE mode)
+        st_atr_multiplier: Supertrend ATR multiplier (TREND_BOUNCE mode)
         atr_stop_multiplier: ATR multiplier for stop loss
         bbw_lookback: BBW lookback for squeeze detection
         bbw_threshold_pct: BBW squeeze threshold percentile
+        exit_at_middle: Exit at BB middle band (MEAN_REVERSION mode)
+        stop_loss_pct: Stop loss percentage (MEAN_REVERSION mode)
     """
 
+    mode: BollingerMode = BollingerMode.MEAN_REVERSION  # Default to mean reversion
     bb_period: int = 20
-    bb_std: Decimal = Decimal("3.0")
+    bb_std: Decimal = Decimal("2.0")
     st_atr_period: int = 20
     st_atr_multiplier: Decimal = Decimal("3.5")
     atr_stop_multiplier: Decimal = Decimal("2.0")
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
+    exit_at_middle: bool = True  # Exit at SMA instead of opposite band
+    stop_loss_pct: Decimal = Decimal("0.03")  # 3% stop loss for mean reversion
 
 
 class SupertrendState:
@@ -196,6 +220,7 @@ class BollingerBacktestStrategy(BacktestStrategy):
         # State
         self._current_atr: Optional[Decimal] = None
         self._prev_trend: int = 0
+        self._current_bands: Optional[object] = None  # Store for exit logic
 
     @property
     def config(self) -> BollingerStrategyConfig:
@@ -213,9 +238,13 @@ class BollingerBacktestStrategy(BacktestStrategy):
         """
         Process kline and generate signal.
 
-        Entry Logic:
+        TREND_BOUNCE Mode:
         - LONG: Supertrend bullish (trend=1) AND price <= BB lower band
         - SHORT: Supertrend bearish (trend=-1) AND price >= BB upper band
+
+        MEAN_REVERSION Mode:
+        - LONG: Price touches/crosses BB lower band
+        - SHORT: Price touches/crosses BB upper band
 
         Args:
             kline: Current kline
@@ -236,19 +265,53 @@ class BollingerBacktestStrategy(BacktestStrategy):
         except Exception:
             return None
 
-        # Update Supertrend
-        trend = self._supertrend.update(klines)
+        # Store bands for exit logic
+        self._current_bands = bands
 
         # Calculate ATR for stop loss
         self._current_atr = self._bb_calculator.calculate_atr(
             klines, self._config.st_atr_period
         )
 
-        # Skip during squeeze
+        # Skip during squeeze (volatility too low)
         if bbw.is_squeeze:
             return None
 
         current_price = kline.close
+
+        # MEAN_REVERSION Mode: Pure BB mean reversion
+        if self._config.mode == BollingerMode.MEAN_REVERSION:
+            # Long entry: Price at lower band (expect reversion to mean)
+            if current_price <= bands.lower:
+                stop_loss = current_price * (Decimal("1") - self._config.stop_loss_pct)
+                # Take profit at middle band (SMA) or upper band
+                take_profit = bands.middle if self._config.exit_at_middle else bands.upper
+
+                return Signal.long_entry(
+                    price=current_price,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    reason="bb_lower_mean_reversion",
+                )
+
+            # Short entry: Price at upper band (expect reversion to mean)
+            elif current_price >= bands.upper:
+                stop_loss = current_price * (Decimal("1") + self._config.stop_loss_pct)
+                # Take profit at middle band (SMA) or lower band
+                take_profit = bands.middle if self._config.exit_at_middle else bands.lower
+
+                return Signal.short_entry(
+                    price=current_price,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    reason="bb_upper_mean_reversion",
+                )
+
+            return None
+
+        # TREND_BOUNCE Mode: Original Supertrend + BB logic
+        # Update Supertrend
+        trend = self._supertrend.update(klines)
 
         # Entry conditions
         if trend == 1 and current_price <= bands.lower:
@@ -285,7 +348,8 @@ class BollingerBacktestStrategy(BacktestStrategy):
         """
         Check if position should be exited.
 
-        Exit on Supertrend flip (primary exit logic).
+        TREND_BOUNCE Mode: Exit on Supertrend flip
+        MEAN_REVERSION Mode: Exit handled by take_profit/stop_loss
 
         Args:
             position: Current position
@@ -293,12 +357,16 @@ class BollingerBacktestStrategy(BacktestStrategy):
             context: Backtest context
 
         Returns:
-            Exit signal if Supertrend flipped, None otherwise
+            Exit signal if conditions met, None otherwise
         """
-        # Get current trend
+        # MEAN_REVERSION mode: exits handled by take_profit/stop_loss
+        if self._config.mode == BollingerMode.MEAN_REVERSION:
+            # No additional exit logic - rely on TP/SL
+            return None
+
+        # TREND_BOUNCE Mode: Exit on Supertrend flip
         trend = self._supertrend.trend
 
-        # Check for Supertrend flip
         if position.side == "LONG" and trend == -1:
             return Signal.close_all(reason="supertrend_flip")
 
@@ -348,3 +416,4 @@ class BollingerBacktestStrategy(BacktestStrategy):
         self._supertrend.reset()
         self._current_atr = None
         self._prev_trend = 0
+        self._current_bands = None
