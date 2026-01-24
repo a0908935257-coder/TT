@@ -38,13 +38,28 @@ class SystemThresholds:
     network_error_rate_warning: float = 0.01  # 1%
     network_error_rate_critical: float = 0.05  # 5%
 
-    # Latency (ms)
-    latency_warning_ms: float = 100.0
-    latency_critical_ms: float = 500.0
+    # Market data latency (ms)
+    market_latency_warning_ms: float = 100.0
+    market_latency_critical_ms: float = 500.0
+
+    # Order latency (ms)
+    order_latency_warning_ms: float = 200.0
+    order_latency_critical_ms: float = 1000.0
+
+    # Processing latency (ms)
+    processing_latency_warning_ms: float = 50.0
+    processing_latency_critical_ms: float = 200.0
 
     # Connection
     connection_warning_seconds: float = 30.0
     connection_critical_seconds: float = 60.0
+
+    # Business metrics
+    order_success_rate_warning: float = 0.95  # < 95%
+    order_rejection_rate_warning: float = 0.05  # > 5%
+    daily_loss_warning_percent: float = 0.80  # 80% of daily limit
+    max_drawdown_warning_percent: float = 0.10  # 10%
+    max_drawdown_critical_percent: float = 0.20  # 20%
 
 
 @dataclass
