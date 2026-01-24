@@ -62,9 +62,55 @@ from src.exchange import ExchangeClient
 VALIDATION_OUTPUT_DIR = Path("validation_results")
 
 
-async def fetch_klines(symbol: str, interval: str, days: int) -> list[Kline]:
-    """獲取歷史 K 線數據"""
-    print(f"正在獲取 {symbol} {interval} 數據 ({days} 天)...")
+def load_klines_from_file(filepath: Path) -> list[Kline]:
+    """從本地 JSON 檔案載入 K 線數據"""
+    from decimal import Decimal
+
+    print(f"正在從檔案載入數據: {filepath}")
+
+    with open(filepath, "r") as f:
+        data = json.load(f)
+
+    klines = []
+    for k in data["klines"]:
+        klines.append(Kline(
+            symbol=data["metadata"]["symbol"],
+            interval=data["metadata"]["interval"],
+            open_time=datetime.fromisoformat(k["open_time"]),
+            close_time=datetime.fromisoformat(k["close_time"]),
+            open=Decimal(k["open"]),
+            high=Decimal(k["high"]),
+            low=Decimal(k["low"]),
+            close=Decimal(k["close"]),
+            volume=Decimal(k["volume"]),
+        ))
+
+    print(f"載入 {len(klines):,} 根 K 線")
+    if klines:
+        print(f"  範圍: {klines[0].open_time.strftime('%Y-%m-%d')} ~ {klines[-1].open_time.strftime('%Y-%m-%d')}")
+
+    return klines
+
+
+async def fetch_klines(symbol: str, interval: str, days: int, data_file: str = None) -> list[Kline]:
+    """獲取歷史 K 線數據 (從檔案或 API)"""
+
+    # 優先使用本地檔案
+    if data_file:
+        filepath = Path(data_file)
+        if filepath.exists():
+            return load_klines_from_file(filepath)
+        else:
+            print(f"警告: 檔案不存在 {filepath}")
+
+    # 檢查預設路徑
+    default_file = Path(f"data/historical/{symbol}_{interval}_{days}d.json")
+    if default_file.exists():
+        return load_klines_from_file(default_file)
+
+    # 從 API 獲取
+    print(f"正在從 API 獲取 {symbol} {interval} 數據 ({days} 天)...")
+    print(f"  提示: 使用 scripts/download_historical_data.py 下載完整歷史數據")
 
     client = ExchangeClient(
         api_key=os.getenv("BINANCE_API_KEY", ""),
@@ -440,6 +486,10 @@ async def main():
         type=int,
         default=500,
         help="Monte Carlo 迭代次數 (default: 500)"
+    )
+    parser.add_argument(
+        "--data-file",
+        help="本地數據檔案路徑 (優先使用)"
     )
 
     args = parser.parse_args()
