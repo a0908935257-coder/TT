@@ -153,6 +153,18 @@ from .strategy.base import BacktestStrategy, BacktestContext
 # Engine
 from .engine import BacktestEngine
 
+# Multi-Timeframe
+from .multi_timeframe import (
+    MultiTimeframeEngine,
+    MultiTimeframeStrategy,
+    MultiTimeframeContext,
+    TimeframeData,
+    TimeframeResampler,
+    Timeframe,
+    get_timeframe_minutes,
+    can_resample,
+)
+
 __all__ = [
     # Config
     "BacktestConfig",
@@ -250,4 +262,13 @@ __all__ = [
     "BacktestContext",
     # Engine
     "BacktestEngine",
+    # Multi-Timeframe
+    "MultiTimeframeEngine",
+    "MultiTimeframeStrategy",
+    "MultiTimeframeContext",
+    "TimeframeData",
+    "TimeframeResampler",
+    "Timeframe",
+    "get_timeframe_minutes",
+    "can_resample",
 ]

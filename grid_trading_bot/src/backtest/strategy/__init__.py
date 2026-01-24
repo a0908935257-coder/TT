@@ -11,6 +11,9 @@ from .grid import GridBacktestStrategy, GridStrategyConfig, MultiLevelGridStrate
 from .rsi import RSIBacktestStrategy, RSIStrategyConfig
 from .grid_futures import GridFuturesBacktestStrategy, GridFuturesStrategyConfig, GridDirection
 
+# Multi-Timeframe
+from .multi_tf_trend import MultiTFTrendStrategy, MultiTFTrendConfig
+
 # DSL Strategy Language
 from .dsl import (
     DSLParser,
@@ -43,6 +46,9 @@ __all__ = [
     "GridFuturesBacktestStrategy",
     "GridFuturesStrategyConfig",
     "GridDirection",
+    # Multi-Timeframe
+    "MultiTFTrendStrategy",
+    "MultiTFTrendConfig",
     # DSL
     "DSLParser",
     "DSLParseError",
