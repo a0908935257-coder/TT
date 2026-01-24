@@ -3,11 +3,19 @@ Unified Exchange Client.
 
 Provides a single entry point for all exchange operations including
 REST API (Spot & Futures) and WebSocket streaming.
+
+Thread-safe order placement with:
+- asyncio.Lock for order operations
+- Request queue for serializing orders
+- Cross-bot coordination (single lock shared by all bots)
 """
 
 import asyncio
+from collections import deque
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Optional
+from datetime import datetime, timezone
 
 from src.core import get_logger
 from src.core.models import (
@@ -29,6 +37,30 @@ from .binance.spot_api import BinanceSpotAPI
 from .binance.websocket import BinanceWebSocket
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class OrderRequest:
+    """Represents a pending order request in the queue."""
+
+    request_id: str
+    bot_id: str
+    operation: str  # "create", "cancel", "modify"
+    params: dict
+    future: asyncio.Future  # Must be set by caller
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    priority: int = 0  # Higher priority = processed first
+
+
+@dataclass
+class OrderQueueStats:
+    """Statistics for the order queue."""
+
+    total_processed: int = 0
+    total_errors: int = 0
+    avg_wait_time_ms: float = 0.0
+    max_wait_time_ms: float = 0.0
+    current_queue_size: int = 0
 
 
 class ExchangeClient:
@@ -98,6 +130,27 @@ class ExchangeClient:
         self._futures_user_data_callback: Optional[Callable[[dict], Any]] = None
         self._futures_user_data_keepalive_task: Optional[asyncio.Task] = None
 
+        # =======================================================================
+        # Order Synchronization (Cross-bot coordination)
+        # =======================================================================
+        # Main lock for order operations - ensures only one order at a time
+        self._order_lock = asyncio.Lock()
+
+        # Request queue for serializing orders
+        self._order_queue: deque[OrderRequest] = deque()
+        self._queue_lock = asyncio.Lock()
+        self._queue_processor_task: Optional[asyncio.Task] = None
+        self._queue_running = False
+
+        # Queue statistics
+        self._queue_stats = OrderQueueStats()
+
+        # Request ID counter
+        self._request_counter = 0
+
+        # Minimum delay between orders (ms) - helps with rate limiting
+        self._min_order_interval_ms = 100
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -156,8 +209,11 @@ class ExchangeClient:
             await self._spot_ws.connect()
             await self._futures_ws.connect()
 
+            # Start order queue processor
+            await self._start_order_queue_processor()
+
             self._connected = True
-            logger.info("ExchangeClient connected")
+            logger.info("ExchangeClient connected (with order queue)")
             return True
 
         except Exception as e:
@@ -170,6 +226,9 @@ class ExchangeClient:
         logger.info("Closing ExchangeClient")
 
         self._connected = False
+
+        # Stop order queue processor
+        await self._stop_order_queue_processor()
 
         # Cancel Spot user data keepalive task
         if self._user_data_keepalive_task:
@@ -340,10 +399,211 @@ class ExchangeClient:
         return await self._futures.get_positions(symbol)
 
     # =========================================================================
-    # Order Methods
+    # Order Queue Management (Cross-bot Coordination)
     # =========================================================================
 
-    async def create_order(
+    async def _start_order_queue_processor(self) -> None:
+        """Start the background order queue processor."""
+        if self._queue_running:
+            return
+
+        self._queue_running = True
+        self._queue_processor_task = asyncio.create_task(
+            self._process_order_queue()
+        )
+        logger.info("Order queue processor started")
+
+    async def _stop_order_queue_processor(self) -> None:
+        """Stop the order queue processor gracefully."""
+        self._queue_running = False
+
+        if self._queue_processor_task:
+            self._queue_processor_task.cancel()
+            try:
+                await self._queue_processor_task
+            except asyncio.CancelledError:
+                pass
+            self._queue_processor_task = None
+
+        # Cancel any pending requests in the queue
+        async with self._queue_lock:
+            while self._order_queue:
+                request = self._order_queue.popleft()
+                if not request.future.done():
+                    request.future.cancel()
+            logger.info("Order queue processor stopped")
+
+    async def _process_order_queue(self) -> None:
+        """
+        Background task that processes orders from the queue sequentially.
+        Ensures only one order is being processed at a time across all bots.
+        """
+        last_order_time = datetime.now(timezone.utc)
+
+        while self._queue_running:
+            try:
+                # Check if there's a request to process
+                request = None
+                async with self._queue_lock:
+                    if self._order_queue:
+                        request = self._order_queue.popleft()
+                        self._queue_stats.current_queue_size = len(self._order_queue)
+
+                if request is None:
+                    # No request, wait a bit
+                    await asyncio.sleep(0.01)  # 10ms
+                    continue
+
+                # Enforce minimum interval between orders
+                elapsed = (datetime.now(timezone.utc) - last_order_time).total_seconds() * 1000
+                if elapsed < self._min_order_interval_ms:
+                    await asyncio.sleep((self._min_order_interval_ms - elapsed) / 1000)
+
+                # Process the request with the order lock
+                async with self._order_lock:
+                    try:
+                        result = await self._execute_order_request(request)
+                        if not request.future.done():
+                            request.future.set_result(result)
+
+                        # Update statistics
+                        wait_time = (datetime.now(timezone.utc) - request.created_at).total_seconds() * 1000
+                        self._queue_stats.total_processed += 1
+                        self._queue_stats.max_wait_time_ms = max(
+                            self._queue_stats.max_wait_time_ms, wait_time
+                        )
+                        # Running average
+                        n = self._queue_stats.total_processed
+                        self._queue_stats.avg_wait_time_ms = (
+                            (self._queue_stats.avg_wait_time_ms * (n - 1) + wait_time) / n
+                        )
+
+                    except Exception as e:
+                        self._queue_stats.total_errors += 1
+                        if not request.future.done():
+                            request.future.set_exception(e)
+                        logger.error(f"Order request failed: {e}")
+
+                last_order_time = datetime.now(timezone.utc)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Order queue processor error: {e}")
+                await asyncio.sleep(0.1)
+
+    async def _execute_order_request(self, request: OrderRequest) -> Any:
+        """Execute a single order request."""
+        params = request.params
+        operation = request.operation
+
+        if operation == "create":
+            api = self._get_api(params.get("market", MarketType.SPOT))
+            return await api.create_order(
+                symbol=params["symbol"],
+                side=params["side"],
+                order_type=params["order_type"],
+                quantity=params["quantity"],
+                **params.get("kwargs", {}),
+            )
+        elif operation == "cancel":
+            api = self._get_api(params.get("market", MarketType.SPOT))
+            return await api.cancel_order(
+                params["symbol"],
+                order_id=params["order_id"],
+            )
+        elif operation == "futures_create":
+            return await self._futures.create_order(
+                symbol=params["symbol"],
+                side=params["side"],
+                order_type=params["order_type"],
+                quantity=params["quantity"],
+                price=params.get("price"),
+                stop_price=params.get("stop_price"),
+                time_in_force=params.get("time_in_force"),
+                reduce_only=params.get("reduce_only", False),
+            )
+        elif operation == "futures_cancel":
+            return await self._futures.cancel_order(
+                params["symbol"],
+                order_id=params["order_id"],
+            )
+        elif operation == "futures_cancel_algo":
+            return await self._futures.cancel_algo_order(
+                params["symbol"],
+                algo_id=params["algo_id"],
+            )
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+
+    async def _enqueue_order(
+        self,
+        operation: str,
+        params: dict,
+        bot_id: str = "unknown",
+        priority: int = 0,
+    ) -> Any:
+        """
+        Enqueue an order request and wait for the result.
+
+        Args:
+            operation: Order operation type
+            params: Order parameters
+            bot_id: ID of the bot making the request
+            priority: Request priority (higher = first)
+
+        Returns:
+            Result of the order operation
+        """
+        self._request_counter += 1
+        request_id = f"{bot_id}_{self._request_counter}"
+
+        # Create future for this event loop
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        request = OrderRequest(
+            request_id=request_id,
+            bot_id=bot_id,
+            operation=operation,
+            params=params,
+            future=future,
+            priority=priority,
+        )
+
+        async with self._queue_lock:
+            # Insert based on priority (higher priority first)
+            if priority > 0 and self._order_queue:
+                # Find insertion point
+                inserted = False
+                for i, existing in enumerate(self._order_queue):
+                    if existing.priority < priority:
+                        self._order_queue.insert(i, request)
+                        inserted = True
+                        break
+                if not inserted:
+                    self._order_queue.append(request)
+            else:
+                self._order_queue.append(request)
+
+            self._queue_stats.current_queue_size = len(self._order_queue)
+
+        logger.debug(
+            f"Order queued: {request_id} ({operation}) - queue size: {self._queue_stats.current_queue_size}"
+        )
+
+        # Wait for the result
+        return await future
+
+    def get_order_queue_stats(self) -> OrderQueueStats:
+        """Get current order queue statistics."""
+        return self._queue_stats
+
+    # =========================================================================
+    # Direct Order Methods (bypass queue - use with caution)
+    # =========================================================================
+
+    async def _direct_create_order(
         self,
         symbol: str,
         side: OrderSide | str,
@@ -353,7 +613,53 @@ class ExchangeClient:
         **kwargs,
     ) -> Order:
         """
-        Create a new order.
+        Create order directly without queue (for internal use).
+
+        WARNING: This bypasses the order queue and should only be used
+        when the caller already has exclusive access or for emergency orders.
+        """
+        async with self._order_lock:
+            api = self._get_api(market)
+            return await api.create_order(
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                **kwargs,
+            )
+
+    async def _direct_cancel_order(
+        self,
+        symbol: str,
+        order_id: str,
+        market: MarketType = MarketType.SPOT,
+    ) -> Order:
+        """
+        Cancel order directly without queue (for internal use).
+
+        WARNING: This bypasses the order queue and should only be used
+        when the caller already has exclusive access or for emergency orders.
+        """
+        async with self._order_lock:
+            api = self._get_api(market)
+            return await api.cancel_order(symbol, order_id=order_id)
+
+    # =========================================================================
+    # Order Methods (Thread-safe with queue)
+    # =========================================================================
+
+    async def create_order(
+        self,
+        symbol: str,
+        side: OrderSide | str,
+        order_type: OrderType | str,
+        quantity: Decimal | str,
+        market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
+        **kwargs,
+    ) -> Order:
+        """
+        Create a new order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
@@ -361,18 +667,23 @@ class ExchangeClient:
             order_type: Order type (LIMIT/MARKET/etc.)
             quantity: Order quantity
             market: SPOT or FUTURES
+            bot_id: ID of the bot placing the order (for tracking)
             **kwargs: Additional order parameters (price, time_in_force, etc.)
 
         Returns:
             Created Order object
         """
-        api = self._get_api(market)
-        return await api.create_order(
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            **kwargs,
+        return await self._enqueue_order(
+            operation="create",
+            params={
+                "symbol": symbol,
+                "side": side,
+                "order_type": order_type,
+                "quantity": quantity,
+                "market": market,
+                "kwargs": kwargs,
+            },
+            bot_id=bot_id,
         )
 
     async def cancel_order(
@@ -380,20 +691,30 @@ class ExchangeClient:
         symbol: str,
         order_id: str,
         market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Cancel an active order.
+        Cancel an active order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
             order_id: Exchange order ID
             market: SPOT or FUTURES
+            bot_id: ID of the bot cancelling the order (for tracking)
 
         Returns:
             Cancelled Order object
         """
-        api = self._get_api(market)
-        return await api.cancel_order(symbol, order_id=order_id)
+        return await self._enqueue_order(
+            operation="cancel",
+            params={
+                "symbol": symbol,
+                "order_id": order_id,
+                "market": market,
+            },
+            bot_id=bot_id,
+            priority=1,  # Cancel orders have higher priority
+        )
 
     async def get_order(
         self,
@@ -434,7 +755,7 @@ class ExchangeClient:
         return await api.get_open_orders(symbol)
 
     # =========================================================================
-    # Futures Order Wrapper Methods (for OrderExecutor Protocol)
+    # Futures Order Wrapper Methods (for OrderExecutor Protocol, thread-safe)
     # =========================================================================
 
     async def futures_create_order(
@@ -447,9 +768,10 @@ class ExchangeClient:
         stop_price: Optional[Decimal] = None,
         time_in_force: Optional[str] = None,
         reduce_only: bool = False,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Create a futures order (wrapper for OrderExecutor).
+        Create a futures order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
@@ -460,58 +782,83 @@ class ExchangeClient:
             stop_price: Stop price (for STOP orders)
             time_in_force: Time in force (GTC, IOC, etc.)
             reduce_only: Whether order is reduce-only
+            bot_id: ID of the bot placing the order (for tracking)
 
         Returns:
             Created Order object
         """
-        return await self._futures.create_order(
-            symbol=symbol,
-            side=side,
-            order_type=order_type,
-            quantity=quantity,
-            price=price,
-            stop_price=stop_price,
-            time_in_force=time_in_force,
-            reduce_only=reduce_only,
+        return await self._enqueue_order(
+            operation="futures_create",
+            params={
+                "symbol": symbol,
+                "side": side,
+                "order_type": order_type,
+                "quantity": quantity,
+                "price": price,
+                "stop_price": stop_price,
+                "time_in_force": time_in_force,
+                "reduce_only": reduce_only,
+            },
+            bot_id=bot_id,
         )
 
     async def futures_cancel_order(
         self,
         symbol: str,
         order_id: str,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Cancel a futures order (wrapper for OrderExecutor).
+        Cancel a futures order (thread-safe, queued).
 
         Note: For Algo orders (STOP_MARKET, etc.), use futures_cancel_algo_order instead.
 
         Args:
             symbol: Trading pair
             order_id: Exchange order ID
+            bot_id: ID of the bot cancelling the order (for tracking)
 
         Returns:
             Cancelled Order object
         """
-        return await self._futures.cancel_order(symbol, order_id=order_id)
+        return await self._enqueue_order(
+            operation="futures_cancel",
+            params={
+                "symbol": symbol,
+                "order_id": order_id,
+            },
+            bot_id=bot_id,
+            priority=1,  # Cancel orders have higher priority
+        )
 
     async def futures_cancel_algo_order(
         self,
         symbol: str,
         algo_id: str,
+        bot_id: str = "unknown",
     ) -> dict:
         """
-        Cancel a futures Algo order (STOP_MARKET, TAKE_PROFIT_MARKET, etc.).
+        Cancel a futures Algo order (thread-safe, queued).
 
         Since 2025-12-09, conditional orders use Algo Order API.
 
         Args:
             symbol: Trading pair
             algo_id: Algo order ID (same as order_id from create_order)
+            bot_id: ID of the bot cancelling the order (for tracking)
 
         Returns:
             Cancellation response
         """
-        return await self._futures.cancel_algo_order(symbol, algo_id=algo_id)
+        return await self._enqueue_order(
+            operation="futures_cancel_algo",
+            params={
+                "symbol": symbol,
+                "algo_id": algo_id,
+            },
+            bot_id=bot_id,
+            priority=1,  # Cancel orders have higher priority
+        )
 
     async def futures_get_order(
         self,
@@ -531,7 +878,7 @@ class ExchangeClient:
         return await self._futures.get_order(symbol, order_id=order_id)
 
     # =========================================================================
-    # Convenience Order Methods
+    # Convenience Order Methods (thread-safe, uses queue)
     # =========================================================================
 
     async def market_buy(
@@ -539,40 +886,56 @@ class ExchangeClient:
         symbol: str,
         quantity: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Place a market buy order.
+        Place a market buy order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
             quantity: Quantity to buy
             market: SPOT or FUTURES
+            bot_id: ID of the bot placing the order
 
         Returns:
             Order object
         """
-        api = self._get_api(market)
-        return await api.market_buy(symbol, quantity)
+        return await self.create_order(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=quantity,
+            market=market,
+            bot_id=bot_id,
+        )
 
     async def market_sell(
         self,
         symbol: str,
         quantity: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Place a market sell order.
+        Place a market sell order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
             quantity: Quantity to sell
             market: SPOT or FUTURES
+            bot_id: ID of the bot placing the order
 
         Returns:
             Order object
         """
-        api = self._get_api(market)
-        return await api.market_sell(symbol, quantity)
+        return await self.create_order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity=quantity,
+            market=market,
+            bot_id=bot_id,
+        )
 
     async def limit_buy(
         self,
@@ -580,21 +943,31 @@ class ExchangeClient:
         quantity: Decimal | str,
         price: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Place a limit buy order.
+        Place a limit buy order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
             quantity: Quantity to buy
             price: Limit price
             market: SPOT or FUTURES
+            bot_id: ID of the bot placing the order
 
         Returns:
             Order object
         """
-        api = self._get_api(market)
-        return await api.limit_buy(symbol, quantity, price)
+        return await self.create_order(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=quantity,
+            market=market,
+            bot_id=bot_id,
+            price=price,
+            time_in_force="GTC",
+        )
 
     async def limit_sell(
         self,
@@ -602,21 +975,31 @@ class ExchangeClient:
         quantity: Decimal | str,
         price: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
-        Place a limit sell order.
+        Place a limit sell order (thread-safe, queued).
 
         Args:
             symbol: Trading pair
             quantity: Quantity to sell
             price: Limit price
             market: SPOT or FUTURES
+            bot_id: ID of the bot placing the order
 
         Returns:
             Order object
         """
-        api = self._get_api(market)
-        return await api.limit_sell(symbol, quantity, price)
+        return await self.create_order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=quantity,
+            market=market,
+            bot_id=bot_id,
+            price=price,
+            time_in_force="GTC",
+        )
 
     # =========================================================================
     # Subscription Methods

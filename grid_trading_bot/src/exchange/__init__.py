@@ -1,5 +1,5 @@
 # Exchange module - API clients for various exchanges
-from .client import ExchangeClient
+from .client import ExchangeClient, OrderQueueStats
 from .binance.spot_api import BinanceSpotAPI
 from .binance.futures_api import BinanceFuturesAPI
 from .binance.websocket import BinanceWebSocket
@@ -32,6 +32,7 @@ from .state_sync import (
 __all__ = [
     # Unified client
     "ExchangeClient",
+    "OrderQueueStats",
     # Individual clients
     "BinanceSpotAPI",
     "BinanceFuturesAPI",
