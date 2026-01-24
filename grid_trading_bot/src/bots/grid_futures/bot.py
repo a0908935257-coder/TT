@@ -575,15 +575,20 @@ class GridFuturesBot(BaseBot):
 
             for pos in positions:
                 if pos.quantity > 0:
+                    # pos.side is a string due to Pydantic's use_enum_values=True
+                    # Convert to local PositionSide enum
+                    side_str = pos.side if isinstance(pos.side, str) else pos.side.value
+                    local_side = PositionSide(side_str)
+
                     self._position = FuturesPosition(
                         symbol=self._config.symbol,
-                        side=pos.side,
+                        side=local_side,
                         entry_price=pos.entry_price,
                         quantity=pos.quantity,
                         leverage=self._config.leverage,
                         unrealized_pnl=pos.unrealized_pnl,
                     )
-                    logger.info(f"Synced existing position: {pos.side.value} {pos.quantity}")
+                    logger.info(f"Synced existing position: {side_str} {pos.quantity}")
                     return
 
             self._position = None
@@ -1114,7 +1119,7 @@ class GridFuturesBot(BaseBot):
                     "winning_trades": self._grid_stats.winning_trades,
                     "losing_trades": self._grid_stats.losing_trades,
                     "total_pnl": str(self._grid_stats.total_pnl),
-                    "max_drawdown": str(self._grid_stats.max_drawdown),
+                    "max_drawdown_pct": str(self._grid_stats.max_drawdown_pct),
                 },
                 "saved_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -1227,7 +1232,7 @@ class GridFuturesBot(BaseBot):
             bot._grid_stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._grid_stats.losing_trades = stats_data.get("losing_trades", 0)
             bot._grid_stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
-            bot._grid_stats.max_drawdown = Decimal(stats_data.get("max_drawdown", "0"))
+            bot._grid_stats.max_drawdown_pct = Decimal(stats_data.get("max_drawdown_pct", "0"))
 
             # Restore grid
             grid_data = saved_state.get("grid")

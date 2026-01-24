@@ -402,10 +402,23 @@ class Position(TradingBaseModel):
         entry_price = Decimal(str(data.get("entryPrice", "0")))
         mark_price = Decimal(str(data.get("markPrice", data.get("entryPrice", "0"))))
 
+        # Determine position side
+        # For hedge mode: positionSide is "LONG" or "SHORT"
+        # For one-way mode: positionSide is "BOTH", determine from positionAmt sign
+        position_side = data.get("positionSide", "BOTH")
+        position_amt = Decimal(str(data.get("positionAmt", "0")))
+
+        if position_side == "BOTH":
+            # One-way mode: determine direction from positionAmt sign
+            side = PositionSide.LONG if position_amt > 0 else PositionSide.SHORT
+        else:
+            # Hedge mode: use positionSide directly
+            side = PositionSide(position_side)
+
         return cls(
             symbol=data["symbol"],
-            side=PositionSide(data.get("positionSide", "BOTH")),
-            quantity=abs(Decimal(str(data.get("positionAmt", "0")))),
+            side=side,
+            quantity=abs(position_amt),
             entry_price=entry_price,
             mark_price=mark_price if mark_price > 0 else entry_price,
             liquidation_price=Decimal(str(data["liquidationPrice"])) if data.get("liquidationPrice") else None,

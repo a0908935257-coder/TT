@@ -391,6 +391,25 @@ class BinanceWebSocket:
 
         return await self.subscribe([stream], wrapper)
 
+    async def unsubscribe_kline(
+        self,
+        symbol: str,
+        interval: KlineInterval | str,
+    ) -> bool:
+        """
+        Unsubscribe from kline/candlestick stream.
+
+        Args:
+            symbol: Trading pair
+            interval: Kline interval (e.g., KlineInterval.h1 or "1h")
+
+        Returns:
+            True if successful
+        """
+        interval_str = interval.value if isinstance(interval, KlineInterval) else interval
+        stream = f"{symbol.lower()}@kline_{interval_str}"
+        return await self.unsubscribe([stream])
+
     async def subscribe_depth(
         self,
         symbol: str,
