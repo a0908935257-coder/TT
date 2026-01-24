@@ -8,6 +8,8 @@ from .base import BacktestStrategy, BacktestContext
 from .bollinger import BollingerBacktestStrategy, BollingerStrategyConfig
 from .supertrend import SupertrendBacktestStrategy, SupertrendStrategyConfig
 from .grid import GridBacktestStrategy, GridStrategyConfig, MultiLevelGridStrategy
+from .rsi import RSIBacktestStrategy, RSIStrategyConfig
+from .grid_futures import GridFuturesBacktestStrategy, GridFuturesStrategyConfig, GridDirection
 
 # DSL Strategy Language
 from .dsl import (
@@ -30,10 +32,17 @@ __all__ = [
     # Supertrend
     "SupertrendBacktestStrategy",
     "SupertrendStrategyConfig",
-    # Grid
+    # Grid (Spot)
     "GridBacktestStrategy",
     "GridStrategyConfig",
     "MultiLevelGridStrategy",
+    # RSI
+    "RSIBacktestStrategy",
+    "RSIStrategyConfig",
+    # Grid Futures
+    "GridFuturesBacktestStrategy",
+    "GridFuturesStrategyConfig",
+    "GridDirection",
     # DSL
     "DSLParser",
     "DSLParseError",

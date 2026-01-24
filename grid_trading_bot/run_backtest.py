@@ -29,6 +29,11 @@ from src.backtest.strategy import (
     SupertrendStrategyConfig,
     GridBacktestStrategy,
     GridStrategyConfig,
+    RSIBacktestStrategy,
+    RSIStrategyConfig,
+    GridFuturesBacktestStrategy,
+    GridFuturesStrategyConfig,
+    GridDirection,
 )
 from src.core.models import Kline
 from src.exchange import ExchangeClient
@@ -94,8 +99,7 @@ def create_strategy(strategy_name: str, params: dict):
         return SupertrendBacktestStrategy(config)
 
     elif strategy_name == "grid":
-        # Grid 策略需要根據當前價格動態設定範圍
-        # 預設使用 ±10% 的價格區間
+        # Grid 策略 (現貨)
         config = GridStrategyConfig(
             grid_count=params.get("grid_count", 10),
             use_geometric=params.get("use_geometric", True),
@@ -103,6 +107,29 @@ def create_strategy(strategy_name: str, params: dict):
             stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.02"))),
         )
         return GridBacktestStrategy(config)
+
+    elif strategy_name == "rsi":
+        # RSI 動量策略
+        config = RSIStrategyConfig(
+            rsi_period=params.get("rsi_period", 21),
+            entry_level=params.get("entry_level", 50),
+            momentum_threshold=params.get("momentum_threshold", 5),
+            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.04"))),
+            take_profit_pct=Decimal(str(params.get("take_profit_pct", "0.08"))),
+        )
+        return RSIBacktestStrategy(config)
+
+    elif strategy_name == "grid_futures":
+        # Grid Futures 策略 (合約)
+        config = GridFuturesStrategyConfig(
+            grid_count=params.get("grid_count", 10),
+            direction=GridDirection.TREND_FOLLOW,
+            leverage=params.get("leverage", 2),
+            trend_period=params.get("trend_period", 20),
+            atr_multiplier=Decimal(str(params.get("atr_multiplier", "3.0"))),
+            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
+        )
+        return GridFuturesBacktestStrategy(config)
 
     else:
         raise ValueError(f"未知策略: {strategy_name}")
@@ -148,9 +175,9 @@ async def main():
     parser = argparse.ArgumentParser(description="統一回測系統")
     parser.add_argument(
         "--strategy", "-s",
-        choices=["bollinger", "supertrend", "grid"],
+        choices=["bollinger", "supertrend", "grid", "rsi", "grid_futures"],
         default="bollinger",
-        help="策略名稱 (default: bollinger)"
+        help="策略名稱: bollinger, supertrend, grid, rsi, grid_futures (default: bollinger)"
     )
     parser.add_argument(
         "--symbol", "-p",
