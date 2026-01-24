@@ -92,20 +92,20 @@ def print_banner():
   ✓ Master 主控台
   ✓ Fund Manager (中央資金分配系統)
   ✓ Bollinger Bot (合約 2x) - Supertrend + BB 趨勢策略
-  ✓ RSI Momentum Bot (合約 2x) - 動量策略
+  ✓ RSI-Grid Bot (合約 2x) - RSI 區域 + 網格進場
   ✓ Grid Futures Bot (合約 2x) - 趨勢網格
   ✓ Supertrend Bot (合約 2x) - 趨勢跟蹤策略
   ✓ Discord Bot (遠端管理)
 
 Walk-Forward 驗證通過的策略:
   Bollinger: BB(20,3.0), ST(20,3.5), 2x (75% 一致性, Sharpe 1.81, OOS 96%)
-  RSI: Period=21, Level=50±5, 2x (88% 一致性, Sharpe 0.81, OOS 140%)
+  RSI-Grid: RSI(14)+Grid(10)+SMA(20), 2x (目標 Sharpe > 3.0)
   Grid: 10格, trend=20, ATR=3.0, 2x (100% 一致性, Sharpe 4.50)
   Supertrend: ATR=25, M=3.0, 2x (75% 一致性, Sharpe 0.39)
 
 資金分配 (中央管理):
   Grid Futures: 30%  |  Bollinger: 30%
-  RSI: 15%           |  Supertrend: 15%
+  RSI-Grid: 15%      |  Supertrend: 15%
   保留金: 10%
 
 Discord 指令:
@@ -207,6 +207,8 @@ def get_rsi_config() -> dict:
     - Entry Level: 50, Momentum Threshold: 5
     - Leverage: 2x (降低風險)
     - Stop Loss: 4%, Take Profit: 8%
+
+    NOTE: This bot is replaced by RSI-Grid. Kept for backward compatibility.
     """
     params = _get_bot_strategy_params("rsi_*")
     return {
@@ -221,6 +223,49 @@ def get_rsi_config() -> dict:
         "position_size_pct": params.get("position_size_pct", 0.1),
         "stop_loss_pct": params.get("stop_loss_pct", 0.04),
         "take_profit_pct": params.get("take_profit_pct", 0.08),
+    }
+
+
+def get_rsi_grid_config() -> dict:
+    """
+    Get RSI-Grid Hybrid Bot config from settings.yaml.
+
+    目標性能:
+    - Target Sharpe > 3.0
+    - Walk-Forward Consistency > 90%
+    - Win Rate > 70%
+    - Max Drawdown < 5%
+
+    策略設計:
+    - RSI Zone Filter: Oversold=LONG, Overbought=SHORT
+    - SMA Trend Filter: Direction bias
+    - ATR-based Grid: Dynamic entry levels
+    """
+    params = _get_bot_strategy_params("rsi_grid_*")
+    return {
+        "symbol": params.get("symbol", "BTCUSDT"),
+        "timeframe": params.get("timeframe", "15m"),
+        "leverage": params.get("leverage", 2),
+        "margin_type": params.get("margin_type", "ISOLATED"),
+        # max_capital is managed by FundManager
+        "position_size_pct": params.get("position_size_pct", 0.1),
+        "max_position_pct": params.get("max_position_pct", 0.5),
+        # RSI Parameters
+        "rsi_period": params.get("rsi_period", 14),
+        "oversold_level": params.get("oversold_level", 30),
+        "overbought_level": params.get("overbought_level", 70),
+        # Grid Parameters
+        "grid_count": params.get("grid_count", 10),
+        "atr_period": params.get("atr_period", 14),
+        "atr_multiplier": params.get("atr_multiplier", 3.0),
+        # Trend Filter
+        "trend_sma_period": params.get("trend_sma_period", 20),
+        "use_trend_filter": params.get("use_trend_filter", True),
+        # Risk Management
+        "stop_loss_atr_mult": params.get("stop_loss_atr_mult", 1.5),
+        "max_stop_loss_pct": params.get("max_stop_loss_pct", 0.03),
+        "take_profit_grids": params.get("take_profit_grids", 1),
+        "max_positions": params.get("max_positions", 5),
     }
 
 
@@ -316,10 +361,10 @@ async def create_and_start_bots(master: Master) -> list[str]:
     else:
         print(f"    ✗ 創建失敗: {result.message}")
 
-    # 2. Create RSI Momentum Bot
-    print("  創建 RSI Momentum Bot...")
-    rsi_config = get_rsi_config()
-    result = await master.create_bot(BotType.RSI, rsi_config)
+    # 2. Create RSI-Grid Hybrid Bot (replaces RSI Momentum Bot)
+    print("  創建 RSI-Grid Hybrid Bot...")
+    rsi_grid_config = get_rsi_grid_config()
+    result = await master.create_bot(BotType.RSI_GRID, rsi_grid_config)
     if result.success:
         bot_ids.append(result.bot_id)
         print(f"    ✓ 已創建: {result.bot_id}")

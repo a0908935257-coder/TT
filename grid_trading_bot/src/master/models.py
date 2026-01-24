@@ -19,6 +19,7 @@ class BotType(str, Enum):
     BOLLINGER = "bollinger"          # Bollinger mean reversion bot
     SUPERTREND = "supertrend"        # Supertrend trend-following bot (deprecated)
     RSI = "rsi"                      # RSI mean reversion bot (replaces Supertrend)
+    RSI_GRID = "rsi_grid"            # RSI-Grid hybrid bot (RSI zone + Grid entry)
     GRID_FUTURES = "grid_futures"    # Grid trading bot (futures)
     DCA = "dca"                      # Dollar-cost averaging bot
     TRAILING_STOP = "trailing_stop"  # Trailing stop bot

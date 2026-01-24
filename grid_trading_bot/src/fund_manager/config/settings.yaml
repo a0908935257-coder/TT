@@ -121,13 +121,13 @@ bots:
   # ===========================================================================
   - bot_id: rsi_*
     name: "RSI Momentum Strategy"
-    status: active
+    status: inactive                     # Replaced by RSI-Grid
 
     # --- 資金分配 ---
-    ratio: 0.15                          # 15%
+    ratio: 0.0                           # Disabled
     min_capital: 50
     max_capital: 3000
-    priority: 8
+    priority: 5
 
     # --- 策略參數 (Walk-Forward validated) ---
     strategy_params:
@@ -145,6 +145,51 @@ bots:
       # Risk Management
       stop_loss_pct: 0.04                # 4%
       take_profit_pct: 0.08              # 8%
+
+  # ===========================================================================
+  # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
+  # ===========================================================================
+  # 目標: Sharpe > 3.0, 一致性 > 90%, 勝率 > 70%
+  # 結合 RSI 均值回歸 + Grid 高頻進場機制
+  # ===========================================================================
+  - bot_id: rsi_grid_*
+    name: "RSI-Grid Hybrid Strategy"
+    status: active
+
+    # --- 資金分配 ---
+    ratio: 0.15                          # 15% (取代 RSI Momentum)
+    min_capital: 50
+    max_capital: 5000
+    priority: 8
+
+    # --- 策略參數 ---
+    strategy_params:
+      symbol: BTCUSDT
+      timeframe: 15m
+      leverage: 2
+      margin_type: ISOLATED
+      position_size_pct: 0.1
+      max_position_pct: 0.5
+
+      # RSI Parameters
+      rsi_period: 14
+      oversold_level: 30
+      overbought_level: 70
+
+      # Grid Parameters
+      grid_count: 10
+      atr_period: 14
+      atr_multiplier: 3.0
+
+      # Trend Filter
+      trend_sma_period: 20
+      use_trend_filter: true
+
+      # Risk Management
+      stop_loss_atr_mult: 1.5
+      max_stop_loss_pct: 0.03            # 3%
+      take_profit_grids: 1
+      max_positions: 5
 
   # ===========================================================================
   # Grid Futures Bot (趨勢網格策略)

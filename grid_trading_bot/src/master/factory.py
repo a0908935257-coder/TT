@@ -105,6 +105,7 @@ class BotFactory:
             BotType.BOLLINGER: self._create_bollinger_bot,
             BotType.SUPERTREND: self._create_supertrend_bot,
             BotType.RSI: self._create_rsi_bot,
+            BotType.RSI_GRID: self._create_rsi_grid_bot,
             BotType.GRID_FUTURES: self._create_grid_futures_bot,
             BotType.DCA: self._create_dca_bot,
             BotType.TRAILING_STOP: self._create_trailing_stop_bot,
@@ -446,6 +447,80 @@ class BotFactory:
         bot = RSIBot(
             bot_id=bot_id,
             config=rsi_config,
+            exchange=self._exchange,
+            data_manager=self._data_manager,
+            notifier=self._notifier,
+            heartbeat_callback=self._heartbeat_callback,
+        )
+
+        return bot
+
+    def _create_rsi_grid_bot(
+        self,
+        bot_id: str,
+        config: dict[str, Any],
+    ) -> BotProtocol:
+        """
+        Create an RSI-Grid Hybrid Bot instance.
+
+        Combines RSI zone filtering with Grid entry mechanism:
+        - RSI Zone determines allowed direction (oversold=long, overbought=short)
+        - SMA trend filter provides additional direction bias
+        - ATR-based dynamic grid adapts to market volatility
+        - Grid levels provide precise entry points
+
+        Design Goals:
+        - Target Sharpe > 3.0
+        - Walk-Forward Consistency > 90%
+        - Win Rate > 70%
+        - Max Drawdown < 5%
+
+        Args:
+            bot_id: Bot identifier
+            config: RSI-Grid bot configuration
+
+        Returns:
+            RSIGridBot instance
+        """
+        # Import here to avoid circular imports
+        from decimal import Decimal
+
+        from src.bots.rsi_grid.bot import RSIGridBot
+        from src.bots.rsi_grid.models import RSIGridConfig
+
+        # Build RSIGridConfig from dict
+        rsi_grid_config = RSIGridConfig(
+            symbol=config["symbol"],
+            timeframe=config.get("timeframe", "15m"),
+            leverage=int(config.get("leverage", 2)),
+            margin_type=config.get("margin_type", "ISOLATED"),
+            # RSI Parameters
+            rsi_period=int(config.get("rsi_period", 14)),
+            oversold_level=int(config.get("oversold_level", 30)),
+            overbought_level=int(config.get("overbought_level", 70)),
+            # Grid Parameters
+            grid_count=int(config.get("grid_count", 10)),
+            atr_period=int(config.get("atr_period", 14)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", "3.0"))),
+            # Trend Filter
+            trend_sma_period=int(config.get("trend_sma_period", 20)),
+            use_trend_filter=config.get("use_trend_filter", True),
+            # Capital allocation
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
+            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
+            # Risk Management
+            stop_loss_atr_mult=Decimal(str(config.get("stop_loss_atr_mult", "1.5"))),
+            max_stop_loss_pct=Decimal(str(config.get("max_stop_loss_pct", "0.03"))),
+            take_profit_grids=int(config.get("take_profit_grids", 1)),
+            max_positions=int(config.get("max_positions", 5)),
+            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
+        )
+
+        # Create bot instance
+        bot = RSIGridBot(
+            bot_id=bot_id,
+            config=rsi_grid_config,
             exchange=self._exchange,
             data_manager=self._data_manager,
             notifier=self._notifier,
