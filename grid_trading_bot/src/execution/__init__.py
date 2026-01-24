@@ -58,6 +58,27 @@ from src.execution.router import (
     OrderRouter,
     SymbolInfoProvider,
 )
+from src.execution.algorithms import (
+    # Base
+    AlgorithmProgress,
+    AlgorithmState,
+    BaseExecutionAlgorithm,
+    # TWAP
+    TWAPAlgorithm,
+    TWAPConfig,
+    # VWAP
+    VWAPAlgorithm,
+    VWAPConfig,
+    # Iceberg
+    IcebergAlgorithm,
+    IcebergConfig,
+    # Protocols
+    OrderExecutor,
+    PriceProvider,
+    VolumeProvider,
+    # Factory
+    create_algorithm,
+)
 
 __all__ = [
     # Enums
@@ -88,4 +109,23 @@ __all__ = [
     "OnOrderCancelled",
     "OnOrderError",
     "OnExecutionComplete",
+    # Algorithm base
+    "AlgorithmState",
+    "AlgorithmProgress",
+    "BaseExecutionAlgorithm",
+    # TWAP
+    "TWAPAlgorithm",
+    "TWAPConfig",
+    # VWAP
+    "VWAPAlgorithm",
+    "VWAPConfig",
+    # Iceberg
+    "IcebergAlgorithm",
+    "IcebergConfig",
+    # Algorithm protocols
+    "OrderExecutor",
+    "PriceProvider",
+    "VolumeProvider",
+    # Factory
+    "create_algorithm",
 ]
