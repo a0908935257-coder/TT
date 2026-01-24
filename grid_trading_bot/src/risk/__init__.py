@@ -9,6 +9,7 @@ Provides global risk management for the grid trading bot system:
 - Unified SLTP (Stop Loss / Take Profit) management
 - Pre-trade risk validation
 - Concentration risk monitoring
+- Market anomaly detection
 """
 
 from src.risk.capital_monitor import CapitalMonitor
@@ -25,6 +26,16 @@ from src.risk.concentration_monitor import (
 )
 from src.risk.drawdown_calculator import DrawdownCalculator
 from src.risk.emergency_stop import EmergencyConfig, EmergencyStop, EmergencyStopStatus
+from src.risk.market_anomaly_detector import (
+    AnomalyCategory,
+    LiquidityMetrics,
+    MarketAnomalyAlert,
+    MarketAnomalyConfig,
+    MarketAnomalyDetector,
+    MarketCondition,
+    MarketSnapshot,
+    VolatilityMetrics,
+)
 from src.risk.models import (
     CapitalSnapshot,
     CircuitBreakerState,
@@ -101,6 +112,15 @@ __all__ = [
     "ConcentrationLevel",
     "PositionInfo",
     "AssetCategory",
+    # Market anomaly detector
+    "MarketAnomalyDetector",
+    "MarketAnomalyConfig",
+    "MarketAnomalyAlert",
+    "MarketCondition",
+    "MarketSnapshot",
+    "AnomalyCategory",
+    "LiquidityMetrics",
+    "VolatilityMetrics",
     # SLTP types
     "StopLossType",
     "TakeProfitType",
