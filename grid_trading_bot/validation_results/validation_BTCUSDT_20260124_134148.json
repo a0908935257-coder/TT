@@ -1,0 +1,119 @@
+{
+  "metadata": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "days": 42,
+    "periods": 3,
+    "data_bars": 1000,
+    "timestamp": "2026-01-24T13:41:48.318069"
+  },
+  "results": [
+    {
+      "strategy": "rsi",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "walk_forward": {
+        "total_periods": 3,
+        "consistent_periods": 1,
+        "consistency_pct": 33.333333333333336,
+        "avg_oos_sharpe": -4.997712318644082,
+        "period_details": [
+          {
+            "period": 1,
+            "is_start": "2025-12-13T14:00:00+00:00",
+            "is_end": "2025-12-23T06:59:59.999000+00:00",
+            "oos_start": "2025-12-23T07:00:00+00:00",
+            "oos_end": "2025-12-27T10:59:59.999000+00:00",
+            "is_sharpe": -34.5436938432859,
+            "oos_sharpe": -13.083359944670713,
+            "is_return_pct": -8.516659019363482,
+            "oos_return_pct": -2.500300597832774,
+            "is_win_rate": 0.0,
+            "oos_win_rate": 0.0,
+            "is_trades": 4,
+            "oos_trades": 2,
+            "oos_is_ratio": 0.37874814442328864,
+            "is_consistent": false
+          },
+          {
+            "period": 2,
+            "is_start": "2025-12-27T11:00:00+00:00",
+            "is_end": "2026-01-06T03:59:59.999000+00:00",
+            "oos_start": "2026-01-06T04:00:00+00:00",
+            "oos_end": "2026-01-10T07:59:59.999000+00:00",
+            "is_sharpe": 15.070297539356536,
+            "oos_sharpe": 15.678233666683017,
+            "is_return_pct": 5.9336812333800415,
+            "oos_return_pct": 0.41588195515837506,
+            "is_win_rate": 66.66666666666667,
+            "oos_win_rate": 100.0,
+            "is_trades": 3,
+            "oos_trades": 2,
+            "oos_is_ratio": 1.0403400215383165,
+            "is_consistent": true
+          },
+          {
+            "period": 3,
+            "is_start": "2026-01-10T08:00:00+00:00",
+            "is_end": "2026-01-20T00:59:59.999000+00:00",
+            "oos_start": "2026-01-20T01:00:00+00:00",
+            "oos_end": "2026-01-24T05:59:59.999000+00:00",
+            "is_sharpe": 12.017329704192594,
+            "oos_sharpe": -17.58801067794455,
+            "is_return_pct": 6.304365356565176,
+            "oos_return_pct": -4.8129488494393,
+            "is_win_rate": 100.0,
+            "oos_win_rate": 0.0,
+            "is_trades": 4,
+            "oos_trades": 3,
+            "oos_is_ratio": -1.463553976704863,
+            "is_consistent": false
+          }
+        ]
+      },
+      "overfitting_analysis": {
+        "avg_is_sharpe": -2.48535553324559,
+        "avg_oos_sharpe": -4.997712318644082,
+        "avg_is_return_pct": 1.2404625235272453,
+        "avg_oos_return_pct": -2.299122497371233,
+        "oos_is_sharpe_ratio": 2.0108641406799617,
+        "oos_is_return_ratio": -1.8534397079838387,
+        "is_overfit": true,
+        "overfit_severity": "LOW"
+      },
+      "monte_carlo": {
+        "strategy": "rsi",
+        "base_result": {
+          "sharpe_ratio": -0.8481269017403986,
+          "total_return_pct": -2.022150009448933,
+          "max_drawdown_pct": 11.359078010532853,
+          "win_rate": 42.10526315789474,
+          "total_trades": 19
+        },
+        "trade_shuffle": {
+          "probability_of_profit": 0.0,
+          "probability_of_ruin": 0.0,
+          "worst_case_metrics": {
+            "total_return": -2.022150009448933,
+            "sharpe_ratio": -0.7571146644486884,
+            "max_drawdown": 13.024905068796192,
+            "profit_factor": 0.8758243920178772
+          }
+        },
+        "returns_bootstrap": {
+          "probability_of_profit": 0.376,
+          "probability_of_ruin": 0.812,
+          "worst_case_metrics": {
+            "total_return": -94.72718865850939,
+            "sharpe_ratio": -10.307063125033853,
+            "max_drawdown": 95.90501598962787
+          }
+        },
+        "robustness": {
+          "is_robust": false,
+          "assessment": "FRAGILE"
+        }
+      }
+    }
+  ]
+}
