@@ -302,9 +302,9 @@ class Dispatcher:
         if not self._registry:
             return None
 
-        # Try to get instance directly
-        if hasattr(self._registry, "get_instance"):
-            return self._registry.get_instance(bot_id)
+        # Try to get instance using get_bot_instance method
+        if hasattr(self._registry, "get_bot_instance"):
+            return self._registry.get_bot_instance(bot_id)
 
         # Fallback: try to get from bot info
         bot_info = self._registry.get(bot_id)

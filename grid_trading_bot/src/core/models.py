@@ -398,16 +398,20 @@ class Position(TradingBaseModel):
         Returns:
             Position instance
         """
+        # Get entry price, use mark price as fallback
+        entry_price = Decimal(str(data.get("entryPrice", "0")))
+        mark_price = Decimal(str(data.get("markPrice", data.get("entryPrice", "0"))))
+
         return cls(
             symbol=data["symbol"],
-            side=PositionSide(data["positionSide"]),
-            quantity=abs(Decimal(str(data["positionAmt"]))),
-            entry_price=Decimal(str(data["entryPrice"])),
-            mark_price=Decimal(str(data["markPrice"])),
+            side=PositionSide(data.get("positionSide", "BOTH")),
+            quantity=abs(Decimal(str(data.get("positionAmt", "0")))),
+            entry_price=entry_price,
+            mark_price=mark_price if mark_price > 0 else entry_price,
             liquidation_price=Decimal(str(data["liquidationPrice"])) if data.get("liquidationPrice") else None,
-            leverage=int(data["leverage"]),
+            leverage=int(data.get("leverage", 1)),
             margin=Decimal(str(data.get("isolatedMargin", data.get("maintMargin", "0")))),
-            unrealized_pnl=Decimal(str(data["unRealizedProfit"])),
+            unrealized_pnl=Decimal(str(data.get("unRealizedProfit", "0"))),
             margin_type=data.get("marginType", "isolated").lower(),
             updated_at=timestamp_to_datetime(data.get("updateTime", 0)),
         )
@@ -515,7 +519,7 @@ class AccountInfo(TradingBaseModel):
             Balance(
                 asset=b["asset"],
                 free=Decimal(str(b["availableBalance"])),
-                locked=Decimal(str(b["balance"])) - Decimal(str(b["availableBalance"])),
+                locked=Decimal(str(b["walletBalance"])) - Decimal(str(b["availableBalance"])),
             )
             for b in data.get("assets", [])
             if Decimal(str(b["walletBalance"])) > 0

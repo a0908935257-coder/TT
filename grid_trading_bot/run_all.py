@@ -27,10 +27,13 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 
 from src.core import get_logger
+from src.core.models import MarketType
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master import Master, MasterConfig, BotType
 from src.notification import NotificationManager
+from src.fund_manager import FundManager
+from src.fund_manager.models.config import FundManagerConfig
 
 logger = get_logger(__name__)
 
@@ -39,6 +42,7 @@ _master: Master | None = None
 _exchange: ExchangeClient | None = None
 _data_manager: MarketDataManager | None = None
 _notifier: NotificationManager | None = None
+_fund_manager: FundManager | None = None
 _discord_bot = None
 _shutdown_event: asyncio.Event | None = None
 
@@ -52,6 +56,7 @@ def print_banner():
 
 啟動項目:
   ✓ Master 主控台
+  ✓ Fund Manager (中央資金分配系統)
   ✓ Bollinger Bot (合約 2x) - Supertrend + BB 趨勢策略
   ✓ RSI Momentum Bot (合約 2x) - 動量策略
   ✓ Grid Futures Bot (合約 2x) - 趨勢網格
@@ -63,6 +68,11 @@ Walk-Forward 驗證通過的策略:
   RSI: Period=21, Level=50±5, 2x (88% 一致性, Sharpe 0.81, OOS 140%)
   Grid: 10格, trend=20, ATR=3.0, 2x (100% 一致性, Sharpe 4.50)
   Supertrend: ATR=25, M=3.0, 2x (75% 一致性, Sharpe 0.39)
+
+資金分配 (中央管理):
+  Grid Futures: 30%  |  Bollinger: 30%
+  RSI: 15%           |  Supertrend: 15%
+  保留金: 10%
 
 Discord 指令:
   /bot list     - 列出所有機器人
@@ -149,7 +159,7 @@ def get_bollinger_config() -> dict:
         # BBW filter (retained for compatibility)
         "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
         "bbw_threshold_pct": int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
-        "max_capital": os.getenv('BOLLINGER_MAX_CAPITAL', '7'),
+        # max_capital is managed by FundManager
     }
 
 
@@ -171,7 +181,7 @@ def get_rsi_config() -> dict:
         "momentum_threshold": int(os.getenv('RSI_MOMENTUM_THRESHOLD', '5')),  # Crossover threshold
         "leverage": int(os.getenv('RSI_LEVERAGE', '2')),  # 降低槓桿提高穩定性
         "margin_type": os.getenv('RSI_MARGIN_TYPE', 'ISOLATED'),
-        "max_capital": os.getenv('RSI_MAX_CAPITAL', '7'),
+        # max_capital is managed by FundManager
         "position_size_pct": os.getenv('RSI_POSITION_SIZE', '0.1'),
         "stop_loss_pct": os.getenv('RSI_STOP_LOSS_PCT', '0.04'),  # 4% (Walk-Forward validated)
         "take_profit_pct": os.getenv('RSI_TAKE_PROFIT_PCT', '0.08'),  # 8% (Walk-Forward validated)
@@ -208,7 +218,7 @@ def get_grid_futures_config() -> dict:
         "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
         "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '3.0'),  # Validated: 3.0 (更寬範圍)
         "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
-        "max_capital": os.getenv('GRID_FUTURES_MAX_CAPITAL', '5'),
+        # max_capital is managed by FundManager
         "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
         "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
         "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.05'),
@@ -240,7 +250,7 @@ def get_supertrend_config() -> dict:
         "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
         "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '25')),  # Validated: 25 (更長週期)
         "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0'),  # Validated: 3.0
-        "max_capital": os.getenv('SUPERTREND_MAX_CAPITAL', '5'),
+        # max_capital is managed by FundManager
         "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
         "stop_loss_pct": os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.03'),  # Validated: 3%
         "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
@@ -349,7 +359,7 @@ async def start_discord_bot(master: Master):
 
 async def shutdown():
     """Graceful shutdown."""
-    global _master, _exchange, _data_manager, _notifier, _discord_bot
+    global _master, _exchange, _data_manager, _notifier, _fund_manager, _discord_bot
 
     print("\n正在關閉系統...")
 
@@ -358,6 +368,15 @@ async def shutdown():
         try:
             await _discord_bot.stop_bot()
             print("  ✓ Discord Bot 已關閉")
+        except:
+            pass
+
+    # Stop Fund Manager
+    if _fund_manager:
+        try:
+            await _fund_manager.stop()
+            FundManager.reset_instance()
+            print("  ✓ 資金管理系統已關閉")
         except:
             pass
 
@@ -390,7 +409,7 @@ async def shutdown():
 
 async def main():
     """Main entry point."""
-    global _master, _exchange, _data_manager, _notifier, _shutdown_event
+    global _master, _exchange, _data_manager, _notifier, _fund_manager, _shutdown_event
 
     print_banner()
     _shutdown_event = asyncio.Event()
@@ -442,11 +461,37 @@ async def main():
         await _master.start()
         print("  ✓ Master 啟動成功")
 
-        # 5. Create and start bots
+        # 5. Initialize Fund Manager (centralized capital allocation)
+        print("正在初始化資金管理系統...")
+        import yaml
+        with open("src/fund_manager/config/settings.yaml", "r") as f:
+            yaml_config = yaml.safe_load(f)
+        fund_config = FundManagerConfig.from_yaml(yaml_config)
+        _fund_manager = FundManager(
+            exchange=_exchange,
+            registry=_master.registry,
+            notifier=_notifier,
+            config=fund_config,
+            market_type=MarketType.FUTURES,
+        )
+        await _fund_manager.start()
+        print("  ✓ 資金管理系統啟動成功")
+
+        # 6. Create and start bots
         print("\n正在創建機器人...")
         bot_ids = await create_and_start_bots(_master)
 
-        # 6. Start Discord bot
+        # 7. Dispatch initial funds to bots
+        print("\n正在分配資金...")
+        dispatch_result = await _fund_manager.dispatch_funds(trigger="startup")
+        if dispatch_result.success:
+            print(f"  ✓ 資金分配成功")
+            for bot_id, amount in dispatch_result.allocations.items():
+                print(f"    • {bot_id}: {amount:.2f} USDT")
+        else:
+            print(f"  ⚠️ 資金分配警告: {dispatch_result.errors}")
+
+        # 8. Start Discord bot
         print("\n正在啟動 Discord Bot...")
         await start_discord_bot(_master)
 

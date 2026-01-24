@@ -184,10 +184,44 @@ class FundManagerConfig:
         """
         Create from YAML config dictionary.
 
+        The YAML structure has nested keys like:
+        - system.poll_interval
+        - strategy.type
+        - bots (list)
+
         Args:
             yaml_dict: Dictionary from YAML config file
 
         Returns:
             FundManagerConfig instance
         """
-        return cls.from_dict(yaml_dict)
+        # Extract from nested YAML structure
+        system = yaml_dict.get("system", {})
+        strategy_section = yaml_dict.get("strategy", {})
+        bots = yaml_dict.get("bots", [])
+
+        # Convert bots to allocation format
+        allocations = []
+        for bot in bots:
+            if bot.get("status", "active") == "active":
+                allocations.append({
+                    "bot_pattern": bot.get("bot_id", ""),
+                    "ratio": bot.get("ratio", 0),
+                    "min_capital": bot.get("min_capital", 0),
+                    "max_capital": bot.get("max_capital", 1000000),
+                    "priority": bot.get("priority", 0),
+                    "enabled": True,
+                })
+
+        # Build flat dict for from_dict
+        flat_dict = {
+            "enabled": True,
+            "poll_interval": system.get("poll_interval", 60),
+            "deposit_threshold": system.get("min_allocation_unit", 10),
+            "reserve_ratio": system.get("reserve_ratio", 0.1),
+            "auto_dispatch": strategy_section.get("auto_dispatch", True),
+            "strategy": strategy_section.get("type", "fixed_ratio"),
+            "allocations": allocations,
+        }
+
+        return cls.from_dict(flat_dict)
