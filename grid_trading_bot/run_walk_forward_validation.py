@@ -44,8 +44,6 @@ from src.backtest.strategy import (
     SupertrendStrategyConfig,
     GridBacktestStrategy,
     GridStrategyConfig,
-    RSIBacktestStrategy,
-    RSIStrategyConfig,
     GridFuturesBacktestStrategy,
     GridFuturesStrategyConfig,
     GridDirection,
@@ -147,7 +145,6 @@ def create_all_strategies() -> dict:
         "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig()),
         "supertrend": SupertrendBacktestStrategy(SupertrendStrategyConfig()),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
-        "rsi": RSIBacktestStrategy(RSIStrategyConfig()),
         "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig()),
         "grid_futures": GridFuturesBacktestStrategy(GridFuturesStrategyConfig()),
     }
@@ -450,7 +447,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Walk-Forward 驗證系統")
     parser.add_argument(
         "--strategy", "-s",
-        choices=["all", "bollinger", "supertrend", "grid", "rsi", "rsi_grid", "grid_futures"],
+        choices=["all", "bollinger", "supertrend", "grid", "rsi_grid", "grid_futures"],
         default="all",
         help="要驗證的策略 (default: all)"
     )

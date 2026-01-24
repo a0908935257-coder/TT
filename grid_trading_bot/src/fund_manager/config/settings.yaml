@@ -114,39 +114,6 @@ bots:
       bbw_threshold_pct: 20
 
   # ===========================================================================
-  # RSI Momentum Bot (RSI 動量策略)
-  # ===========================================================================
-  # Walk-Forward 驗證: 88% 一致性, Sharpe 0.81, OOS 140%
-  # 報酬: +7.86%, Stop Loss: 4%, Take Profit: 8%
-  # ===========================================================================
-  - bot_id: rsi_*
-    name: "RSI Momentum Strategy"
-    status: inactive                     # Replaced by RSI-Grid
-
-    # --- 資金分配 ---
-    ratio: 0.0                           # Disabled
-    min_capital: 50
-    max_capital: 3000
-    priority: 5
-
-    # --- 策略參數 (Walk-Forward validated) ---
-    strategy_params:
-      symbol: BTCUSDT
-      timeframe: 15m
-      leverage: 2
-      margin_type: ISOLATED
-      position_size_pct: 0.1
-
-      # RSI Settings
-      rsi_period: 21
-      entry_level: 50
-      momentum_threshold: 5
-
-      # Risk Management
-      stop_loss_pct: 0.04                # 4%
-      take_profit_pct: 0.08              # 8%
-
-  # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
   # ===========================================================================
   # 目標: Sharpe > 3.0, 一致性 > 90%, 勝率 > 70%
