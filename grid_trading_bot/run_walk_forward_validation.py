@@ -141,12 +141,24 @@ async def fetch_klines(symbol: str, interval: str, days: int, data_file: str = N
 
 def create_all_strategies() -> dict:
     """建立所有策略實例"""
+    # Grid Futures: 使用 settings.yaml 實盤參數
+    # leverage=2, direction=trend_follow, grid_count=10, atr_multiplier=3.0
+    grid_futures_config = GridFuturesStrategyConfig(
+        leverage=2,  # 實盤配置
+        direction=GridDirection.TREND_FOLLOW,  # 實盤配置
+        grid_count=10,
+        atr_multiplier=Decimal("3.0"),
+        trend_period=20,
+        atr_period=14,
+        stop_loss_pct=Decimal("0.05"),
+    )
+
     return {
         "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig()),
         "supertrend": SupertrendBacktestStrategy(SupertrendStrategyConfig()),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
         "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig()),
-        "grid_futures": GridFuturesBacktestStrategy(GridFuturesStrategyConfig()),
+        "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),
     }
 
 
