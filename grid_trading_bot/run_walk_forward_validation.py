@@ -50,6 +50,10 @@ from src.backtest.strategy import (
     GridFuturesStrategyConfig,
     GridDirection,
 )
+from src.backtest.strategy.rsi_grid import (
+    RSIGridBacktestStrategy,
+    RSIGridStrategyConfig,
+)
 from src.core.models import Kline
 from src.exchange import ExchangeClient
 
@@ -98,6 +102,7 @@ def create_all_strategies() -> dict:
         "supertrend": SupertrendBacktestStrategy(SupertrendStrategyConfig()),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
         "rsi": RSIBacktestStrategy(RSIStrategyConfig()),
+        "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig()),
         "grid_futures": GridFuturesBacktestStrategy(GridFuturesStrategyConfig()),
     }
 
@@ -399,7 +404,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Walk-Forward 驗證系統")
     parser.add_argument(
         "--strategy", "-s",
-        choices=["all", "bollinger", "supertrend", "grid", "rsi", "grid_futures"],
+        choices=["all", "bollinger", "supertrend", "grid", "rsi", "rsi_grid", "grid_futures"],
         default="all",
         help="要驗證的策略 (default: all)"
     )
