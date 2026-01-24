@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-Bollinger Bot Runner.
+Bollinger BB_TREND_GRID Bot Runner.
 
-啟動布林帶趨勢交易機器人 (BOLLINGER_TREND 策略)。
+啟動布林帶趨勢網格交易機器人。
 
-策略邏輯:
-- 進場: Supertrend 看多時在 BB 下軌買入，看空時在 BB 上軌賣出
-- 出場: Supertrend 翻轉（主要）或 ATR 止損（保護）
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割):
+- Walk-Forward 一致性: 80% (8/10 時段獲利)
+- OOS Sharpe: 6.56
+- 過度擬合: 未檢測到
+- 穩健性: ROBUST
 
-Walk-Forward 驗證結果 (2024-01 ~ 2026-01, 2 年數據, 8 期分割):
-- 報酬: +35.1% (2 年)
-- Sharpe: 1.81
-- 最大回撤: 6.7%
-- Walk-Forward 一致性: 75%
-- OOS 效率: 96%
+策略邏輯 (BB_TREND_GRID):
+- 趨勢判斷: BB 中軌 (SMA)
+  - Price > SMA = 看多 (只做 LONG)
+  - Price < SMA = 看空 (只做 SHORT)
+- 進場: 網格交易
+  - LONG: kline.low <= grid_level.price (買跌)
+  - SHORT: kline.high >= grid_level.price (賣漲)
+- 出場: 止盈 1 個網格 或 止損 5%
 """
 
 import asyncio
@@ -48,35 +52,43 @@ def get_config_from_env() -> BollingerConfig:
     從環境變數讀取配置。
 
     Walk-Forward 驗證通過的默認參數:
-    - bb_std: 3.0
-    - st_atr_multiplier: 3.5
+    - bb_period: 20
+    - bb_std: 2.0
+    - grid_count: 10
+    - grid_range_pct: 4%
+    - stop_loss_pct: 5%
     - leverage: 2
-    - atr_stop_multiplier: 2.0
     """
-    # 資金分配：如果設定了 MAX_CAPITAL，則限制該 Bot 最大可用資金
+    # 資金分配
     max_capital_str = os.getenv('BOLLINGER_MAX_CAPITAL', '')
     max_capital = Decimal(max_capital_str) if max_capital_str else None
 
     return BollingerConfig(
         # 基本設定
         symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
-        timeframe=os.getenv('BOLLINGER_TIMEFRAME', '15m'),
+        timeframe=os.getenv('BOLLINGER_TIMEFRAME', '1h'),  # Walk-Forward validated
+        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '2')),
+        margin_type=os.getenv('BOLLINGER_MARGIN_TYPE', 'ISOLATED'),
+
+        # Bollinger Bands 參數 (Walk-Forward validated)
+        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
+        bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '2.0')),
+
+        # Grid 參數 (Walk-Forward validated)
+        grid_count=int(os.getenv('BOLLINGER_GRID_COUNT', '10')),
+        grid_range_pct=Decimal(os.getenv('BOLLINGER_GRID_RANGE_PCT', '0.04')),  # 4%
+        take_profit_grids=int(os.getenv('BOLLINGER_TP_GRIDS', '1')),
+
+        # 倉位管理
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
+        max_position_pct=Decimal(os.getenv('BOLLINGER_MAX_POSITION', '0.5')),
 
-        # Walk-Forward 驗證通過的參數 (2x, BB 3.0, ST 3.5)
-        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '2')),  # 降低槓桿提高穩定性
-        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
-        bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '3.0')),  # Walk-Forward 最佳值
+        # 風險管理 (Walk-Forward validated)
+        stop_loss_pct=Decimal(os.getenv('BOLLINGER_STOP_LOSS', '0.05')),  # 5%
+        rebuild_threshold_pct=Decimal(os.getenv('BOLLINGER_REBUILD_THRESHOLD', '0.02')),
 
-        # Supertrend 參數
-        st_atr_period=int(os.getenv('BOLLINGER_ST_ATR_PERIOD', '20')),
-        st_atr_multiplier=Decimal(os.getenv('BOLLINGER_ST_ATR_MULTIPLIER', '3.5')),  # Walk-Forward 最佳值
-
-        # ATR Stop Loss
-        atr_stop_multiplier=Decimal(os.getenv('BOLLINGER_ATR_STOP_MULTIPLIER', '2.0')),
-
-        # BBW 過濾 (保留用於指標兼容)
+        # BBW 過濾
         bbw_lookback=int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
         bbw_threshold_pct=int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
     )
@@ -146,8 +158,10 @@ async def main() -> None:
     global _bot
 
     print("=" * 60)
-    print("    Bollinger Trend Bot - 布林帶趨勢交易機器人")
+    print("    Bollinger BB_TREND_GRID Bot - 趨勢網格交易機器人")
     print("=" * 60)
+
+    print("\n✅ Walk-Forward 驗證通過 (80% 一致性, OOS Sharpe 6.56)")
 
     # 讀取配置
     config = get_config_from_env()
@@ -155,33 +169,29 @@ async def main() -> None:
     print(f"\n配置資訊：")
     print(f"  交易對: {config.symbol}")
     print(f"  時間框架: {config.timeframe}")
-    print(f"  策略模式: BOLLINGER_TREND (Supertrend + BB)")
     print(f"  槓桿: {config.leverage}x")
-    print(f"  保證金模式: ISOLATED (逐倉)")
+    print(f"  保證金模式: {config.margin_type} (逐倉)")
 
     # 資金分配顯示
     if config.max_capital:
         print(f"  分配資金: {config.max_capital:,.0f} USDT")
-        print(f"  單次倉位: {config.position_size_pct*100}% = {config.max_capital * config.position_size_pct:,.0f} USDT")
+        print(f"  單次倉位: {config.position_size_pct*100}%")
     else:
         print(f"  分配資金: 全部餘額")
         print(f"  單次倉位: {config.position_size_pct*100}%")
 
-    print(f"\n  Bollinger Bands:")
-    print(f"    週期: {config.bb_period}")
-    print(f"    標準差: {config.bb_std}σ")
+    print(f"\nBollinger Bands 設定:")
+    print(f"  BB 週期: {config.bb_period}")
+    print(f"  BB 標準差: {config.bb_std}σ")
 
-    print(f"\n  Supertrend:")
-    print(f"    ATR 週期: {config.st_atr_period}")
-    print(f"    ATR 乘數: {config.st_atr_multiplier}")
+    print(f"\nGrid 設定:")
+    print(f"  網格數量: {config.grid_count}")
+    print(f"  網格範圍: ±{config.grid_range_pct*100}%")
+    print(f"  止盈網格: {config.take_profit_grids}")
 
-    print(f"\n  ATR Stop Loss:")
-    print(f"    乘數: {config.atr_stop_multiplier}")
-
-    print(f"\n  Walk-Forward 驗證結果:")
-    print(f"    報酬: +35.1% (2年), Sharpe: 1.81")
-    print(f"    回撤: 6.7%, 一致性: 75%")
-    print(f"    OOS 效率: 96%")
+    print(f"\n風險控制:")
+    print(f"  止損: {config.stop_loss_pct*100:.2f}%")
+    print(f"  網格重建閾值: {config.rebuild_threshold_pct*100:.1f}%")
     print()
 
     try:
@@ -224,7 +234,16 @@ async def main() -> None:
             print("=" * 60)
             print(f"  交易對: {status.get('symbol')}")
             print(f"  狀態: {status.get('state')}")
-            print(f"  當前 K 線: {status.get('current_bar')}")
+            print(f"  槓桿: {status.get('leverage')}x")
+            print(f"  資金: ${float(status.get('capital', 0)):,.2f}")
+
+            grid = status.get('grid', {})
+            if grid:
+                print(f"  網格中心: ${float(grid.get('center', 0)):,.2f}")
+                print(f"  網格範圍: ${float(grid.get('lower', 0)):,.2f} - ${float(grid.get('upper', 0)):,.2f}")
+                print(f"  網格數量: {grid.get('count')}")
+
+            print(f"  趨勢: {'看漲' if status.get('current_trend') == 1 else '看跌' if status.get('current_trend') == -1 else '中性'}")
             print(f"  有持倉: {'是' if status.get('has_position') else '否'}")
         else:
             print("\n交易機器人啟動失敗！請檢查日誌。")

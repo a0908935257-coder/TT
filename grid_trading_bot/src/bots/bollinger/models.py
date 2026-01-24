@@ -1,18 +1,27 @@
 """
-Bollinger Trend Bot Data Models.
+Bollinger BB_TREND_GRID Bot Data Models.
 
-Provides data models for Bollinger Trend strategy (Supertrend + BB combination)
-running on futures market.
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割):
+- Walk-Forward 一致性: 80% (8/10 時段獲利)
+- OOS Sharpe: 6.56
+- 過度擬合: 未檢測到
+- 穩健性: ROBUST
 
-Strategy: Enter on BB band touch when aligned with Supertrend direction.
-Exit: Supertrend flip or ATR stop loss.
+策略邏輯 (BB_TREND_GRID):
+- 趨勢判斷: BB 中軌 (SMA)
+  - Price > SMA = 看多 (只做 LONG)
+  - Price < SMA = 看空 (只做 SHORT)
+- 進場: 網格交易
+  - LONG: kline.low <= grid_level.price (買跌)
+  - SHORT: kline.high >= grid_level.price (賣漲)
+- 出場: 止盈 1 個網格 或 止損 5%
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 
 # =============================================================================
@@ -23,15 +32,15 @@ from typing import Optional
 class StrategyMode(str, Enum):
     """Trading strategy mode."""
 
-    BOLLINGER_TREND = "bollinger_trend"  # Supertrend + BB combination
+    BB_TREND_GRID = "bb_trend_grid"  # BB trend + grid trading (validated)
 
 
 class SignalType(str, Enum):
     """Trading signal type."""
 
-    LONG = "long"    # Long signal (buy at lower band)
-    SHORT = "short"  # Short signal (sell at upper band)
-    NONE = "none"    # No signal
+    LONG = "long"
+    SHORT = "short"
+    NONE = "none"
 
 
 class PositionSide(str, Enum):
@@ -42,13 +51,23 @@ class PositionSide(str, Enum):
     NONE = "NONE"
 
 
+class GridLevelState(str, Enum):
+    """Grid level state."""
+
+    EMPTY = "empty"
+    LONG_FILLED = "long_filled"
+    SHORT_FILLED = "short_filled"
+
+
 class ExitReason(str, Enum):
     """Reason for exiting a position."""
 
-    TREND_FLIP = "trend_flip"    # Supertrend flipped direction
-    STOP_LOSS = "stop_loss"      # ATR stop loss triggered
-    MANUAL = "manual"            # Manual exit
-    BOT_STOP = "bot_stop"        # Bot stopped
+    GRID_PROFIT = "grid_profit"      # Normal grid profit take
+    TREND_CHANGE = "trend_change"    # Trend direction changed
+    STOP_LOSS = "stop_loss"          # Stop loss triggered
+    GRID_REBUILD = "grid_rebuild"    # Grid needs rebuilding
+    MANUAL = "manual"                # Manual exit
+    BOT_STOP = "bot_stop"            # Bot stopped
 
 
 # =============================================================================
@@ -59,80 +78,73 @@ class ExitReason(str, Enum):
 @dataclass
 class BollingerConfig:
     """
-    Bollinger Trend Bot configuration.
+    Bollinger BB_TREND_GRID Bot configuration.
 
-    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割)
 
-    驗證結果 - 最佳配置 BB+ST (2x, BB 3.0, ST 3.5):
-        - 報酬: +35.1% (2 年)
-        - Sharpe: 1.81 ✓
-        - 最大回撤: 6.7% ✓
-        - Walk-Forward 一致性: 75% (6/8 時段獲利) ✓
-        - 各時段: P1:+15% | P2:+4% | P3:-2% | P4:+7% | P5:+5% | P6:-2% | P7:+2% | P8:+5%
-        - 交易次數: 349, 勝率: 18.6%
-
-    其他通過驗證的配置:
-        - BB+ST (2x, BB 2.5, ST 3.5): +21.5%, Sharpe 1.12, DD 8.0%, 一致性 75%
-        - BB+ST (3x, BB 2.5, ST 3.5): +32.3%, Sharpe 1.10, DD 11.8%, 一致性 75%
+    驗證結果:
+        - Walk-Forward 一致性: 80% (8/10 時段獲利)
+        - OOS Sharpe: 6.56
+        - 平均 OOS 報酬: 10.39%
+        - 過度擬合: 未檢測到
+        - 穩健性: ROBUST
 
     策略邏輯:
-    - 進場: Supertrend 看多時在 BB 下軌買入，看空時在 BB 上軌賣出
-    - 出場: Supertrend 翻轉（主要）或 ATR 止損（保護）
+    - 趨勢: BB 中軌 (SMA) 判斷方向
+    - 進場: 網格交易，K線觸及網格線時進場
+    - 出場: 止盈 1 個網格 或 止損 5%
 
     默認參數 (Walk-Forward 驗證通過):
-    - bb_period: 20, bb_std: 3.0
-    - st_atr_period: 20, st_atr_multiplier: 3.5
-    - atr_stop_multiplier: 2.0
-    - leverage: 2
-
-    Example:
-        >>> config = BollingerConfig(symbol="BTCUSDT")  # 使用默認參數
+    - bb_period: 20
+    - bb_std: 2.0
+    - grid_count: 10
+    - grid_range_pct: 4%
+    - stop_loss_pct: 5%
     """
 
     symbol: str
-    timeframe: str = "15m"
+    timeframe: str = "1h"
 
     # Bollinger Bands parameters
     bb_period: int = 20
-    bb_std: Decimal = field(default_factory=lambda: Decimal("3.0"))  # Walk-Forward 驗證最佳值
+    bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Supertrend parameters
-    st_atr_period: int = 20
-    st_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))
-
-    # ATR Stop Loss
-    atr_stop_multiplier: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    # Grid parameters (Walk-Forward validated)
+    grid_count: int = 10
+    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4% range
+    take_profit_grids: int = 1  # Take profit at next grid level
 
     # Position settings
-    leverage: int = 2  # 降低槓桿以提高穩定性
+    leverage: int = 2
+    margin_type: str = "ISOLATED"
     max_capital: Optional[Decimal] = None
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
-    max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
+    max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max 50% exposure
 
-    # BBW filter (retained for indicator compatibility)
+    # Risk management
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 5% stop loss
+    rebuild_threshold_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # Rebuild when price moves 2% from grid
+
+    # BBW filter (for squeeze detection)
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
-
-    # Risk control (風險控制)
-    daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
-    max_consecutive_losses: int = 5  # 最大連續虧損次數
 
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.bb_std, Decimal):
             self.bb_std = Decimal(str(self.bb_std))
-        if not isinstance(self.st_atr_multiplier, Decimal):
-            self.st_atr_multiplier = Decimal(str(self.st_atr_multiplier))
-        if not isinstance(self.atr_stop_multiplier, Decimal):
-            self.atr_stop_multiplier = Decimal(str(self.atr_stop_multiplier))
+        if not isinstance(self.grid_range_pct, Decimal):
+            self.grid_range_pct = Decimal(str(self.grid_range_pct))
         if not isinstance(self.position_size_pct, Decimal):
             self.position_size_pct = Decimal(str(self.position_size_pct))
         if not isinstance(self.max_position_pct, Decimal):
             self.max_position_pct = Decimal(str(self.max_position_pct))
+        if not isinstance(self.stop_loss_pct, Decimal):
+            self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
+        if not isinstance(self.rebuild_threshold_pct, Decimal):
+            self.rebuild_threshold_pct = Decimal(str(self.rebuild_threshold_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
-        if not isinstance(self.daily_loss_limit_pct, Decimal):
-            self.daily_loss_limit_pct = Decimal(str(self.daily_loss_limit_pct))
 
         self._validate()
 
@@ -144,27 +156,64 @@ class BollingerConfig:
         if self.bb_std < Decimal("0.5") or self.bb_std > Decimal("5.0"):
             raise ValueError(f"bb_std must be 0.5-5.0, got {self.bb_std}")
 
+        if self.grid_count < 3 or self.grid_count > 50:
+            raise ValueError(f"grid_count must be 3-50, got {self.grid_count}")
+
         if self.leverage < 1 or self.leverage > 125:
             raise ValueError(f"leverage must be 1-125, got {self.leverage}")
 
         if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("1.0"):
             raise ValueError(f"position_size_pct must be 1%-100%, got {self.position_size_pct}")
 
-        if self.max_position_pct < Decimal("0.1") or self.max_position_pct > Decimal("1.0"):
-            raise ValueError(f"max_position_pct must be 10%-100%, got {self.max_position_pct}")
-
         valid_timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "4h"]
         if self.timeframe not in valid_timeframes:
             raise ValueError(f"timeframe must be one of {valid_timeframes}")
 
-        if self.st_atr_period < 5 or self.st_atr_period > 50:
-            raise ValueError(f"st_atr_period must be 5-50, got {self.st_atr_period}")
 
-        if self.st_atr_multiplier < Decimal("1.0") or self.st_atr_multiplier > Decimal("10.0"):
-            raise ValueError(f"st_atr_multiplier must be 1.0-10.0, got {self.st_atr_multiplier}")
+# =============================================================================
+# Grid Data
+# =============================================================================
 
-        if self.atr_stop_multiplier < Decimal("0.5") or self.atr_stop_multiplier > Decimal("5.0"):
-            raise ValueError(f"atr_stop_multiplier must be 0.5-5.0, got {self.atr_stop_multiplier}")
+
+@dataclass
+class GridLevel:
+    """Individual grid level."""
+
+    index: int
+    price: Decimal
+    state: GridLevelState = GridLevelState.EMPTY
+    entry_price: Optional[Decimal] = None
+    entry_time: Optional[datetime] = None
+
+    def __post_init__(self):
+        if not isinstance(self.price, Decimal):
+            self.price = Decimal(str(self.price))
+        if self.entry_price is not None and not isinstance(self.entry_price, Decimal):
+            self.entry_price = Decimal(str(self.entry_price))
+
+
+@dataclass
+class GridSetup:
+    """Grid configuration and levels."""
+
+    symbol: str
+    center_price: Decimal
+    upper_price: Decimal
+    lower_price: Decimal
+    grid_count: int
+    levels: List[GridLevel]
+    version: int = 1
+
+    def __post_init__(self):
+        for attr in ['center_price', 'upper_price', 'lower_price']:
+            value = getattr(self, attr)
+            if not isinstance(value, Decimal):
+                setattr(self, attr, Decimal(str(value)))
+
+    @property
+    def grid_spacing(self) -> Decimal:
+        """Grid spacing between levels."""
+        return (self.upper_price - self.lower_price) / Decimal(self.grid_count)
 
 
 # =============================================================================
@@ -179,7 +228,7 @@ class BollingerBands:
 
     Attributes:
         upper: Upper band (middle + std * multiplier)
-        middle: Middle band (SMA)
+        middle: Middle band (SMA) - used for trend detection
         lower: Lower band (middle - std * multiplier)
         std: Standard deviation
         timestamp: Calculation timestamp
@@ -213,18 +262,7 @@ class BollingerBands:
 
 @dataclass
 class BBWData:
-    """
-    Bollinger Band Width (BBW) filter data.
-
-    BBW is used to detect squeeze conditions where mean reversion
-    is less reliable due to potential breakout.
-
-    Attributes:
-        bbw: Current BBW value (upper - lower) / middle
-        bbw_percentile: BBW percentile rank in history
-        is_squeeze: Whether in squeeze state (percentile < threshold)
-        threshold: Squeeze threshold value
-    """
+    """Bollinger Band Width (BBW) filter data."""
 
     bbw: Decimal
     bbw_percentile: int
@@ -239,102 +277,6 @@ class BBWData:
             self.threshold = Decimal(str(self.threshold))
 
 
-@dataclass
-class SupertrendData:
-    """
-    Supertrend indicator data for BOLLINGER_TREND mode.
-
-    Attributes:
-        upper_band: Upper Supertrend band
-        lower_band: Lower Supertrend band
-        supertrend: Current Supertrend value (support/resistance line)
-        trend: Trend direction (1 = bullish, -1 = bearish)
-        atr: Current ATR value
-        timestamp: Calculation timestamp
-    """
-
-    upper_band: Decimal
-    lower_band: Decimal
-    supertrend: Decimal
-    trend: int  # 1 = bullish, -1 = bearish
-    atr: Decimal
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
-    def __post_init__(self):
-        """Ensure Decimal types."""
-        for attr in ["upper_band", "lower_band", "supertrend", "atr"]:
-            value = getattr(self, attr)
-            if not isinstance(value, Decimal):
-                setattr(self, attr, Decimal(str(value)))
-
-    @property
-    def is_bullish(self) -> bool:
-        """Check if trend is bullish."""
-        return self.trend == 1
-
-    @property
-    def is_bearish(self) -> bool:
-        """Check if trend is bearish."""
-        return self.trend == -1
-
-
-# =============================================================================
-# Signal
-# =============================================================================
-
-
-@dataclass
-class Signal:
-    """
-    Trading signal.
-
-    Attributes:
-        signal_type: Signal type (LONG, SHORT, NONE)
-        entry_price: Suggested entry price (band price)
-        stop_loss: ATR-based stop loss price
-        bands: Bollinger Bands at signal time
-        bbw: BBW data at signal time
-        supertrend: Supertrend data
-        timestamp: Signal timestamp
-        reason: Signal reason description
-        atr: ATR value (for stop loss calculation)
-    """
-
-    signal_type: SignalType
-    bands: BollingerBands
-    bbw: BBWData
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    reason: str = ""
-    entry_price: Optional[Decimal] = None
-    stop_loss: Optional[Decimal] = None
-    atr: Optional[Decimal] = None
-    supertrend: Optional[SupertrendData] = None
-
-    def __post_init__(self):
-        """Ensure Decimal types."""
-        if self.entry_price is not None and not isinstance(self.entry_price, Decimal):
-            self.entry_price = Decimal(str(self.entry_price))
-        if self.stop_loss is not None and not isinstance(self.stop_loss, Decimal):
-            self.stop_loss = Decimal(str(self.stop_loss))
-        if self.atr is not None and not isinstance(self.atr, Decimal):
-            self.atr = Decimal(str(self.atr))
-
-    @property
-    def is_valid(self) -> bool:
-        """Check if this is a valid trading signal."""
-        return self.signal_type != SignalType.NONE
-
-    @property
-    def is_long(self) -> bool:
-        """Check if this is a long signal."""
-        return self.signal_type == SignalType.LONG
-
-    @property
-    def is_short(self) -> bool:
-        """Check if this is a short signal."""
-        return self.signal_type == SignalType.SHORT
-
-
 # =============================================================================
 # Position
 # =============================================================================
@@ -342,23 +284,7 @@ class Signal:
 
 @dataclass
 class Position:
-    """
-    Current futures position.
-
-    Attributes:
-        symbol: Trading pair
-        side: Position side (LONG/SHORT)
-        entry_price: Entry price
-        quantity: Position quantity
-        leverage: Leverage used
-        unrealized_pnl: Unrealized profit/loss
-        entry_time: Entry timestamp
-        entry_bar: K-line bar number at entry
-        take_profit_price: Take profit price
-        stop_loss_price: Stop loss price
-        max_price: Maximum price since entry (for trailing stop)
-        min_price: Minimum price since entry (for trailing stop)
-    """
+    """Current futures position."""
 
     symbol: str
     side: PositionSide
@@ -367,11 +293,9 @@ class Position:
     leverage: int
     unrealized_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
     entry_time: Optional[datetime] = None
-    entry_bar: int = 0
+    grid_level_index: Optional[int] = None
     take_profit_price: Optional[Decimal] = None
     stop_loss_price: Optional[Decimal] = None
-    max_price: Optional[Decimal] = None  # Track max price for trailing stop
-    min_price: Optional[Decimal] = None  # Track min price for trailing stop
 
     def __post_init__(self):
         """Ensure Decimal types."""
@@ -384,25 +308,6 @@ class Position:
             self.take_profit_price = Decimal(str(self.take_profit_price))
         if self.stop_loss_price is not None and not isinstance(self.stop_loss_price, Decimal):
             self.stop_loss_price = Decimal(str(self.stop_loss_price))
-        if self.max_price is not None and not isinstance(self.max_price, Decimal):
-            self.max_price = Decimal(str(self.max_price))
-        if self.min_price is not None and not isinstance(self.min_price, Decimal):
-            self.min_price = Decimal(str(self.min_price))
-
-        # Initialize max/min price from entry price if not set
-        if self.max_price is None:
-            self.max_price = self.entry_price
-        if self.min_price is None:
-            self.min_price = self.entry_price
-
-    def update_extremes(self, current_price: Decimal) -> None:
-        """Update max/min price tracking for trailing stop."""
-        if not isinstance(current_price, Decimal):
-            current_price = Decimal(str(current_price))
-        if self.max_price is None or current_price > self.max_price:
-            self.max_price = current_price
-        if self.min_price is None or current_price < self.min_price:
-            self.min_price = current_price
 
     @property
     def notional_value(self) -> Decimal:
@@ -418,12 +323,10 @@ class Position:
 
     @property
     def is_long(self) -> bool:
-        """Check if this is a long position."""
         return self.side == PositionSide.LONG
 
     @property
     def is_short(self) -> bool:
-        """Check if this is a short position."""
         return self.side == PositionSide.SHORT
 
 
@@ -434,24 +337,7 @@ class Position:
 
 @dataclass
 class TradeRecord:
-    """
-    Completed trade record.
-
-    Attributes:
-        trade_id: Unique trade ID
-        symbol: Trading pair
-        side: Position side
-        entry_price: Entry price
-        exit_price: Exit price
-        quantity: Trade quantity
-        pnl: Realized profit/loss
-        pnl_pct: PnL percentage
-        fee: Total fees paid
-        entry_time: Entry timestamp
-        exit_time: Exit timestamp
-        exit_reason: Reason for exit
-        hold_bars: Number of K-line bars held
-    """
+    """Completed trade record."""
 
     trade_id: str
     symbol: str
@@ -465,7 +351,6 @@ class TradeRecord:
     entry_time: Optional[datetime] = None
     exit_time: Optional[datetime] = None
     exit_reason: str = ""
-    hold_bars: int = 0
 
     def __post_init__(self):
         """Ensure Decimal types."""
@@ -476,12 +361,10 @@ class TradeRecord:
 
     @property
     def is_profitable(self) -> bool:
-        """Check if trade was profitable."""
         return self.pnl > 0
 
     @property
     def net_pnl(self) -> Decimal:
-        """Net PnL after fees."""
         return self.pnl - self.fee
 
 
@@ -492,93 +375,78 @@ class TradeRecord:
 
 @dataclass
 class BollingerBotStats:
-    """
-    Bot trading statistics.
-
-    Attributes:
-        total_trades: Total number of trades
-        winning_trades: Number of winning trades
-        losing_trades: Number of losing trades
-        total_pnl: Total profit/loss
-        win_rate: Win rate percentage
-        avg_win: Average winning trade PnL
-        avg_loss: Average losing trade PnL
-        profit_factor: Gross profit / gross loss
-        max_consecutive_loss: Maximum consecutive losing trades
-        signals_generated: Total signals generated
-        signals_filtered: Signals filtered by BBW squeeze
-    """
+    """Bot trading statistics."""
 
     total_trades: int = 0
     winning_trades: int = 0
     losing_trades: int = 0
+    long_trades: int = 0
+    short_trades: int = 0
     total_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
-    win_rate: Decimal = field(default_factory=lambda: Decimal("0"))
-    avg_win: Decimal = field(default_factory=lambda: Decimal("0"))
-    avg_loss: Decimal = field(default_factory=lambda: Decimal("0"))
-    profit_factor: Decimal = field(default_factory=lambda: Decimal("0"))
-    max_consecutive_loss: int = 0
-    signals_generated: int = 0
-    signals_filtered: int = 0
+    total_fees: Decimal = field(default_factory=lambda: Decimal("0"))
+    grid_rebuilds: int = 0
+    max_drawdown_pct: Decimal = field(default_factory=lambda: Decimal("0"))
 
     # Internal tracking
-    _current_consecutive_loss: int = field(default=0, repr=False)
+    _peak_equity: Decimal = field(default_factory=lambda: Decimal("0"), repr=False)
     _total_win_pnl: Decimal = field(default_factory=lambda: Decimal("0"), repr=False)
     _total_loss_pnl: Decimal = field(default_factory=lambda: Decimal("0"), repr=False)
 
-    def record_trade(self, pnl: Decimal) -> None:
-        """
-        Record a completed trade.
+    @property
+    def win_rate(self) -> Decimal:
+        if self.total_trades == 0:
+            return Decimal("0")
+        return Decimal(self.winning_trades) / Decimal(self.total_trades) * Decimal("100")
 
-        Args:
-            pnl: Trade profit/loss
-        """
-        if not isinstance(pnl, Decimal):
-            pnl = Decimal(str(pnl))
+    @property
+    def profit_factor(self) -> Decimal:
+        if self._total_loss_pnl == 0:
+            return Decimal("999") if self._total_win_pnl > 0 else Decimal("0")
+        return self._total_win_pnl / self._total_loss_pnl
 
+    @property
+    def avg_win(self) -> Decimal:
+        if self.winning_trades == 0:
+            return Decimal("0")
+        return self._total_win_pnl / Decimal(self.winning_trades)
+
+    @property
+    def avg_loss(self) -> Decimal:
+        if self.losing_trades == 0:
+            return Decimal("0")
+        return self._total_loss_pnl / Decimal(self.losing_trades)
+
+    @property
+    def net_pnl(self) -> Decimal:
+        return self.total_pnl - self.total_fees
+
+    def record_trade(self, trade: TradeRecord) -> None:
+        """Record a completed trade."""
         self.total_trades += 1
-        self.total_pnl += pnl
+        self.total_pnl += trade.pnl
+        self.total_fees += trade.fee
 
-        if pnl > 0:
+        if trade.side == PositionSide.LONG:
+            self.long_trades += 1
+        else:
+            self.short_trades += 1
+
+        if trade.pnl > 0:
             self.winning_trades += 1
-            self._total_win_pnl += pnl
-            self._current_consecutive_loss = 0
+            self._total_win_pnl += trade.pnl
         else:
             self.losing_trades += 1
-            self._total_loss_pnl += abs(pnl)
-            self._current_consecutive_loss += 1
-            if self._current_consecutive_loss > self.max_consecutive_loss:
-                self.max_consecutive_loss = self._current_consecutive_loss
+            self._total_loss_pnl += abs(trade.pnl)
 
-        # Update derived metrics
-        self._update_metrics()
+    def update_drawdown(self, current_equity: Decimal, initial_capital: Decimal) -> None:
+        """Update max drawdown tracking."""
+        if current_equity > self._peak_equity:
+            self._peak_equity = current_equity
 
-    def _update_metrics(self) -> None:
-        """Update derived metrics."""
-        if self.total_trades > 0:
-            self.win_rate = Decimal(self.winning_trades) / Decimal(self.total_trades)
-
-        if self.winning_trades > 0:
-            self.avg_win = self._total_win_pnl / Decimal(self.winning_trades)
-
-        if self.losing_trades > 0:
-            self.avg_loss = self._total_loss_pnl / Decimal(self.losing_trades)
-
-        if self._total_loss_pnl > 0:
-            self.profit_factor = self._total_win_pnl / self._total_loss_pnl
-        elif self._total_win_pnl > 0:
-            self.profit_factor = Decimal("999")  # All wins
-
-    def record_signal(self, filtered: bool = False) -> None:
-        """
-        Record a signal generation.
-
-        Args:
-            filtered: Whether signal was filtered by BBW
-        """
-        self.signals_generated += 1
-        if filtered:
-            self.signals_filtered += 1
+        if self._peak_equity > 0:
+            drawdown = (self._peak_equity - current_equity) / self._peak_equity * Decimal("100")
+            if drawdown > self.max_drawdown_pct:
+                self.max_drawdown_pct = drawdown
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -586,12 +454,15 @@ class BollingerBotStats:
             "total_trades": self.total_trades,
             "winning_trades": self.winning_trades,
             "losing_trades": self.losing_trades,
+            "long_trades": self.long_trades,
+            "short_trades": self.short_trades,
             "total_pnl": str(self.total_pnl),
-            "win_rate": f"{self.win_rate * 100:.1f}%",
+            "total_fees": str(self.total_fees),
+            "net_pnl": str(self.net_pnl),
+            "win_rate": f"{self.win_rate:.1f}%",
+            "profit_factor": f"{self.profit_factor:.2f}",
             "avg_win": str(self.avg_win),
             "avg_loss": str(self.avg_loss),
-            "profit_factor": str(self.profit_factor),
-            "max_consecutive_loss": self.max_consecutive_loss,
-            "signals_generated": self.signals_generated,
-            "signals_filtered": self.signals_filtered,
+            "grid_rebuilds": self.grid_rebuilds,
+            "max_drawdown_pct": f"{self.max_drawdown_pct:.2f}%",
         }

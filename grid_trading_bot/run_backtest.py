@@ -29,8 +29,6 @@ from src.backtest.strategy import (
     SupertrendStrategyConfig,
     GridBacktestStrategy,
     GridStrategyConfig,
-    RSIBacktestStrategy,
-    RSIStrategyConfig,
     GridFuturesBacktestStrategy,
     GridFuturesStrategyConfig,
     GridDirection,
@@ -83,10 +81,11 @@ def create_strategy(strategy_name: str, params: dict):
     if strategy_name == "bollinger":
         config = BollingerStrategyConfig(
             bb_period=params.get("bb_period", 20),
-            bb_std=Decimal(str(params.get("bb_std", "3.0"))),
-            st_atr_period=params.get("st_atr_period", 20),
-            st_atr_multiplier=Decimal(str(params.get("st_atr_multiplier", "3.5"))),
-            atr_stop_multiplier=Decimal(str(params.get("atr_stop_multiplier", "2.0"))),
+            bb_std=Decimal(str(params.get("bb_std", "2.0"))),
+            grid_count=params.get("grid_count", 10),
+            grid_range_pct=Decimal(str(params.get("grid_range_pct", "0.04"))),
+            take_profit_grids=params.get("take_profit_grids", 1),
+            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
         )
         return BollingerBacktestStrategy(config)
 
@@ -107,17 +106,6 @@ def create_strategy(strategy_name: str, params: dict):
             stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.02"))),
         )
         return GridBacktestStrategy(config)
-
-    elif strategy_name == "rsi":
-        # RSI 動量策略
-        config = RSIStrategyConfig(
-            rsi_period=params.get("rsi_period", 21),
-            entry_level=params.get("entry_level", 50),
-            momentum_threshold=params.get("momentum_threshold", 5),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.04"))),
-            take_profit_pct=Decimal(str(params.get("take_profit_pct", "0.08"))),
-        )
-        return RSIBacktestStrategy(config)
 
     elif strategy_name == "grid_futures":
         # Grid Futures 策略 (合約)
