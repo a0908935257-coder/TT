@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "validation_date": "2026-01-24T15:44:13.983414",
+    "data_bars": 18000,
+    "start_date": "2024-01-05T08:00:00+00:00",
+    "end_date": "2026-01-24T07:00:00+00:00",
+    "symbol": "BTCUSDT",
+    "interval": "1h"
+  },
+  "results": [
+    {
+      "name": "Supertrend TREND_GRID",
+      "total_return": 326.37506384970396,
+      "win_rate": 93.60978925900748,
+      "sharpe": 4.793451479706039,
+      "max_drawdown": 4.991501076179878,
+      "total_trades": 1471,
+      "wf_consistency": 83.33333333333333,
+      "avg_is_return": 33.973390359259334,
+      "avg_oos_return": 12.72961345323642,
+      "oos_is_ratio": 0.3746936446031506,
+      "is_overfit": true,
+      "is_robust": true
+    },
+    {
+      "name": "Bollinger BB_TREND_GRID",
+      "total_return": 333.62600238883294,
+      "win_rate": 76.24454148471615,
+      "sharpe": 6.350455493251307,
+      "max_drawdown": 5.494923432636952,
+      "total_trades": 1145,
+      "wf_consistency": 66.66666666666667,
+      "avg_is_return": 46.72818379819327,
+      "avg_oos_return": 13.858053257294365,
+      "oos_is_ratio": 0.2965673418240189,
+      "is_overfit": true,
+      "is_robust": true
+    }
+  ]
+}
