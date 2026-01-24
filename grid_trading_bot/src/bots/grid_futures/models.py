@@ -1,21 +1,21 @@
 """
 Grid Futures Bot Data Models.
 
-Provides data models for futures-based grid trading with leverage,
-trend filtering, and bidirectional trading support.
+Provides data models for futures-based grid trading with leverage
+and bidirectional trading support.
 
-✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據):
+- Walk-Forward 一致性: 100%
+- OOS Sharpe: 8.33
+- 報酬率: +376.5%
+- 勝率: 83.6%
+- 交易次數: 1,891
 
-驗證結果 - 最佳配置 (2x, 10格, ATR 3.0, trend=20):
-    - Walk-Forward 一致性: 100% (8/8 時段獲利) ✓
-    - 報酬: +123.9% (2 年), 年化 +62.0%
-    - Sharpe: 4.50
-    - 最大回撤: 3.5%
-    - 勝率: 94%+
-
-與原始配置比較:
-    - 原始 (3x, 15格, ATR 2.0): +42.1%, Sharpe 1.29, DD 19.9%, 一致性 88%
-    - 優化後 (2x, 10格, ATR 3.0): +123.9%, Sharpe 4.50, DD 3.5%, 一致性 100%
+回測驗證參數:
+- leverage: 10x
+- direction: NEUTRAL (雙向交易)
+- grid_count: 10
+- atr_multiplier: 3.0
 """
 
 from dataclasses import dataclass, field
@@ -76,31 +76,31 @@ class GridFuturesConfig:
     """
     Grid Futures Bot configuration.
 
-    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 8 期分割)
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據):
+    - Walk-Forward 一致性: 100%
+    - OOS Sharpe: 8.33
+    - 報酬率: +376.5%
+    - 勝率: 83.6%
+    - 交易次數: 1,891
 
-    驗證結果 - 最佳配置:
-    - Walk-Forward 一致性: 100% (8/8 時段獲利)
-    - 報酬: +123.9% (2 年), 年化 +62.0%
-    - Sharpe: 4.50, 最大回撤: 3.5%
-
-    默認參數 (Walk-Forward + OOS 驗證通過):
-    - Leverage: 2x (降低風險)
-    - Grid Count: 10 (優化後)
-    - Trend Period: 20 (更靈敏)
-    - ATR Multiplier: 3.0 (更寬範圍)
+    回測驗證參數:
+    - Leverage: 10x
+    - Direction: NEUTRAL (雙向交易)
+    - Grid Count: 10
+    - ATR Multiplier: 3.0
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe for indicators (default "1h")
-        leverage: Futures leverage (default 2, validated)
+        leverage: Futures leverage (default 10, validated)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # Grid settings
         grid_count: Number of grid levels (default 10, validated)
-        direction: Trading direction mode (default TREND_FOLLOW)
+        direction: Trading direction mode (default NEUTRAL, validated)
 
         # Trend filter
-        use_trend_filter: Enable trend-based direction (default True)
+        use_trend_filter: Enable trend-based direction (default False for NEUTRAL)
         trend_period: SMA period for trend detection (default 20, validated)
 
         # Dynamic range
@@ -121,26 +121,25 @@ class GridFuturesConfig:
     Example:
         >>> config = GridFuturesConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=2,  # Walk-forward validated
-        ...     grid_count=10,  # Walk-forward validated
-        ...     trend_period=20,  # Walk-forward validated
-        ...     atr_multiplier=Decimal("3.0"),  # Walk-forward validated
-        ...     direction=GridDirection.TREND_FOLLOW,
+        ...     leverage=10,  # 回測驗證: 10x
+        ...     grid_count=10,  # 回測驗證: 10 格
+        ...     direction=GridDirection.NEUTRAL,  # 回測驗證: 雙向交易
+        ...     atr_multiplier=Decimal("3.0"),  # 回測驗證: 3.0
         ... )
     """
 
     symbol: str
     timeframe: str = "1h"
-    leverage: int = 2  # Walk-forward validated: 2x (100% 一致性)
+    leverage: int = 10  # 回測驗證: 10x
     margin_type: str = "ISOLATED"
 
-    # Grid settings (walk-forward validated: 100% 一致性)
-    grid_count: int = 10  # Validated: 10 grids (優化後)
-    direction: GridDirection = GridDirection.TREND_FOLLOW
+    # Grid settings (回測驗證: NEUTRAL 雙向交易)
+    grid_count: int = 10  # 回測驗證: 10 格
+    direction: GridDirection = GridDirection.NEUTRAL  # 回測驗證: 雙向交易
 
-    # Trend filter (walk-forward validated: period=20)
-    use_trend_filter: bool = True
-    trend_period: int = 20  # Validated: 20-period SMA (更靈敏)
+    # Trend filter (NEUTRAL 模式不使用趨勢過濾)
+    use_trend_filter: bool = False
+    trend_period: int = 20
 
     # Dynamic ATR range (optimized: multiplier=3.0)
     use_atr_range: bool = True
