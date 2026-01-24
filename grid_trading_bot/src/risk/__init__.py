@@ -8,10 +8,21 @@ Provides global risk management for the grid trading bot system:
 - Emergency stop functionality
 - Unified SLTP (Stop Loss / Take Profit) management
 - Pre-trade risk validation
+- Concentration risk monitoring
 """
 
 from src.risk.capital_monitor import CapitalMonitor
 from src.risk.circuit_breaker import CircuitBreaker, CircuitState, CooldownNotFinishedError
+from src.risk.concentration_monitor import (
+    AssetCategory,
+    ConcentrationAlert,
+    ConcentrationAlertType,
+    ConcentrationConfig,
+    ConcentrationLevel,
+    ConcentrationMonitor,
+    ConcentrationSnapshot,
+    PositionInfo,
+)
 from src.risk.drawdown_calculator import DrawdownCalculator
 from src.risk.emergency_stop import EmergencyConfig, EmergencyStop, EmergencyStopStatus
 from src.risk.models import (
@@ -81,6 +92,15 @@ __all__ = [
     "CheckResult",
     "CheckDetail",
     "RejectionReason",
+    # Concentration monitor
+    "ConcentrationMonitor",
+    "ConcentrationConfig",
+    "ConcentrationSnapshot",
+    "ConcentrationAlert",
+    "ConcentrationAlertType",
+    "ConcentrationLevel",
+    "PositionInfo",
+    "AssetCategory",
     # SLTP types
     "StopLossType",
     "TakeProfitType",
