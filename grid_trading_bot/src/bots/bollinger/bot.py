@@ -239,6 +239,90 @@ class BollingerBot(BaseBot):
 
         return status
 
+    async def _do_pause(self) -> None:
+        """Pause the bot."""
+        logger.info("Pausing Bollinger BB_TREND_GRID Bot")
+
+        # Unsubscribe from kline updates
+        try:
+            ws = self._exchange.futures_ws
+            if ws:
+                await ws.unsubscribe_kline(
+                    self._config.symbol,
+                    self._config.timeframe,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to unsubscribe: {e}")
+
+        # Cancel monitor task
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info("Bollinger BB_TREND_GRID Bot paused")
+
+    async def _do_resume(self) -> None:
+        """Resume the bot."""
+        logger.info("Resuming Bollinger BB_TREND_GRID Bot")
+
+        # Re-subscribe to kline updates
+        await self._subscribe_klines()
+
+        # Restart background monitor
+        self._monitor_task = asyncio.create_task(self._background_monitor())
+
+        logger.info("Bollinger BB_TREND_GRID Bot resumed")
+
+    def _get_extra_status(self) -> Dict[str, Any]:
+        """Return extra status fields specific to Bollinger bot."""
+        extra = {
+            "grid": None,
+            "position": None,
+            "current_trend": self._current_trend,
+            "current_sma": str(self._current_sma) if self._current_sma else None,
+            "stats": self._stats.to_dict(),
+        }
+
+        if self._grid:
+            extra["grid"] = {
+                "center": str(self._grid.center_price),
+                "upper": str(self._grid.upper_price),
+                "lower": str(self._grid.lower_price),
+                "count": self._grid.grid_count,
+                "version": self._grid.version,
+            }
+
+        if self._position:
+            extra["position"] = {
+                "side": self._position.side.value,
+                "entry_price": str(self._position.entry_price),
+                "quantity": str(self._position.quantity),
+                "unrealized_pnl": str(self._position.unrealized_pnl),
+            }
+
+        return extra
+
+    async def _extra_health_checks(self) -> Dict[str, bool]:
+        """Perform extra health checks specific to Bollinger bot."""
+        checks = {}
+
+        # Check if grid is valid
+        checks["grid_valid"] = self._grid is not None
+
+        # Check BB calculator
+        checks["bb_initialized"] = self._bb_calculator.bbw_history_length > 0
+
+        # Check position sync
+        if self._position:
+            checks["position_synced"] = self._position.quantity > 0
+        else:
+            checks["position_synced"] = True  # No position is valid
+
+        return checks
+
     # =========================================================================
     # Futures Account Setup
     # =========================================================================
