@@ -1,0 +1,406 @@
+{
+  "metadata": {
+    "data_bars": 18000,
+    "start_date": "2024-01-05T07:00:00+00:00",
+    "end_date": "2026-01-24T06:00:00+00:00",
+    "symbol": "BTCUSDT",
+    "interval": "1h"
+  },
+  "results": [
+    {
+      "name": "GridFutures",
+      "total_return": 228.36682142301868,
+      "sharpe": 3.24272417057557,
+      "max_drawdown": 14.950751501649522,
+      "total_trades": 1453,
+      "win_rate": 93.39298004129388,
+      "wf_consistency": 50.0,
+      "avg_is_return": 28.109760086664725,
+      "avg_oos_return": 6.88872380620969,
+      "oos_is_ratio": 0.9899181022954958,
+      "is_overfit": false,
+      "is_robust": true,
+      "monte_carlo": {
+        "shuffle_profit_prob": 1.0,
+        "shuffle_ruin_prob": 0.0,
+        "bootstrap_profit_prob": 0.66,
+        "bootstrap_ruin_prob": 1.0
+      },
+      "periods": [
+        {
+          "num": 1,
+          "is_start": "2024-01-05",
+          "oos_end": "2024-05-09",
+          "is_return": 40.59583689114822,
+          "oos_return": 17.742135329000828,
+          "is_trades": 188,
+          "oos_trades": 101,
+          "consistent": true
+        },
+        {
+          "num": 2,
+          "is_start": "2024-05-09",
+          "oos_end": "2024-09-11",
+          "is_return": 10.205136822858222,
+          "oos_return": 17.88008210829218,
+          "is_trades": 172,
+          "oos_trades": 85,
+          "consistent": true
+        },
+        {
+          "num": 3,
+          "is_start": "2024-09-11",
+          "oos_end": "2025-01-14",
+          "is_return": 49.50982203939849,
+          "oos_return": -18.57102285183454,
+          "is_trades": 182,
+          "oos_trades": 74,
+          "consistent": false
+        },
+        {
+          "num": 4,
+          "is_start": "2025-01-14",
+          "oos_end": "2025-05-19",
+          "is_return": 33.719507103789965,
+          "oos_return": -0.7012468329688651,
+          "is_trades": 144,
+          "oos_trades": 62,
+          "consistent": false
+        },
+        {
+          "num": 5,
+          "is_start": "2025-05-19",
+          "oos_end": "2025-09-21",
+          "is_return": -7.772046513737929,
+          "oos_return": 11.76106309028292,
+          "is_trades": 101,
+          "oos_trades": 59,
+          "consistent": false
+        },
+        {
+          "num": 6,
+          "is_start": "2025-09-21",
+          "oos_end": "2026-01-24",
+          "is_return": 42.400304176531385,
+          "oos_return": 13.221331994485622,
+          "is_trades": 208,
+          "oos_trades": 50,
+          "consistent": true
+        }
+      ]
+    },
+    {
+      "name": "Supertrend_ATR2.0",
+      "total_return": 93.43520669338558,
+      "sharpe": 8.35336346961965,
+      "max_drawdown": 35.527069614194865,
+      "total_trades": 3,
+      "win_rate": 33.333333333333336,
+      "wf_consistency": 16.666666666666668,
+      "avg_is_return": 19.908812361733617,
+      "avg_oos_return": 2.6992719916601104,
+      "oos_is_ratio": 10110.645697618014,
+      "is_overfit": true,
+      "is_robust": false,
+      "monte_carlo": {},
+      "periods": [
+        {
+          "num": 1,
+          "is_start": "2024-01-05",
+          "oos_end": "2024-05-09",
+          "is_return": 47.164364045301106,
+          "oos_return": 4.298645074781667,
+          "is_trades": 3,
+          "oos_trades": 2,
+          "consistent": true
+        },
+        {
+          "num": 2,
+          "is_start": "2024-05-09",
+          "oos_end": "2024-09-11",
+          "is_return": -13.737787173290736,
+          "oos_return": -6.0360001083600014,
+          "is_trades": 6,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 3,
+          "is_start": "2024-09-11",
+          "oos_end": "2025-01-14",
+          "is_return": 66.11069632755756,
+          "oos_return": 2.7311394090063454,
+          "is_trades": 1,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 4,
+          "is_start": "2025-01-14",
+          "oos_end": "2025-05-19",
+          "is_return": 9.463415138093833,
+          "oos_return": 20.043688787545616,
+          "is_trades": 4,
+          "oos_trades": 1,
+          "consistent": false
+        },
+        {
+          "num": 5,
+          "is_start": "2025-05-19",
+          "oos_end": "2025-09-21",
+          "is_return": -4.98557854111832,
+          "oos_return": -6.186481097502198,
+          "is_trades": 5,
+          "oos_trades": 3,
+          "consistent": false
+        },
+        {
+          "num": 6,
+          "is_start": "2025-09-21",
+          "oos_end": "2026-01-24",
+          "is_return": 15.437764373858258,
+          "oos_return": 1.3446398844892364,
+          "is_trades": 4,
+          "oos_trades": 1,
+          "consistent": false
+        }
+      ]
+    },
+    {
+      "name": "Supertrend_ATR2.5",
+      "total_return": 85.21712140328971,
+      "sharpe": 4.804912499212679,
+      "max_drawdown": 37.115475631487705,
+      "total_trades": 7,
+      "win_rate": 14.285714285714286,
+      "wf_consistency": 16.666666666666668,
+      "avg_is_return": 18.803330146117663,
+      "avg_oos_return": 3.8797476341499473,
+      "oos_is_ratio": -0.6394957979659285,
+      "is_overfit": true,
+      "is_robust": false,
+      "monte_carlo": {},
+      "periods": [
+        {
+          "num": 1,
+          "is_start": "2024-01-05",
+          "oos_end": "2024-05-09",
+          "is_return": 38.05231356520464,
+          "oos_return": 8.007762956107221,
+          "is_trades": 7,
+          "oos_trades": 2,
+          "consistent": true
+        },
+        {
+          "num": 2,
+          "is_start": "2024-05-09",
+          "oos_end": "2024-09-11",
+          "is_return": -13.737787173290736,
+          "oos_return": -3.0175782541745826,
+          "is_trades": 6,
+          "oos_trades": 1,
+          "consistent": false
+        },
+        {
+          "num": 3,
+          "is_start": "2024-09-11",
+          "oos_end": "2025-01-14",
+          "is_return": 66.11069632755756,
+          "oos_return": 2.7311394090063454,
+          "is_trades": 1,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 4,
+          "is_start": "2025-01-14",
+          "oos_end": "2025-05-19",
+          "is_return": 9.463415138093833,
+          "oos_return": 17.967590307595763,
+          "is_trades": 4,
+          "oos_trades": 1,
+          "consistent": false
+        },
+        {
+          "num": 5,
+          "is_start": "2025-05-19",
+          "oos_end": "2025-09-21",
+          "is_return": -4.98557854111832,
+          "oos_return": -3.0027706397913794,
+          "is_trades": 5,
+          "oos_trades": 3,
+          "consistent": false
+        },
+        {
+          "num": 6,
+          "is_start": "2025-09-21",
+          "oos_end": "2026-01-24",
+          "is_return": 17.916921560258988,
+          "oos_return": 0.5923420261563149,
+          "is_trades": 2,
+          "oos_trades": 1,
+          "consistent": false
+        }
+      ]
+    },
+    {
+      "name": "Supertrend_ATR3.0",
+      "total_return": 95.5457670633133,
+      "sharpe": 6.788435435306755,
+      "max_drawdown": 36.263064012586504,
+      "total_trades": 5,
+      "win_rate": 20.0,
+      "wf_consistency": 16.666666666666668,
+      "avg_is_return": 16.717910540780903,
+      "avg_oos_return": 4.09628251058899,
+      "oos_is_ratio": -2.899490380526861e-05,
+      "is_overfit": true,
+      "is_robust": false,
+      "monte_carlo": {},
+      "periods": [
+        {
+          "num": 1,
+          "is_start": "2024-01-05",
+          "oos_end": "2024-05-09",
+          "is_return": 47.385224817681376,
+          "oos_return": 4.298645074781667,
+          "is_trades": 5,
+          "oos_trades": 2,
+          "consistent": true
+        },
+        {
+          "num": 2,
+          "is_start": "2024-05-09",
+          "oos_end": "2024-09-11",
+          "is_return": -15.089578470894585,
+          "oos_return": 3.5194436981311825,
+          "is_trades": 5,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 3,
+          "is_start": "2024-09-11",
+          "oos_end": "2025-01-14",
+          "is_return": 44.604512090734595,
+          "oos_return": 2.7311394090063454,
+          "is_trades": 3,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 4,
+          "is_start": "2025-01-14",
+          "oos_end": "2025-05-19",
+          "is_return": 9.463415138093833,
+          "oos_return": 17.967590307595763,
+          "is_trades": 4,
+          "oos_trades": 1,
+          "consistent": false
+        },
+        {
+          "num": 5,
+          "is_start": "2025-05-19",
+          "oos_end": "2025-09-21",
+          "is_return": -1.857492088533229,
+          "oos_return": -4.531465452137334,
+          "is_trades": 5,
+          "oos_trades": 3,
+          "consistent": false
+        },
+        {
+          "num": 6,
+          "is_start": "2025-09-21",
+          "oos_end": "2026-01-24",
+          "is_return": 15.801381757603433,
+          "oos_return": 0.5923420261563149,
+          "is_trades": 2,
+          "oos_trades": 1,
+          "consistent": false
+        }
+      ]
+    },
+    {
+      "name": "Supertrend_ATR3.5",
+      "total_return": -2.7039932939829088,
+      "sharpe": -0.27183720253429455,
+      "max_drawdown": 44.3172289590058,
+      "total_trades": 15,
+      "win_rate": 6.666666666666667,
+      "wf_consistency": 0.0,
+      "avg_is_return": 6.805036035262467,
+      "avg_oos_return": 1.658930719215168,
+      "oos_is_ratio": 0.7950130762833129,
+      "is_overfit": true,
+      "is_robust": false,
+      "monte_carlo": {
+        "shuffle_profit_prob": 0.0,
+        "shuffle_ruin_prob": 0.0,
+        "bootstrap_profit_prob": 0.038,
+        "bootstrap_ruin_prob": 1.0
+      },
+      "periods": [
+        {
+          "num": 1,
+          "is_start": "2024-01-05",
+          "oos_end": "2024-05-09",
+          "is_return": -2.687997732050468,
+          "oos_return": -6.0360001083600014,
+          "is_trades": 2,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 2,
+          "is_start": "2024-05-09",
+          "oos_end": "2024-09-11",
+          "is_return": -15.089578470894585,
+          "oos_return": 3.5194436981311825,
+          "is_trades": 5,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 3,
+          "is_start": "2024-09-11",
+          "oos_end": "2025-01-14",
+          "is_return": 49.6510100357873,
+          "oos_return": -0.05379149987224998,
+          "is_trades": 3,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 4,
+          "is_start": "2025-01-14",
+          "oos_end": "2025-05-19",
+          "is_return": 9.463415138093833,
+          "oos_return": 17.967590307595763,
+          "is_trades": 4,
+          "oos_trades": 1,
+          "consistent": false
+        },
+        {
+          "num": 5,
+          "is_start": "2025-05-19",
+          "oos_end": "2025-09-21",
+          "is_return": 8.546945603173304,
+          "oos_return": -6.0360001083600014,
+          "is_trades": 1,
+          "oos_trades": 2,
+          "consistent": false
+        },
+        {
+          "num": 6,
+          "is_start": "2025-09-21",
+          "oos_end": "2026-01-24",
+          "is_return": -9.053578362534584,
+          "oos_return": 0.5923420261563149,
+          "is_trades": 3,
+          "oos_trades": 1,
+          "consistent": false
+        }
+      ]
+    }
+  ]
+}
