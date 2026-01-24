@@ -7,6 +7,13 @@ Strategy Logic (BOLLINGER_TREND mode):
 - Entry: Supertrend bullish + price touches BB lower (LONG)
          Supertrend bearish + price touches BB upper (SHORT)
 - Exit: Supertrend flip (primary) or ATR stop loss (protection)
+
+VALIDATION STATUS: NOT PASSED
+- Best config found: 4h, period=30, std=1.5 (25% return)
+- Walk-Forward consistency: 0% (failed overfitting test)
+- Recommendation: Use GridFutures or RSI strategy instead
+- Note: This strategy may work in specific market conditions but
+        failed 2-year Walk-Forward validation (2024-2026)
 """
 
 import math

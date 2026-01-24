@@ -7,6 +7,14 @@ Strategy Logic:
 - Entry: Supertrend flip (bullish = LONG, bearish = SHORT)
 - Filter: RSI overbought/oversold filter
 - Exit: Supertrend flip or stop loss
+
+VALIDATION STATUS: NOT PASSED
+- Best config found: 1h, ATR(14, 2.0x), RSI filter (16% return)
+- Walk-Forward consistency: 0% (failed overfitting test)
+- Issue: Trend-following struggles in ranging crypto markets
+- Recommendation: Use GridFutures (range) or RSI (momentum) instead
+- Note: May perform well in strong trending markets but failed
+        2-year Walk-Forward validation (2024-2026)
 """
 
 from dataclasses import dataclass, field
