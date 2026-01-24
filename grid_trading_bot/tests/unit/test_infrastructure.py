@@ -1134,6 +1134,749 @@ class TestConfigVersioning:
 
 
 # =============================================================================
+# TLS Config Tests
+# =============================================================================
+
+
+class TestTLSConfig:
+    """Tests for TLSManager class."""
+
+    def test_init(self):
+        """Test initialization."""
+        from src.infrastructure import TLSManager, TLSConfig
+
+        config = TLSConfig(enabled=True)
+        manager = TLSManager(config=config)
+
+        assert manager.enabled
+
+    def test_disabled(self):
+        """Test TLS disabled mode."""
+        from src.infrastructure import TLSManager, TLSConfig
+
+        config = TLSConfig(enabled=False)
+        manager = TLSManager(config=config)
+
+        assert not manager.enabled
+        assert manager.create_redis_ssl_context() is None
+        assert manager.create_client_ssl_context() is None
+
+    def test_create_client_context(self):
+        """Test creating client SSL context."""
+        from src.infrastructure import TLSManager, TLSConfig
+
+        config = TLSConfig(enabled=True)
+        manager = TLSManager(config=config)
+
+        context = manager.create_client_ssl_context(verify=False)
+
+        assert context is not None
+        import ssl
+        assert context.verify_mode == ssl.CERT_NONE
+
+    def test_create_redis_context(self):
+        """Test creating Redis SSL context."""
+        from src.infrastructure import TLSManager, TLSConfig
+
+        config = TLSConfig(enabled=True)
+        manager = TLSManager(config=config)
+
+        context = manager.create_redis_ssl_context()
+
+        assert context is not None
+
+    def test_secure_connection_factory(self, temp_dir):
+        """Test SecureConnectionFactory."""
+        from src.infrastructure import TLSManager, TLSConfig, SecureConnectionFactory
+
+        config = TLSConfig(enabled=True)
+        manager = TLSManager(config=config)
+        factory = SecureConnectionFactory(manager)
+
+        redis_kwargs = factory.get_redis_kwargs()
+        assert "ssl" in redis_kwargs
+
+        aiohttp_kwargs = factory.get_aiohttp_kwargs()
+        assert "ssl" in aiohttp_kwargs
+
+    def test_tls_config_from_env(self):
+        """Test creating TLS config from environment."""
+        import os
+        from src.infrastructure import create_tls_config_from_env
+
+        # Set env vars
+        os.environ["TLS_ENABLED"] = "true"
+        os.environ["TLS_MIN_VERSION"] = "TLSv1.3"
+
+        config = create_tls_config_from_env()
+
+        assert config.enabled
+        from src.infrastructure import TLSVersion
+        assert config.min_version == TLSVersion.TLS_1_3
+
+        # Cleanup
+        del os.environ["TLS_ENABLED"]
+        del os.environ["TLS_MIN_VERSION"]
+
+    def test_certificate_info(self):
+        """Test CertificateInfo dataclass."""
+        from src.infrastructure import CertificateInfo, CertificateType
+
+        now = datetime.now(timezone.utc)
+        future = now + timedelta(days=30)
+
+        cert = CertificateInfo(
+            path=Path("/tmp/cert.pem"),
+            cert_type=CertificateType.SERVER,
+            common_name="test.example.com",
+            issuer="Test CA",
+            valid_from=now,
+            valid_until=future,
+            fingerprint="abc123",
+        )
+
+        assert not cert.is_expired()
+        assert cert.days_until_expiry() >= 29  # Allow for timing differences
+
+        # Test expired cert
+        past = now - timedelta(days=1)
+        expired_cert = CertificateInfo(
+            path=Path("/tmp/expired.pem"),
+            cert_type=CertificateType.SERVER,
+            common_name="expired.example.com",
+            issuer="Test CA",
+            valid_from=now - timedelta(days=365),
+            valid_until=past,
+            fingerprint="def456",
+        )
+
+        assert expired_cert.is_expired()
+
+
+# =============================================================================
+# Firewall Tests
+# =============================================================================
+
+
+class TestFirewall:
+    """Tests for FirewallManager class."""
+
+    def test_init(self, temp_dir):
+        """Test initialization."""
+        from src.infrastructure import FirewallManager, FirewallConfig
+
+        config = FirewallConfig(rules_file=temp_dir / "rules.json")
+        manager = FirewallManager(config=config)
+
+        assert manager is not None
+
+    def test_whitelist_ip(self, temp_dir):
+        """Test IP whitelisting."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.DENY,
+        )
+        manager = FirewallManager(config=config)
+
+        # Whitelist an IP
+        manager.whitelist_ip("192.168.1.100", "Test whitelist")
+
+        # Check request
+        context = RequestContext(ip_address="192.168.1.100")
+        result = manager.check_request(context)
+
+        assert result.allowed
+        assert "whitelisted" in result.reason.lower()
+
+    def test_blacklist_ip(self, temp_dir):
+        """Test IP blacklisting."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+        )
+        manager = FirewallManager(config=config)
+
+        # Blacklist an IP
+        manager.blacklist_ip("10.0.0.1", "Test blacklist")
+
+        # Check request
+        context = RequestContext(ip_address="10.0.0.1")
+        result = manager.check_request(context)
+
+        assert not result.allowed
+        assert "blacklisted" in result.reason.lower()
+
+    def test_cidr_rules(self, temp_dir):
+        """Test CIDR-based rules."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.DENY,
+        )
+        manager = FirewallManager(config=config)
+
+        # Whitelist a CIDR range
+        manager.whitelist_cidr("10.0.0.0/8", "Internal network")
+
+        # Check IPs in range
+        for ip in ["10.0.0.1", "10.255.255.255", "10.1.2.3"]:
+            context = RequestContext(ip_address=ip)
+            result = manager.check_request(context)
+            assert result.allowed, f"IP {ip} should be allowed"
+
+        # Check IP outside range
+        context = RequestContext(ip_address="192.168.1.1")
+        result = manager.check_request(context)
+        assert not result.allowed
+
+    def test_port_rules(self, temp_dir):
+        """Test port-based rules."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+        )
+        manager = FirewallManager(config=config)
+
+        # Deny a port
+        manager.deny_port(22, "Block SSH")
+
+        # Check request to blocked port
+        context = RequestContext(ip_address="1.2.3.4", port=22)
+        result = manager.check_request(context)
+
+        assert not result.allowed
+
+        # Check request to allowed port
+        context = RequestContext(ip_address="1.2.3.4", port=443)
+        result = manager.check_request(context)
+
+        assert result.allowed
+
+    def test_path_rules(self, temp_dir):
+        """Test path-based rules."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+        )
+        manager = FirewallManager(config=config)
+
+        # Deny admin paths
+        manager.deny_path(r"^/admin.*", "Block admin")
+
+        # Check blocked path
+        context = RequestContext(ip_address="1.2.3.4", path="/admin/users")
+        result = manager.check_request(context)
+
+        assert not result.allowed
+
+        # Check allowed path
+        context = RequestContext(ip_address="1.2.3.4", path="/api/orders")
+        result = manager.check_request(context)
+
+        assert result.allowed
+
+    def test_rate_limiting(self, temp_dir):
+        """Test rate limiting."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+            enable_rate_limiting=True,
+            rate_limit_max_requests=5,
+            rate_limit_window_seconds=60,
+        )
+        manager = FirewallManager(config=config)
+
+        ip = "192.168.1.1"
+
+        # Make requests up to limit
+        for i in range(5):
+            context = RequestContext(ip_address=ip)
+            result = manager.check_request(context)
+            assert result.allowed, f"Request {i+1} should be allowed"
+
+        # Next request should be rate limited
+        context = RequestContext(ip_address=ip)
+        result = manager.check_request(context)
+
+        assert not result.allowed
+        assert "rate limit" in result.reason.lower()
+
+    def test_auto_ban(self, temp_dir):
+        """Test auto-ban functionality."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RequestContext, RuleAction
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+            enable_auto_ban=True,
+            auto_ban_threshold=3,
+            auto_ban_duration_minutes=60,
+        )
+        manager = FirewallManager(config=config)
+
+        ip = "1.2.3.4"
+
+        # Blacklist the IP so requests trigger violations
+        manager.blacklist_ip(ip, "Test blacklist for auto-ban")
+
+        # Generate violations by making requests from blacklisted IP
+        for _ in range(3):
+            context = RequestContext(ip_address=ip)
+            manager.check_request(context)
+
+        # Check if banned
+        banned_ips = manager.get_banned_ips()
+        assert ip in banned_ips
+
+        # Verify banned request is denied
+        context = RequestContext(ip_address=ip)
+        result = manager.check_request(context)
+
+        assert not result.allowed
+        assert "banned" in result.reason.lower()
+
+    def test_unban_ip(self, temp_dir):
+        """Test manual unban."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RuleAction, RequestContext
+        )
+
+        config = FirewallConfig(
+            rules_file=temp_dir / "rules.json",
+            default_action=RuleAction.ALLOW,
+            enable_auto_ban=True,
+            auto_ban_threshold=1,
+        )
+        manager = FirewallManager(config=config)
+
+        ip = "1.2.3.4"
+
+        # Blacklist IP to trigger violations
+        manager.blacklist_ip(ip, "Test blacklist")
+
+        # Trigger ban with a single violation
+        context = RequestContext(ip_address=ip)
+        manager.check_request(context)
+
+        assert ip in manager.get_banned_ips()
+
+        # Unban
+        result = manager.unban_ip(ip)
+
+        assert result
+        assert ip not in manager.get_banned_ips()
+
+    def test_rule_management(self, temp_dir):
+        """Test rule CRUD operations."""
+        from src.infrastructure import (
+            FirewallManager, FirewallConfig, RuleType, RuleAction
+        )
+
+        config = FirewallConfig(rules_file=temp_dir / "rules.json")
+        manager = FirewallManager(config=config)
+
+        # Add rule
+        rule = manager.add_rule(
+            rule_type=RuleType.IP,
+            action=RuleAction.ALLOW,
+            value="1.2.3.4",
+            description="Test rule",
+        )
+
+        assert rule.rule_id is not None
+
+        # Get rule
+        fetched = manager.get_rule(rule.rule_id)
+        assert fetched is not None
+        assert fetched.value == "1.2.3.4"
+
+        # List rules
+        rules = manager.list_rules()
+        assert len(rules) >= 1
+
+        # Remove rule
+        result = manager.remove_rule(rule.rule_id)
+        assert result
+
+        # Verify removed
+        assert manager.get_rule(rule.rule_id) is None
+
+    def test_firewall_stats(self, temp_dir):
+        """Test firewall statistics."""
+        from src.infrastructure import FirewallManager, FirewallConfig
+
+        config = FirewallConfig(rules_file=temp_dir / "rules.json")
+        manager = FirewallManager(config=config)
+
+        manager.whitelist_ip("1.1.1.1")
+        manager.blacklist_ip("2.2.2.2")
+
+        stats = manager.get_stats()
+
+        assert stats["whitelisted_ips"] >= 1
+        assert stats["blacklisted_ips"] >= 1
+
+
+# =============================================================================
+# RBAC Tests
+# =============================================================================
+
+
+class TestRBAC:
+    """Tests for RBACManager class."""
+
+    def test_init(self, temp_dir):
+        """Test initialization with system roles."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Check system roles exist
+        roles = manager.list_roles()
+        role_ids = [r.role_id for r in roles]
+
+        assert "viewer" in role_ids
+        assert "trader" in role_ids
+        assert "operator" in role_ids
+        assert "admin" in role_ids
+        assert "super_admin" in role_ids
+
+    def test_create_user(self, temp_dir):
+        """Test user creation."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, api_key = manager.create_user(
+            username="testuser",
+            roles={"trader"},
+        )
+
+        assert user.username == "testuser"
+        assert "trader" in user.roles
+        assert api_key is None  # Not service account
+
+    def test_create_service_account(self, temp_dir):
+        """Test service account creation with API key."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, api_key = manager.create_user(
+            username="bot-service",
+            roles={"trader"},
+            is_service_account=True,
+        )
+
+        assert user.is_service_account
+        assert api_key is not None
+        assert api_key.startswith("gtb_")
+
+    def test_authenticate_api_key(self, temp_dir):
+        """Test API key authentication."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, api_key = manager.create_user(
+            username="api-user",
+            is_service_account=True,
+        )
+
+        # Authenticate with valid key
+        auth_user = manager.authenticate_api_key(api_key)
+        assert auth_user is not None
+        assert auth_user.user_id == user.user_id
+
+        # Authenticate with invalid key
+        auth_user = manager.authenticate_api_key("invalid_key")
+        assert auth_user is None
+
+    def test_check_permission(self, temp_dir):
+        """Test permission checking."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Create trader user
+        user, _ = manager.create_user(
+            username="trader1",
+            roles={"trader"},
+        )
+
+        # Check trader permissions
+        assert manager.check_permission(user.user_id, Permission.BOT_VIEW)
+        assert manager.check_permission(user.user_id, Permission.ORDER_CREATE)
+
+        # Check admin-only permissions
+        assert not manager.check_permission(user.user_id, Permission.BOT_DELETE)
+        assert not manager.check_permission(user.user_id, Permission.ADMIN_USERS)
+
+    def test_check_permissions_result(self, temp_dir):
+        """Test detailed permission check result."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, _ = manager.create_user(
+            username="viewer1",
+            roles={"viewer"},
+        )
+
+        # Check allowed permissions
+        result = manager.check_permissions(
+            user.user_id,
+            {Permission.BOT_VIEW, Permission.ORDER_VIEW},
+        )
+
+        assert result.allowed
+        assert len(result.missing_permissions) == 0
+
+        # Check with missing permissions
+        result = manager.check_permissions(
+            user.user_id,
+            {Permission.BOT_VIEW, Permission.BOT_DELETE},
+        )
+
+        assert not result.allowed
+        assert Permission.BOT_DELETE in result.missing_permissions
+
+    def test_assign_revoke_role(self, temp_dir):
+        """Test role assignment and revocation."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, _ = manager.create_user(
+            username="promotable",
+            roles={"viewer"},
+        )
+
+        # Initially viewer only
+        assert not manager.check_permission(user.user_id, Permission.ORDER_CREATE)
+
+        # Assign trader role
+        manager.assign_role(user.user_id, "trader")
+
+        # Now has trader permissions
+        assert manager.check_permission(user.user_id, Permission.ORDER_CREATE)
+
+        # Revoke trader role
+        manager.revoke_role(user.user_id, "trader")
+
+        # Back to viewer only
+        assert not manager.check_permission(user.user_id, Permission.ORDER_CREATE)
+
+    def test_create_custom_role(self, temp_dir):
+        """Test custom role creation."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Create custom role
+        role = manager.create_role(
+            name="Reports Only",
+            permissions={Permission.REPORT_VIEW, Permission.REPORT_EXPORT},
+            description="Can only view and export reports",
+        )
+
+        assert role is not None
+        assert Permission.REPORT_VIEW in role.permissions
+
+        # Create user and assign ONLY the custom role (remove default viewer)
+        user, _ = manager.create_user(username="reporter", roles=set())
+        manager.assign_role(user.user_id, role.role_id)
+
+        # Check permissions - should only have report permissions
+        assert manager.check_permission(user.user_id, Permission.REPORT_VIEW)
+        assert manager.check_permission(user.user_id, Permission.REPORT_EXPORT)
+        # Should NOT have viewer permissions since we didn't assign viewer role
+        assert not manager.check_permission(user.user_id, Permission.ORDER_VIEW)
+
+    def test_session_management(self, temp_dir):
+        """Test session creation and validation."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, _ = manager.create_user(username="session_user")
+
+        # Create session
+        token = manager.create_session(user.user_id)
+        assert token is not None
+
+        # Validate session
+        session_user = manager.validate_session(token)
+        assert session_user is not None
+        assert session_user.user_id == user.user_id
+
+        # Invalidate session
+        manager.invalidate_session(token)
+
+        # Session should be invalid
+        session_user = manager.validate_session(token)
+        assert session_user is None
+
+    def test_endpoint_registration(self, temp_dir):
+        """Test API endpoint registration."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Register endpoint
+        endpoint = manager.register_endpoint(
+            path=r"^/api/orders.*",
+            method="POST",
+            permissions={Permission.ORDER_CREATE},
+            description="Create orders",
+        )
+
+        assert endpoint is not None
+
+        # List endpoints
+        endpoints = manager.list_endpoints()
+        assert len(endpoints) >= 1
+
+    def test_endpoint_access_check(self, temp_dir):
+        """Test endpoint access checking."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Register endpoint
+        manager.register_endpoint(
+            path=r"^/api/admin.*",
+            method="*",
+            permissions={Permission.ADMIN_SYSTEM},
+        )
+
+        # Create viewer user
+        viewer, _ = manager.create_user(username="viewer", roles={"viewer"})
+
+        # Create admin user
+        admin, _ = manager.create_user(username="admin", roles={"admin"})
+
+        # Viewer cannot access admin endpoint
+        result = manager.check_endpoint_access(
+            viewer.user_id,
+            "/api/admin/settings",
+            "GET",
+        )
+        assert not result.allowed
+
+        # Admin can access
+        result = manager.check_endpoint_access(
+            admin.user_id,
+            "/api/admin/settings",
+            "GET",
+        )
+        assert result.allowed
+
+    def test_user_expiration(self, temp_dir):
+        """Test user account expiration."""
+        from src.infrastructure import RBACManager, RBACConfig, Permission
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        # Create expired user
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        user, _ = manager.create_user(
+            username="expired_user",
+            roles={"trader"},
+            expires_at=past,
+        )
+
+        # Should have no permissions
+        assert not manager.check_permission(user.user_id, Permission.BOT_VIEW)
+
+        # Check permissions returns proper result
+        result = manager.check_permissions(
+            user.user_id,
+            {Permission.BOT_VIEW},
+        )
+        assert not result.allowed
+        assert "expired" in result.reason.lower()
+
+    def test_rbac_stats(self, temp_dir):
+        """Test RBAC statistics."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        manager.create_user("user1")
+        manager.create_user("user2", is_service_account=True)
+
+        stats = manager.get_stats()
+
+        assert stats["system_roles"] == 5
+        assert stats["total_users"] >= 2
+        assert stats["service_accounts"] >= 1
+
+    def test_regenerate_api_key(self, temp_dir):
+        """Test API key regeneration."""
+        from src.infrastructure import RBACManager, RBACConfig
+
+        config = RBACConfig(data_file=temp_dir / "rbac.json")
+        manager = RBACManager(config=config)
+
+        user, old_key = manager.create_user(
+            username="regen_user",
+            is_service_account=True,
+        )
+
+        # Regenerate key
+        new_key = manager.regenerate_api_key(user.user_id)
+
+        assert new_key is not None
+        assert new_key != old_key
+
+        # Old key should not work
+        assert manager.authenticate_api_key(old_key) is None
+
+        # New key should work
+        auth_user = manager.authenticate_api_key(new_key)
+        assert auth_user is not None
+
+
+# =============================================================================
 # Integration Tests
 # =============================================================================
 
