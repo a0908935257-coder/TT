@@ -618,8 +618,17 @@ class BinanceFuturesAPI:
             )
             return True
         except ExchangeError as e:
+            error_str = str(e)
             # -4046 means margin type already set to target value
-            if "-4046" in str(e):
+            if "-4046" in error_str:
+                return True
+            # -4047 means cannot change margin type with open orders
+            # This is OK if margin type is already correct
+            if "-4047" in error_str:
+                logger.warning(
+                    f"Cannot change margin type for {symbol} (open orders exist). "
+                    f"Assuming current margin type is acceptable."
+                )
                 return True
             raise
 
