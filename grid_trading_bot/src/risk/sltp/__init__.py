@@ -26,6 +26,15 @@ from src.risk.sltp.models import (
     TrailingStopConfig,
     TrailingStopType,
 )
+from src.risk.sltp.time_stop import (
+    TimeBasedStopLoss,
+    TimeStopAction,
+    TimeStopCondition,
+    TimeStopConfig,
+    TimeStopResult,
+    TimeStopState,
+    TimeStopType,
+)
 
 __all__ = [
     # Types/Enums
@@ -49,4 +58,12 @@ __all__ = [
     "ExchangeClient",
     "SLTPExchangeAdapter",
     "MockExchangeAdapter",
+    # Time-based stop loss
+    "TimeBasedStopLoss",
+    "TimeStopType",
+    "TimeStopCondition",
+    "TimeStopAction",
+    "TimeStopConfig",
+    "TimeStopState",
+    "TimeStopResult",
 ]

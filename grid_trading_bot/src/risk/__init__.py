@@ -70,6 +70,13 @@ from src.risk.sltp import (
     TakeProfitConfig,
     TakeProfitLevel,
     TakeProfitType,
+    TimeBasedStopLoss,
+    TimeStopAction,
+    TimeStopCondition,
+    TimeStopConfig,
+    TimeStopResult,
+    TimeStopState,
+    TimeStopType,
     TrailingStopConfig,
     TrailingStopType,
 )
@@ -139,4 +146,12 @@ __all__ = [
     "ExchangeAdapter",
     "SLTPExchangeAdapter",
     "MockExchangeAdapter",
+    # Time-based stop loss
+    "TimeBasedStopLoss",
+    "TimeStopType",
+    "TimeStopCondition",
+    "TimeStopAction",
+    "TimeStopConfig",
+    "TimeStopState",
+    "TimeStopResult",
 ]
