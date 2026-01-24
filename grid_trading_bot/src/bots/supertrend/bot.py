@@ -729,13 +729,14 @@ class SupertrendBot(BaseBot):
                 logger.warning("Insufficient balance to open position")
                 return
 
-            # Place market order
+            # Place market order (through order queue for cross-bot coordination)
             order_side = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL
-            order = await self._exchange.futures.create_order(
+            order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
-                side=order_side,
-                order_type=OrderType.MARKET,
+                side=order_side.value,
+                order_type="MARKET",
                 quantity=quantity,
+                bot_id=self._bot_id,
             )
 
             if order:
@@ -822,14 +823,15 @@ class SupertrendBot(BaseBot):
             else:
                 close_side = OrderSide.BUY
 
-            # Place STOP_MARKET order (uses Algo Order API since 2025-12-09)
-            sl_order = await self._exchange.futures.create_order(
+            # Place STOP_MARKET order (through order queue)
+            sl_order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
-                side=close_side,
+                side=close_side.value,  # Convert enum to string
                 order_type="STOP_MARKET",
                 quantity=self._position.quantity,
                 stop_price=self._position.stop_loss_price,
                 reduce_only=True,
+                bot_id=self._bot_id,
             )
 
             if sl_order:
@@ -876,12 +878,13 @@ class SupertrendBot(BaseBot):
             # Place closing order
             close_side = OrderSide.SELL if self._position.side == PositionSide.LONG else OrderSide.BUY
 
-            order = await self._exchange.futures.create_order(
+            order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
-                side=close_side,
-                order_type=OrderType.MARKET,
+                side=close_side.value,
+                order_type="MARKET",
                 quantity=self._position.quantity,
-                reduceOnly=True,
+                reduce_only=True,
+                bot_id=self._bot_id,
             )
 
             if order:

@@ -647,18 +647,20 @@ class BollingerBot(BaseBot):
                 if current_value >= self._capital * self._config.max_position_pct:
                     return False
 
-            # Place market order
+            # Place market order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
-                order = await self._exchange.futures.market_buy(
+                order = await self._exchange.market_buy(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
             else:
-                order = await self._exchange.futures.market_sell(
+                order = await self._exchange.market_sell(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
 
             if order:
@@ -721,18 +723,20 @@ class BollingerBot(BaseBot):
             side = self._position.side
             quantity = self._position.quantity
 
-            # Place closing order
+            # Place closing order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
-                order = await self._exchange.futures.market_sell(
+                order = await self._exchange.market_sell(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
             else:
-                order = await self._exchange.futures.market_buy(
+                order = await self._exchange.market_buy(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
 
             if order:

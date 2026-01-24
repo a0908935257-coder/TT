@@ -619,19 +619,20 @@ class GridFuturesBot(BaseBot):
                     logger.debug("Max position reached, skipping")
                     return False
 
-            # Place market order using convenience methods
-            # Use position_side=BOTH for one-way mode (default Binance futures mode)
+            # Place market order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
-                order = await self._exchange.futures.market_buy(
+                order = await self._exchange.market_buy(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",  # One-way mode
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
             else:
-                order = await self._exchange.futures.market_sell(
+                order = await self._exchange.market_sell(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",  # One-way mode
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
 
             if order:
@@ -697,22 +698,16 @@ class GridFuturesBot(BaseBot):
             if is_full_close and self._position.stop_loss_order_id:
                 await self._cancel_stop_loss_order()
 
-            # Place closing order (reduce_only)
-            # Use position_side=BOTH for one-way mode
-            if self._position.side == PositionSide.LONG:
-                order = await self._exchange.futures.market_sell(
-                    symbol=self._config.symbol,
-                    quantity=close_qty,
-                    position_side="BOTH",  # One-way mode
-                    reduce_only=True,
-                )
-            else:
-                order = await self._exchange.futures.market_buy(
-                    symbol=self._config.symbol,
-                    quantity=close_qty,
-                    position_side="BOTH",  # One-way mode
-                    reduce_only=True,
-                )
+            # Place closing order (reduce_only, through order queue)
+            close_side = "SELL" if self._position.side == PositionSide.LONG else "BUY"
+            order = await self._exchange.futures_create_order(
+                symbol=self._config.symbol,
+                side=close_side,
+                order_type="MARKET",
+                quantity=close_qty,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
 
             if order:
                 fill_price = order.avg_price if order.avg_price else current_price
@@ -961,14 +956,15 @@ class GridFuturesBot(BaseBot):
             else:
                 close_side = OrderSide.BUY
 
-            # Place STOP_MARKET order (uses Algo Order API since 2025-12-09)
-            sl_order = await self._exchange.futures.create_order(
+            # Place STOP_MARKET order (through order queue)
+            sl_order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
-                side=close_side,
+                side=close_side.value,  # Convert enum to string
                 order_type="STOP_MARKET",
                 quantity=self._position.quantity,
                 stop_price=stop_price,
                 reduce_only=True,
+                bot_id=self._bot_id,
             )
 
             if sl_order:

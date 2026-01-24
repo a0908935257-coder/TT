@@ -610,18 +610,20 @@ class RSIGridBot(BaseBot):
                     logger.debug("Max position reached")
                     return False
 
-            # Place market order
+            # Place market order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
-                order = await self._exchange.futures.market_buy(
+                order = await self._exchange.market_buy(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
             else:
-                order = await self._exchange.futures.market_sell(
+                order = await self._exchange.market_sell(
                     symbol=self._config.symbol,
                     quantity=quantity,
-                    position_side="BOTH",
+                    market=MarketType.FUTURES,
+                    bot_id=self._bot_id,
                 )
 
             if order:
@@ -685,21 +687,16 @@ class RSIGridBot(BaseBot):
             if is_full_close and self._position.stop_loss_order_id:
                 await self._cancel_stop_loss_order()
 
-            # Place closing order
-            if self._position.side == PositionSide.LONG:
-                order = await self._exchange.futures.market_sell(
-                    symbol=self._config.symbol,
-                    quantity=close_qty,
-                    position_side="BOTH",
-                    reduce_only=True,
-                )
-            else:
-                order = await self._exchange.futures.market_buy(
-                    symbol=self._config.symbol,
-                    quantity=close_qty,
-                    position_side="BOTH",
-                    reduce_only=True,
-                )
+            # Place closing order (reduce_only, through order queue)
+            close_side = "SELL" if self._position.side == PositionSide.LONG else "BUY"
+            order = await self._exchange.futures_create_order(
+                symbol=self._config.symbol,
+                side=close_side,
+                order_type="MARKET",
+                quantity=close_qty,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
 
             if order:
                 fill_price = order.avg_price if order.avg_price else current_price
@@ -809,13 +806,14 @@ class RSIGridBot(BaseBot):
             else:
                 close_side = OrderSide.BUY
 
-            sl_order = await self._exchange.futures.create_order(
+            sl_order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
-                side=close_side,
+                side=close_side.value,  # Convert enum to string
                 order_type="STOP_MARKET",
                 quantity=self._position.quantity,
                 stop_price=stop_price,
                 reduce_only=True,
+                bot_id=self._bot_id,
             )
 
             if sl_order:
