@@ -887,16 +887,38 @@ class SupertrendBot(BaseBot):
             notional = capital * position_pct
             quantity = self._safe_divide(notional, price, context="position_size")
 
-            # Round quantity
-            quantity = quantity.quantize(Decimal("0.001"))
-
-            # Validate quantity (indicator boundary check)
-            if not self._validate_quantity(quantity, "order_quantity"):
+            # Validate and normalize price/quantity to exchange requirements
+            is_valid, norm_price, norm_quantity, precision_msg = await self._validate_order_precision(
+                symbol=self._config.symbol,
+                price=price,
+                quantity=quantity,
+            )
+            if not is_valid:
+                logger.warning(f"Order precision validation failed: {precision_msg}")
                 return False
+
+            # Use normalized values
+            quantity = norm_quantity
 
             if quantity <= 0:
                 logger.warning("Insufficient balance to open position")
                 return False
+
+            # Check for duplicate order (prevent double-entry on retry)
+            if self._is_duplicate_order(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+            ):
+                logger.warning(f"Duplicate order blocked: {order_side} {quantity}")
+                return False
+
+            # Mark order as pending (for deduplication)
+            order_key = self._mark_order_pending(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+            )
 
             # Place market order with timeout protection
             order_side_enum = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL
@@ -910,7 +932,14 @@ class SupertrendBot(BaseBot):
                     bot_id=self._bot_id,
                 )
 
-            order = await self._place_order_with_timeout(place_order)
+            order = await self._place_order_with_timeout(
+                place_order,
+                order_side=order_side,
+                order_quantity=quantity,
+            )
+
+            # Clear pending order marker
+            self._clear_pending_order(order_key)
 
             if order:
                 # Calculate stop loss price
@@ -919,8 +948,9 @@ class SupertrendBot(BaseBot):
                 else:
                     stop_loss_price = price * (Decimal("1") + self._config.stop_loss_pct)
 
-                # Round to tick size
-                stop_loss_price = stop_loss_price.quantize(Decimal("0.1"))
+                # Normalize stop loss price to exchange tick size
+                symbol_info = await self._get_symbol_info(self._config.symbol)
+                stop_loss_price = self._normalize_price(stop_loss_price, symbol_info)
 
                 self._position = Position(
                     side=side,

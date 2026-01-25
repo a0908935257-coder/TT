@@ -10,11 +10,14 @@ Design Pattern: Template Method
 """
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Dict, Optional
+
+from src.core.models import MarketType
 
 from src.core import get_logger
 from src.core.models import Kline
@@ -1702,7 +1705,323 @@ class BaseBot(ABC):
         return error_code == self.ORDER_ERROR_RATE_LIMIT
 
     # =========================================================================
-    # Order Timeout Handling
+    # Order Precision Handling (Price/Quantity Normalization)
+    # =========================================================================
+
+    def _init_symbol_info_cache(self) -> None:
+        """Initialize symbol info cache."""
+        if not hasattr(self, "_symbol_info_cache"):
+            self._symbol_info_cache: Dict[str, Any] = {}
+
+    async def _get_symbol_info(self, symbol: str) -> Optional[Any]:
+        """
+        Get and cache symbol info from exchange.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            SymbolInfo object or None
+        """
+        self._init_symbol_info_cache()
+
+        if symbol in self._symbol_info_cache:
+            return self._symbol_info_cache[symbol]
+
+        try:
+            symbol_info = await self._exchange.get_symbol_info(
+                symbol=symbol,
+                market=MarketType.FUTURES,
+            )
+            if symbol_info:
+                self._symbol_info_cache[symbol] = symbol_info
+                logger.debug(
+                    f"[{self._bot_id}] Cached symbol info for {symbol}: "
+                    f"tick_size={symbol_info.tick_size}, "
+                    f"step_size={symbol_info.step_size}, "
+                    f"min_qty={symbol_info.min_quantity}, "
+                    f"min_notional={symbol_info.min_notional}"
+                )
+            return symbol_info
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Failed to get symbol info: {e}")
+            return None
+
+    def _normalize_price(
+        self,
+        price: Decimal,
+        symbol_info: Optional[Any] = None,
+        tick_size: Optional[Decimal] = None,
+    ) -> Decimal:
+        """
+        Normalize price to exchange tick size.
+
+        Args:
+            price: Raw price
+            symbol_info: SymbolInfo object (optional)
+            tick_size: Override tick size (optional)
+
+        Returns:
+            Price rounded to valid tick size
+        """
+        if tick_size is None and symbol_info:
+            tick_size = getattr(symbol_info, "tick_size", None)
+
+        if tick_size is None or tick_size <= 0:
+            # Fallback: round to 2 decimal places
+            return price.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+
+        # Round down to nearest tick size
+        # Example: price=100.123, tick_size=0.01 -> 100.12
+        normalized = (price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+        return normalized
+
+    def _normalize_quantity(
+        self,
+        quantity: Decimal,
+        symbol_info: Optional[Any] = None,
+        step_size: Optional[Decimal] = None,
+    ) -> Decimal:
+        """
+        Normalize quantity to exchange step size.
+
+        Args:
+            quantity: Raw quantity
+            symbol_info: SymbolInfo object (optional)
+            step_size: Override step size (optional)
+
+        Returns:
+            Quantity rounded to valid step size
+        """
+        if step_size is None and symbol_info:
+            step_size = getattr(symbol_info, "step_size", None)
+
+        if step_size is None or step_size <= 0:
+            # Fallback: round to 3 decimal places
+            return quantity.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+
+        # Round down to nearest step size
+        # Example: quantity=0.12345, step_size=0.001 -> 0.123
+        normalized = (quantity / step_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * step_size
+        return normalized
+
+    async def _validate_order_precision(
+        self,
+        symbol: str,
+        price: Decimal,
+        quantity: Decimal,
+    ) -> tuple[bool, Decimal, Decimal, str]:
+        """
+        Validate and normalize price/quantity for exchange requirements.
+
+        Args:
+            symbol: Trading symbol
+            price: Order price
+            quantity: Order quantity
+
+        Returns:
+            Tuple of (is_valid, normalized_price, normalized_quantity, message)
+        """
+        symbol_info = await self._get_symbol_info(symbol)
+
+        # Normalize price and quantity
+        norm_price = self._normalize_price(price, symbol_info)
+        norm_quantity = self._normalize_quantity(quantity, symbol_info)
+
+        if symbol_info:
+            # Check minimum quantity
+            min_qty = getattr(symbol_info, "min_quantity", Decimal("0"))
+            if norm_quantity < min_qty:
+                return False, norm_price, norm_quantity, (
+                    f"Quantity {norm_quantity} below minimum {min_qty}"
+                )
+
+            # Check minimum notional value
+            min_notional = getattr(symbol_info, "min_notional", Decimal("0"))
+            notional_value = norm_price * norm_quantity
+            if min_notional > 0 and notional_value < min_notional:
+                return False, norm_price, norm_quantity, (
+                    f"Notional value {notional_value:.2f} below minimum {min_notional}"
+                )
+
+        # Basic validation
+        if norm_price <= 0:
+            return False, norm_price, norm_quantity, "Invalid price after normalization"
+
+        if norm_quantity <= 0:
+            return False, norm_price, norm_quantity, "Invalid quantity after normalization"
+
+        return True, norm_price, norm_quantity, "OK"
+
+    # =========================================================================
+    # Order Deduplication (Prevent Duplicate Orders on Retry)
+    # =========================================================================
+
+    # Pending order tracking window (seconds)
+    PENDING_ORDER_WINDOW_SECONDS = 60
+
+    def _init_pending_order_tracking(self) -> None:
+        """Initialize pending order tracking."""
+        if not hasattr(self, "_pending_orders"):
+            # Dict: order_key -> (timestamp, order_details)
+            self._pending_orders: Dict[str, tuple[float, Dict[str, Any]]] = {}
+        if not hasattr(self, "_last_order_cleanup"):
+            self._last_order_cleanup: float = 0
+
+    def _generate_order_key(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Optional[Decimal] = None,
+    ) -> str:
+        """
+        Generate unique key for order deduplication.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            price: Order price (optional for market orders)
+
+        Returns:
+            Unique order key
+        """
+        # For market orders, use a simpler key
+        if price is None:
+            return f"{symbol}_{side}_{quantity}"
+        return f"{symbol}_{side}_{quantity}_{price}"
+
+    def _cleanup_old_pending_orders(self) -> None:
+        """Remove expired pending orders."""
+        now = time.time()
+
+        # Only cleanup every 10 seconds
+        if now - self._last_order_cleanup < 10:
+            return
+
+        self._last_order_cleanup = now
+        expired_keys = []
+
+        for key, (timestamp, _) in self._pending_orders.items():
+            if now - timestamp > self.PENDING_ORDER_WINDOW_SECONDS:
+                expired_keys.append(key)
+
+        for key in expired_keys:
+            del self._pending_orders[key]
+
+    def _is_duplicate_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Optional[Decimal] = None,
+    ) -> bool:
+        """
+        Check if order is a potential duplicate.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+
+        Returns:
+            True if this appears to be a duplicate order
+        """
+        self._init_pending_order_tracking()
+        self._cleanup_old_pending_orders()
+
+        order_key = self._generate_order_key(symbol, side, quantity, price)
+        now = time.time()
+
+        if order_key in self._pending_orders:
+            timestamp, details = self._pending_orders[order_key]
+            age = now - timestamp
+            logger.warning(
+                f"[{self._bot_id}] Duplicate order detected: {order_key} "
+                f"(pending for {age:.1f}s)"
+            )
+            return True
+
+        return False
+
+    def _mark_order_pending(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Optional[Decimal] = None,
+    ) -> str:
+        """
+        Mark order as pending to prevent duplicates.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+
+        Returns:
+            Order key for later clearing
+        """
+        self._init_pending_order_tracking()
+
+        order_key = self._generate_order_key(symbol, side, quantity, price)
+        self._pending_orders[order_key] = (
+            time.time(),
+            {"symbol": symbol, "side": side, "quantity": str(quantity), "price": str(price)},
+        )
+        return order_key
+
+    def _clear_pending_order(self, order_key: str) -> None:
+        """
+        Clear pending order after completion/failure.
+
+        Args:
+            order_key: Order key from _mark_order_pending
+        """
+        self._init_pending_order_tracking()
+        if order_key in self._pending_orders:
+            del self._pending_orders[order_key]
+
+    async def _check_existing_position_before_retry(
+        self,
+        symbol: str,
+        expected_side: str,
+    ) -> bool:
+        """
+        Check if position already exists before retry (to detect if original order went through).
+
+        Args:
+            symbol: Trading symbol
+            expected_side: Expected position side
+
+        Returns:
+            True if position exists (don't retry)
+        """
+        try:
+            exchange_pos = await self._sync_position_from_exchange()
+
+            if exchange_pos:
+                exchange_side = exchange_pos.get("side", "").upper()
+                exchange_qty = exchange_pos.get("quantity", Decimal("0"))
+
+                if exchange_qty > 0 and exchange_side == expected_side.upper():
+                    logger.info(
+                        f"[{self._bot_id}] Position already exists from previous attempt: "
+                        f"{exchange_side} {exchange_qty} - skipping retry"
+                    )
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Error checking position before retry: {e}")
+            return False
+
+    # =========================================================================
+    # Order Timeout Handling (with Deduplication)
     # =========================================================================
 
     # Default order timeout (seconds)
@@ -1716,14 +2035,18 @@ class BaseBot(ABC):
         order_func: Callable,
         timeout_seconds: Optional[float] = None,
         retry_count: int = 0,
+        order_side: Optional[str] = None,
+        order_quantity: Optional[Decimal] = None,
     ) -> Optional[Any]:
         """
-        Place order with timeout and retry logic.
+        Place order with timeout, retry logic, and deduplication check.
 
         Args:
             order_func: Async function that places the order
             timeout_seconds: Timeout in seconds (default: DEFAULT_ORDER_TIMEOUT_SECONDS)
             retry_count: Current retry attempt
+            order_side: Order side for position check on retry (BUY/SELL)
+            order_quantity: Order quantity for deduplication
 
         Returns:
             Order result or None if failed
@@ -1742,12 +2065,30 @@ class BaseBot(ABC):
                 f"(attempt {retry_count + 1}/{self.MAX_ORDER_RETRIES + 1})"
             )
 
-            # Retry if under limit
+            # Before retry, check if position already exists (original order may have succeeded)
             if retry_count < self.MAX_ORDER_RETRIES:
+                # Check if the original order actually went through
+                if order_side:
+                    # Map BUY/SELL to LONG/SHORT
+                    expected_side = "LONG" if order_side.upper() == "BUY" else "SHORT"
+                    position_exists = await self._check_existing_position_before_retry(
+                        symbol=self.symbol,
+                        expected_side=expected_side,
+                    )
+                    if position_exists:
+                        logger.info(
+                            f"[{self._bot_id}] Original order succeeded - "
+                            f"position found on exchange, skipping retry"
+                        )
+                        # Return None but don't consider this a failure
+                        # The bot should detect the position via reconciliation
+                        return None
+
                 logger.info(f"[{self._bot_id}] Retrying order...")
                 await asyncio.sleep(1)  # Brief delay before retry
                 return await self._place_order_with_timeout(
-                    order_func, timeout_seconds, retry_count + 1
+                    order_func, timeout_seconds, retry_count + 1,
+                    order_side=order_side, order_quantity=order_quantity
                 )
 
             # Max retries reached

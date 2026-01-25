@@ -632,19 +632,30 @@ class RSIGridBot(BaseBot):
             trade_value = self._capital * self._config.position_size_pct
             quantity = self._safe_divide(trade_value, price, context="position_size")
 
-            # Round quantity
-            quantity = quantity.quantize(Decimal("0.001"))
-
-            # Validate quantity (indicator boundary check)
-            if not self._validate_quantity(quantity, "order_quantity"):
+            # Validate and normalize price/quantity to exchange requirements
+            order_side = "BUY" if side == PositionSide.LONG else "SELL"
+            is_valid, norm_price, norm_quantity, precision_msg = await self._validate_order_precision(
+                symbol=self._config.symbol,
+                price=price,
+                quantity=quantity,
+            )
+            if not is_valid:
+                logger.warning(f"Order precision validation failed: {precision_msg}")
                 return False
 
-            min_quantity = Decimal("0.001")
-            if quantity < min_quantity:
+            # Use normalized values
+            quantity = norm_quantity
+
+            # Check for duplicate order (prevent double-entry on retry)
+            if self._is_duplicate_order(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+            ):
+                logger.warning(f"Duplicate order blocked: {order_side} {quantity}")
                 return False
 
             # Pre-trade validation (time sync + data health + position reconciliation)
-            order_side = "BUY" if side == PositionSide.LONG else "SELL"
             if not await self._validate_pre_trade(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -690,6 +701,13 @@ class RSIGridBot(BaseBot):
                     )
                     return False
 
+            # Mark order as pending (for deduplication)
+            order_key = self._mark_order_pending(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+            )
+
             # Place market order with timeout protection
             async def place_order():
                 if side == PositionSide.LONG:
@@ -707,7 +725,14 @@ class RSIGridBot(BaseBot):
                         bot_id=self._bot_id,
                     )
 
-            order = await self._place_order_with_timeout(place_order)
+            order = await self._place_order_with_timeout(
+                place_order,
+                order_side=order_side,
+                order_quantity=quantity,
+            )
+
+            # Clear pending order marker
+            self._clear_pending_order(order_key)
 
             if order:
                 fill_price = order.avg_price if order.avg_price else price
