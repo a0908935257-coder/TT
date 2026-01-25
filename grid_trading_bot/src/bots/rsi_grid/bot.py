@@ -614,12 +614,21 @@ class RSIGridBot(BaseBot):
             return False
 
         try:
+            # Validate price before calculation (indicator boundary check)
+            if not self._validate_price(price, "entry_price"):
+                logger.warning(f"Invalid entry price: {price}")
+                return False
+
             # Calculate position size
             trade_value = self._capital * self._config.position_size_pct
-            quantity = trade_value / price
+            quantity = self._safe_divide(trade_value, price, context="position_size")
 
             # Round quantity
             quantity = quantity.quantize(Decimal("0.001"))
+
+            # Validate quantity (indicator boundary check)
+            if not self._validate_quantity(quantity, "order_quantity"):
+                return False
 
             min_quantity = Decimal("0.001")
             if quantity < min_quantity:

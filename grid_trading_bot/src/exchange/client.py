@@ -143,6 +143,11 @@ class ExchangeClient:
         self._queue_processor_task: Optional[asyncio.Task] = None
         self._queue_running = False
 
+        # Queue limits to prevent signal stacking
+        self._max_queue_size = 100  # Maximum pending orders
+        self._max_orders_per_bot_per_minute = 10  # Rate limit per bot
+        self._bot_order_timestamps: Dict[str, List[float]] = {}  # Bot order history
+
         # Queue statistics
         self._queue_stats = OrderQueueStats()
 
@@ -695,7 +700,45 @@ class ExchangeClient:
 
         Returns:
             Result of the order operation
+
+        Raises:
+            RuntimeError: If queue is full or bot rate limit exceeded
         """
+        import time
+
+        async with self._queue_lock:
+            # Check queue size limit (prevent signal stacking)
+            if len(self._order_queue) >= self._max_queue_size:
+                self._queue_stats.total_errors += 1
+                raise RuntimeError(
+                    f"Order queue full ({self._max_queue_size}). "
+                    f"Signal stacking detected - rejecting order from {bot_id}"
+                )
+
+            # Check per-bot rate limit
+            current_time = time.time()
+            one_minute_ago = current_time - 60
+
+            if bot_id not in self._bot_order_timestamps:
+                self._bot_order_timestamps[bot_id] = []
+
+            # Clean old timestamps
+            self._bot_order_timestamps[bot_id] = [
+                ts for ts in self._bot_order_timestamps[bot_id]
+                if ts > one_minute_ago
+            ]
+
+            # Check rate limit
+            if len(self._bot_order_timestamps[bot_id]) >= self._max_orders_per_bot_per_minute:
+                self._queue_stats.total_errors += 1
+                raise RuntimeError(
+                    f"Bot {bot_id} exceeded rate limit "
+                    f"({self._max_orders_per_bot_per_minute} orders/minute)"
+                )
+
+            # Record this order timestamp
+            self._bot_order_timestamps[bot_id].append(current_time)
+
         self._request_counter += 1
         request_id = f"{bot_id}_{self._request_counter}"
 

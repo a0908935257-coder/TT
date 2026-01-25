@@ -846,6 +846,11 @@ class SupertrendBot(BaseBot):
                 return False
 
         try:
+            # Validate price before calculation (indicator boundary check)
+            if not self._validate_price(price, "entry_price"):
+                logger.warning(f"Invalid entry price: {price}")
+                return False
+
             # Calculate position size based on allocated capital
             account = await self._exchange.futures.get_account()
             available = Decimal(str(account.available_balance))
@@ -860,14 +865,18 @@ class SupertrendBot(BaseBot):
             # Apply position_size_pct but cap at max_position_pct
             position_pct = min(self._config.position_size_pct, self._config.max_position_pct)
             notional = capital * position_pct
-            quantity = notional / price
+            quantity = self._safe_divide(notional, price, context="position_size")
 
             # Round quantity
             quantity = quantity.quantize(Decimal("0.001"))
 
+            # Validate quantity (indicator boundary check)
+            if not self._validate_quantity(quantity, "order_quantity"):
+                return False
+
             if quantity <= 0:
                 logger.warning("Insufficient balance to open position")
-                return
+                return False
 
             # Place market order (through order queue for cross-bot coordination)
             order_side = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL

@@ -28,6 +28,11 @@ DEFAULT_STALE_THRESHOLD_SECONDS = 120  # 2 minutes for data freshness
 DEFAULT_MAX_PRICE_CHANGE_PCT = Decimal("0.10")  # 10% max single-candle change
 DEFAULT_MAX_GAP_MULTIPLIER = 3  # Allow up to 3x expected interval gap
 
+# Indicator validation constants
+MIN_INDICATOR_DATA_POINTS = 5  # Minimum data points before trusting indicators
+MAX_REASONABLE_PRICE = Decimal("10000000")  # $10M max price (sanity check)
+MIN_REASONABLE_PRICE = Decimal("0.00000001")  # Minimum price (8 decimals)
+
 
 class InvalidStateError(Exception):
     """Raised when an operation is invalid for the current bot state."""
@@ -417,6 +422,179 @@ class BaseBot(ABC):
             )
             return False
 
+        return True
+
+    # =========================================================================
+    # Indicator Validation (Boundary Conditions)
+    # =========================================================================
+
+    def _validate_indicator_value(
+        self,
+        value: Decimal,
+        name: str,
+        min_value: Optional[Decimal] = None,
+        max_value: Optional[Decimal] = None,
+        allow_zero: bool = True,
+        allow_negative: bool = False,
+    ) -> bool:
+        """
+        Validate an indicator value for boundary conditions.
+
+        Protects against:
+        - NaN/Infinity values
+        - Division by zero results
+        - Out of bounds calculations
+        - Negative values where inappropriate
+
+        Args:
+            value: The indicator value to validate
+            name: Name of the indicator (for logging)
+            min_value: Minimum acceptable value
+            max_value: Maximum acceptable value
+            allow_zero: Whether zero is acceptable
+            allow_negative: Whether negative values are acceptable
+
+        Returns:
+            True if value is valid
+        """
+        import math
+
+        # Check for NaN/Infinity (convert to float for math functions)
+        try:
+            float_val = float(value)
+            if math.isnan(float_val) or math.isinf(float_val):
+                logger.error(
+                    f"[{self._bot_id}] Invalid {name}: NaN or Infinity detected"
+                )
+                return False
+        except (ValueError, TypeError, OverflowError) as e:
+            logger.error(f"[{self._bot_id}] Invalid {name}: Cannot convert to float - {e}")
+            return False
+
+        # Check zero
+        if not allow_zero and value == Decimal("0"):
+            logger.warning(f"[{self._bot_id}] Invalid {name}: Zero not allowed")
+            return False
+
+        # Check negative
+        if not allow_negative and value < Decimal("0"):
+            logger.warning(f"[{self._bot_id}] Invalid {name}: Negative value {value}")
+            return False
+
+        # Check min bound
+        if min_value is not None and value < min_value:
+            logger.warning(
+                f"[{self._bot_id}] {name} below minimum: {value} < {min_value}"
+            )
+            return False
+
+        # Check max bound
+        if max_value is not None and value > max_value:
+            logger.warning(
+                f"[{self._bot_id}] {name} above maximum: {value} > {max_value}"
+            )
+            return False
+
+        return True
+
+    def _validate_price(self, price: Decimal, context: str = "price") -> bool:
+        """
+        Validate a price value.
+
+        Args:
+            price: The price to validate
+            context: Description of the price (for logging)
+
+        Returns:
+            True if price is valid
+        """
+        return self._validate_indicator_value(
+            value=price,
+            name=context,
+            min_value=MIN_REASONABLE_PRICE,
+            max_value=MAX_REASONABLE_PRICE,
+            allow_zero=False,
+            allow_negative=False,
+        )
+
+    def _validate_quantity(self, quantity: Decimal, context: str = "quantity") -> bool:
+        """
+        Validate an order quantity.
+
+        Args:
+            quantity: The quantity to validate
+            context: Description of the quantity (for logging)
+
+        Returns:
+            True if quantity is valid
+        """
+        return self._validate_indicator_value(
+            value=quantity,
+            name=context,
+            min_value=Decimal("0"),
+            max_value=Decimal("1000000"),  # 1M units max
+            allow_zero=False,
+            allow_negative=False,
+        )
+
+    def _safe_divide(
+        self,
+        numerator: Decimal,
+        denominator: Decimal,
+        default: Decimal = Decimal("0"),
+        context: str = "division",
+    ) -> Decimal:
+        """
+        Safely divide two Decimals with zero protection.
+
+        Args:
+            numerator: The numerator
+            denominator: The denominator
+            default: Default value if division fails
+            context: Description of the calculation (for logging)
+
+        Returns:
+            Result of division, or default if denominator is zero
+        """
+        if denominator == Decimal("0"):
+            logger.debug(
+                f"[{self._bot_id}] Division by zero in {context}, returning {default}"
+            )
+            return default
+
+        try:
+            result = numerator / denominator
+            # Validate result
+            if not self._validate_indicator_value(result, context, allow_negative=True):
+                return default
+            return result
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Division error in {context}: {e}")
+            return default
+
+    def _validate_sufficient_data(
+        self,
+        data_length: int,
+        required: int,
+        context: str = "indicator",
+    ) -> bool:
+        """
+        Validate that sufficient data exists for indicator calculation.
+
+        Args:
+            data_length: Current data length
+            required: Required minimum data points
+            context: Name of the calculation (for logging)
+
+        Returns:
+            True if sufficient data exists
+        """
+        if data_length < required:
+            logger.debug(
+                f"[{self._bot_id}] Insufficient data for {context}: "
+                f"{data_length} < {required} required"
+            )
+            return False
         return True
 
     def _parse_interval_to_seconds(self, interval: str) -> int:
