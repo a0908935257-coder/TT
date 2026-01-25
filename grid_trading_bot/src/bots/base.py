@@ -7894,3 +7894,963 @@ class BaseBot(ABC):
             self.release_risk_gate()
             logger.error(f"[{self._bot_id}] Pre-trade global check error: {e}")
             return False, f"Pre-trade error: {e}", details
+
+    # =========================================================================
+    # Stop Loss Protection System (止損保護系統)
+    # =========================================================================
+    #
+    # Three-layer protection:
+    # 1. Exchange Stop Loss - Primary (交易所止損單)
+    # 2. Software Backup Stop Loss - Secondary (軟體備份止損)
+    # 3. Emergency Hard Stop - Final (緊急硬止損)
+    #
+    # Addresses:
+    # - 止損未觸發: Monitor stop loss order status, detect failures
+    # - 止損滑點過大: Use limit orders with buffer, track slippage
+    # - 跳空越過止損: Time-based emergency stop, hard loss cap
+    # =========================================================================
+
+    # Stop Loss Configuration Constants
+    STOP_LOSS_MONITOR_INTERVAL_SECONDS = 5  # Check stop loss status every 5s
+    STOP_LOSS_MAX_FAILURES = 3  # Max consecutive failures before emergency action
+    STOP_LOSS_LIMIT_BUFFER_PCT = Decimal("0.005")  # 0.5% buffer for limit stop
+    STOP_LOSS_MAX_SLIPPAGE_PCT = Decimal("0.02")  # 2% max acceptable slippage
+    EMERGENCY_LOSS_PCT = Decimal("0.10")  # 10% hard stop (emergency)
+    HARD_LOSS_CAP_PCT = Decimal("0.15")  # 15% absolute max loss cap
+    GAP_DETECTION_THRESHOLD_PCT = Decimal("0.03")  # 3% gap detection threshold
+    TIERED_EXIT_LEVELS = 3  # Number of exit levels for tiered stop loss
+
+    def _init_stop_loss_protection(self) -> None:
+        """Initialize stop loss protection state."""
+        if not hasattr(self, "_sl_protection_state"):
+            self._sl_protection_state: Dict[str, Any] = {
+                "last_check_time": None,
+                "consecutive_failures": 0,
+                "last_known_sl_status": None,
+                "sl_order_placed_time": None,
+                "emergency_mode": False,
+                "slippage_history": [],
+                "gap_events": [],
+                "tiered_exits_remaining": self.TIERED_EXIT_LEVELS,
+                "backup_sl_active": False,
+                "last_price": None,
+                "last_price_time": None,
+            }
+        if not hasattr(self, "_sl_monitor_lock"):
+            self._sl_monitor_lock = asyncio.Lock()
+
+    # =========================================================================
+    # Layer 1: Stop Loss Order Monitoring (止損單監控)
+    # =========================================================================
+
+    async def monitor_stop_loss_order(
+        self,
+        symbol: str,
+        stop_loss_order_id: str,
+        expected_quantity: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Monitor stop loss order status and detect failures.
+
+        This should be called periodically from background monitor.
+
+        Args:
+            symbol: Trading symbol
+            stop_loss_order_id: Stop loss order ID to monitor
+            expected_quantity: Expected quantity of stop loss order
+
+        Returns:
+            Dict with status and any issues detected
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "is_active": False,
+            "is_triggered": False,
+            "is_failed": False,
+            "failure_reason": None,
+            "needs_replacement": False,
+            "needs_emergency_action": False,
+        }
+
+        async with self._sl_monitor_lock:
+            try:
+                # Query order status from exchange
+                order_status = await self._query_stop_loss_status(
+                    symbol=symbol,
+                    order_id=stop_loss_order_id,
+                )
+
+                if order_status is None:
+                    # Order not found - may have been cancelled or filled
+                    result["is_failed"] = True
+                    result["failure_reason"] = "ORDER_NOT_FOUND"
+                    self._sl_protection_state["consecutive_failures"] += 1
+
+                elif order_status.get("status") == "FILLED":
+                    result["is_triggered"] = True
+                    self._sl_protection_state["consecutive_failures"] = 0
+                    self._sl_protection_state["last_known_sl_status"] = "FILLED"
+
+                elif order_status.get("status") in ["NEW", "PENDING"]:
+                    result["is_active"] = True
+                    self._sl_protection_state["consecutive_failures"] = 0
+                    self._sl_protection_state["last_known_sl_status"] = "ACTIVE"
+
+                elif order_status.get("status") in ["CANCELLED", "REJECTED", "EXPIRED"]:
+                    result["is_failed"] = True
+                    result["failure_reason"] = order_status.get("status")
+                    result["needs_replacement"] = True
+                    self._sl_protection_state["consecutive_failures"] += 1
+
+                    logger.warning(
+                        f"[{self._bot_id}] Stop loss order {stop_loss_order_id} "
+                        f"failed: {order_status.get('status')}"
+                    )
+
+                # Check for excessive failures
+                if self._sl_protection_state["consecutive_failures"] >= self.STOP_LOSS_MAX_FAILURES:
+                    result["needs_emergency_action"] = True
+                    self._sl_protection_state["emergency_mode"] = True
+                    logger.error(
+                        f"[{self._bot_id}] Stop loss protection: "
+                        f"{self._sl_protection_state['consecutive_failures']} consecutive failures - "
+                        f"EMERGENCY MODE ACTIVATED"
+                    )
+
+                self._sl_protection_state["last_check_time"] = datetime.now(timezone.utc)
+                return result
+
+            except Exception as e:
+                logger.error(f"[{self._bot_id}] Stop loss monitor error: {e}")
+                self._sl_protection_state["consecutive_failures"] += 1
+                result["is_failed"] = True
+                result["failure_reason"] = f"MONITOR_ERROR: {e}"
+                return result
+
+    async def _query_stop_loss_status(
+        self,
+        symbol: str,
+        order_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Query stop loss order status from exchange.
+
+        Args:
+            symbol: Trading symbol
+            order_id: Order ID to query
+
+        Returns:
+            Order status dict or None if not found
+        """
+        try:
+            # Try to get order from exchange
+            order = await self._exchange.futures.get_order(
+                symbol=symbol,
+                order_id=order_id,
+            )
+
+            if order:
+                return {
+                    "status": getattr(order, "status", "UNKNOWN"),
+                    "filled_qty": getattr(order, "filled_qty", Decimal("0")),
+                    "avg_price": getattr(order, "avg_price", None),
+                }
+            return None
+
+        except Exception as e:
+            error_str = str(e).lower()
+            if "not found" in error_str or "unknown" in error_str:
+                return None
+            raise
+
+    async def replace_failed_stop_loss(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        entry_price: Decimal,
+        stop_loss_pct: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Replace a failed stop loss order with a new one.
+
+        Args:
+            symbol: Trading symbol
+            side: Position side (LONG/SHORT)
+            quantity: Position quantity
+            entry_price: Position entry price
+            stop_loss_pct: Stop loss percentage
+
+        Returns:
+            Dict with new order details or failure info
+        """
+        result = {
+            "success": False,
+            "new_order_id": None,
+            "error": None,
+        }
+
+        try:
+            # Calculate stop price
+            if side.upper() == "LONG":
+                stop_price = entry_price * (Decimal("1") - stop_loss_pct)
+                close_side = "SELL"
+            else:
+                stop_price = entry_price * (Decimal("1") + stop_loss_pct)
+                close_side = "BUY"
+
+            # Round to appropriate precision
+            stop_price = stop_price.quantize(Decimal("0.1"))
+
+            # Place new stop loss order
+            new_order = await self._exchange.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                order_type="STOP_MARKET",
+                quantity=quantity,
+                stop_price=stop_price,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
+
+            if new_order:
+                result["success"] = True
+                result["new_order_id"] = str(getattr(new_order, "order_id", ""))
+                result["stop_price"] = stop_price
+
+                self._sl_protection_state["consecutive_failures"] = 0
+                self._sl_protection_state["sl_order_placed_time"] = datetime.now(timezone.utc)
+
+                logger.info(
+                    f"[{self._bot_id}] Replaced failed stop loss: "
+                    f"new order {result['new_order_id']} @ {stop_price}"
+                )
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"[{self._bot_id}] Failed to replace stop loss: {e}")
+
+        return result
+
+    # =========================================================================
+    # Layer 2: Software Backup Stop Loss (軟體備份止損)
+    # =========================================================================
+
+    async def check_backup_stop_loss(
+        self,
+        symbol: str,
+        current_price: Decimal,
+        entry_price: Decimal,
+        position_side: str,
+        stop_loss_pct: Decimal,
+        quantity: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Software-based backup stop loss check.
+
+        This runs independently of exchange stop loss orders and provides
+        a backup in case the exchange order fails.
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+            entry_price: Position entry price
+            position_side: Position side (LONG/SHORT)
+            stop_loss_pct: Stop loss percentage
+            quantity: Position quantity
+
+        Returns:
+            Dict with action needed and details
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "should_close": False,
+            "reason": None,
+            "urgency": "normal",  # normal, high, critical
+            "close_quantity": Decimal("0"),
+            "slippage_warning": False,
+        }
+
+        # Calculate P&L percentage
+        if position_side.upper() == "LONG":
+            pnl_pct = (current_price - entry_price) / entry_price
+        else:
+            pnl_pct = (entry_price - current_price) / entry_price
+
+        # Check if loss exceeds stop loss threshold
+        if pnl_pct < -stop_loss_pct:
+            result["should_close"] = True
+            result["reason"] = "BACKUP_STOP_LOSS"
+            result["close_quantity"] = quantity
+            result["pnl_pct"] = pnl_pct
+
+            # Determine urgency based on loss magnitude
+            if pnl_pct < -self.EMERGENCY_LOSS_PCT:
+                result["urgency"] = "critical"
+                logger.error(
+                    f"[{self._bot_id}] CRITICAL: Backup stop loss triggered at "
+                    f"{pnl_pct*100:.2f}% loss (critical threshold)"
+                )
+            elif pnl_pct < -(stop_loss_pct * Decimal("1.5")):
+                result["urgency"] = "high"
+                logger.warning(
+                    f"[{self._bot_id}] HIGH: Backup stop loss triggered at "
+                    f"{pnl_pct*100:.2f}% loss (1.5x stop loss)"
+                )
+            else:
+                logger.warning(
+                    f"[{self._bot_id}] Backup stop loss triggered at "
+                    f"{pnl_pct*100:.2f}% loss"
+                )
+
+            # Mark backup stop loss as active
+            self._sl_protection_state["backup_sl_active"] = True
+
+        return result
+
+    # =========================================================================
+    # Layer 3: Emergency Hard Stop (緊急硬止損)
+    # =========================================================================
+
+    async def check_emergency_stop(
+        self,
+        symbol: str,
+        current_price: Decimal,
+        entry_price: Decimal,
+        position_side: str,
+        quantity: Decimal,
+        leverage: int = 1,
+    ) -> Dict[str, Any]:
+        """
+        Emergency hard stop check - absolute loss cap regardless of other stops.
+
+        This is the final safety net that prevents catastrophic losses.
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+            entry_price: Position entry price
+            position_side: Position side (LONG/SHORT)
+            quantity: Position quantity
+            leverage: Position leverage
+
+        Returns:
+            Dict with emergency action needed
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "emergency_close": False,
+            "reason": None,
+            "loss_pct": Decimal("0"),
+            "estimated_loss": Decimal("0"),
+        }
+
+        # Calculate P&L percentage (with leverage effect)
+        if position_side.upper() == "LONG":
+            pnl_pct = (current_price - entry_price) / entry_price * Decimal(leverage)
+        else:
+            pnl_pct = (entry_price - current_price) / entry_price * Decimal(leverage)
+
+        result["loss_pct"] = pnl_pct
+        result["estimated_loss"] = abs(pnl_pct) * quantity * entry_price
+
+        # Check hard loss cap
+        if pnl_pct < -self.HARD_LOSS_CAP_PCT:
+            result["emergency_close"] = True
+            result["reason"] = "HARD_LOSS_CAP"
+
+            logger.critical(
+                f"[{self._bot_id}] EMERGENCY HARD STOP: "
+                f"Loss {pnl_pct*100:.2f}% exceeds hard cap {self.HARD_LOSS_CAP_PCT*100:.1f}% - "
+                f"FORCING IMMEDIATE CLOSE"
+            )
+
+            # Send critical notification if available
+            if hasattr(self, "_notifier") and self._notifier:
+                try:
+                    await self._notifier.send_alert(
+                        level="CRITICAL",
+                        title=f"EMERGENCY STOP - {symbol}",
+                        message=(
+                            f"Hard loss cap triggered!\n"
+                            f"Loss: {pnl_pct*100:.2f}%\n"
+                            f"Position closing immediately"
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        # Check if in emergency mode due to stop loss failures
+        elif self._sl_protection_state.get("emergency_mode"):
+            result["emergency_close"] = True
+            result["reason"] = "STOP_LOSS_FAILURES"
+
+            logger.critical(
+                f"[{self._bot_id}] EMERGENCY CLOSE due to stop loss failures - "
+                f"Current P&L: {pnl_pct*100:.2f}%"
+            )
+
+        return result
+
+    async def execute_emergency_close(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """
+        Execute emergency position close with maximum priority.
+
+        Args:
+            symbol: Trading symbol
+            side: Position side to close
+            quantity: Quantity to close
+            reason: Reason for emergency close
+
+        Returns:
+            Dict with execution result
+        """
+        result = {
+            "success": False,
+            "filled_quantity": Decimal("0"),
+            "avg_price": None,
+            "error": None,
+        }
+
+        try:
+            # Determine close side
+            close_side = "SELL" if side.upper() == "LONG" else "BUY"
+
+            logger.critical(
+                f"[{self._bot_id}] Executing EMERGENCY CLOSE: "
+                f"{close_side} {quantity} {symbol}, reason: {reason}"
+            )
+
+            # Place market order with reduce_only
+            order = await self._exchange.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                order_type="MARKET",
+                quantity=quantity,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
+
+            if order:
+                result["success"] = True
+                result["filled_quantity"] = getattr(order, "filled_qty", quantity)
+                result["avg_price"] = getattr(order, "avg_price", None)
+
+                logger.critical(
+                    f"[{self._bot_id}] Emergency close executed: "
+                    f"{result['filled_quantity']} @ {result['avg_price']}"
+                )
+
+                # Reset emergency state
+                self._sl_protection_state["emergency_mode"] = False
+                self._sl_protection_state["consecutive_failures"] = 0
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.critical(
+                f"[{self._bot_id}] EMERGENCY CLOSE FAILED: {e} - "
+                f"Manual intervention required!"
+            )
+
+            # Send critical alert
+            if hasattr(self, "_notifier") and self._notifier:
+                try:
+                    await self._notifier.send_alert(
+                        level="CRITICAL",
+                        title=f"EMERGENCY CLOSE FAILED - {symbol}",
+                        message=(
+                            f"Emergency close order FAILED!\n"
+                            f"Error: {e}\n"
+                            f"MANUAL INTERVENTION REQUIRED!"
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        return result
+
+    # =========================================================================
+    # Gap Detection and Protection (跳空保護)
+    # =========================================================================
+
+    def detect_price_gap(
+        self,
+        current_price: Decimal,
+        previous_price: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Detect price gaps that could bypass stop loss.
+
+        Args:
+            current_price: Current market price
+            previous_price: Previous price point
+
+        Returns:
+            Dict with gap detection results
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "gap_detected": False,
+            "gap_pct": Decimal("0"),
+            "gap_direction": None,  # "up" or "down"
+            "is_significant": False,
+        }
+
+        if previous_price <= 0:
+            return result
+
+        # Calculate gap percentage
+        gap_pct = (current_price - previous_price) / previous_price
+        result["gap_pct"] = gap_pct
+
+        if gap_pct > self.GAP_DETECTION_THRESHOLD_PCT:
+            result["gap_detected"] = True
+            result["gap_direction"] = "up"
+            result["is_significant"] = True
+        elif gap_pct < -self.GAP_DETECTION_THRESHOLD_PCT:
+            result["gap_detected"] = True
+            result["gap_direction"] = "down"
+            result["is_significant"] = True
+
+        if result["gap_detected"]:
+            # Record gap event
+            self._sl_protection_state["gap_events"].append({
+                "time": datetime.now(timezone.utc),
+                "previous_price": previous_price,
+                "current_price": current_price,
+                "gap_pct": gap_pct,
+            })
+
+            # Keep only last 10 gap events
+            self._sl_protection_state["gap_events"] = \
+                self._sl_protection_state["gap_events"][-10:]
+
+            logger.warning(
+                f"[{self._bot_id}] Price gap detected: {gap_pct*100:.2f}% "
+                f"({previous_price} -> {current_price})"
+            )
+
+        # Update last price
+        self._sl_protection_state["last_price"] = current_price
+        self._sl_protection_state["last_price_time"] = datetime.now(timezone.utc)
+
+        return result
+
+    async def handle_gap_through_stop_loss(
+        self,
+        symbol: str,
+        current_price: Decimal,
+        stop_price: Decimal,
+        entry_price: Decimal,
+        position_side: str,
+        quantity: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Handle case where price gapped through stop loss level.
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current price (after gap)
+            stop_price: Original stop loss price
+            entry_price: Position entry price
+            position_side: Position side
+            quantity: Position quantity
+
+        Returns:
+            Dict with recommended action
+        """
+        result = {
+            "gapped_through": False,
+            "estimated_slippage_pct": Decimal("0"),
+            "recommended_action": None,
+            "tiered_exit": False,
+        }
+
+        # Check if price gapped through stop
+        if position_side.upper() == "LONG":
+            if current_price < stop_price:
+                result["gapped_through"] = True
+                result["estimated_slippage_pct"] = (stop_price - current_price) / stop_price
+        else:  # SHORT
+            if current_price > stop_price:
+                result["gapped_through"] = True
+                result["estimated_slippage_pct"] = (current_price - stop_price) / stop_price
+
+        if result["gapped_through"]:
+            logger.warning(
+                f"[{self._bot_id}] Price gapped through stop loss: "
+                f"stop={stop_price}, current={current_price}, "
+                f"slippage={result['estimated_slippage_pct']*100:.2f}%"
+            )
+
+            # Recommend immediate close
+            result["recommended_action"] = "IMMEDIATE_CLOSE"
+
+            # Record slippage
+            self._sl_protection_state["slippage_history"].append({
+                "time": datetime.now(timezone.utc),
+                "expected_price": stop_price,
+                "actual_price": current_price,
+                "slippage_pct": result["estimated_slippage_pct"],
+            })
+
+            # Keep only last 20 slippage records
+            self._sl_protection_state["slippage_history"] = \
+                self._sl_protection_state["slippage_history"][-20:]
+
+        return result
+
+    # =========================================================================
+    # Slippage Protection (滑點保護)
+    # =========================================================================
+
+    async def place_stop_loss_with_limit(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        stop_price: Decimal,
+        limit_buffer_pct: Optional[Decimal] = None,
+    ) -> Dict[str, Any]:
+        """
+        Place stop loss with limit order instead of market order.
+
+        This reduces slippage by setting a maximum execution price.
+
+        Args:
+            symbol: Trading symbol
+            side: Position side (determines close side)
+            quantity: Order quantity
+            stop_price: Stop trigger price
+            limit_buffer_pct: Buffer percentage for limit price
+
+        Returns:
+            Dict with order result
+        """
+        if limit_buffer_pct is None:
+            limit_buffer_pct = self.STOP_LOSS_LIMIT_BUFFER_PCT
+
+        result = {
+            "success": False,
+            "order_id": None,
+            "stop_price": stop_price,
+            "limit_price": None,
+            "error": None,
+        }
+
+        try:
+            # Calculate limit price with buffer
+            if side.upper() == "LONG":
+                close_side = "SELL"
+                # For long position stop, limit should be below stop price
+                limit_price = stop_price * (Decimal("1") - limit_buffer_pct)
+            else:
+                close_side = "BUY"
+                # For short position stop, limit should be above stop price
+                limit_price = stop_price * (Decimal("1") + limit_buffer_pct)
+
+            limit_price = limit_price.quantize(Decimal("0.1"))
+            result["limit_price"] = limit_price
+
+            # Place STOP_LIMIT order
+            order = await self._exchange.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                order_type="STOP_LIMIT",
+                quantity=quantity,
+                price=limit_price,
+                stop_price=stop_price,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
+
+            if order:
+                result["success"] = True
+                result["order_id"] = str(getattr(order, "order_id", ""))
+
+                logger.info(
+                    f"[{self._bot_id}] Stop-limit order placed: "
+                    f"stop={stop_price}, limit={limit_price}"
+                )
+
+        except Exception as e:
+            result["error"] = str(e)
+            logger.error(f"[{self._bot_id}] Failed to place stop-limit: {e}")
+
+            # Fallback to market stop if limit fails
+            logger.warning(
+                f"[{self._bot_id}] Falling back to STOP_MARKET due to limit failure"
+            )
+
+        return result
+
+    # =========================================================================
+    # Tiered Exit Strategy (分層出場策略)
+    # =========================================================================
+
+    async def execute_tiered_stop_loss(
+        self,
+        symbol: str,
+        side: str,
+        total_quantity: Decimal,
+        entry_price: Decimal,
+        current_price: Decimal,
+        base_stop_pct: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Execute tiered stop loss - close position in multiple tranches.
+
+        This reduces market impact and can achieve better average exit price.
+
+        Args:
+            symbol: Trading symbol
+            side: Position side
+            total_quantity: Total quantity to close
+            entry_price: Original entry price
+            current_price: Current market price
+            base_stop_pct: Base stop loss percentage
+
+        Returns:
+            Dict with tiered exit results
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "total_closed": Decimal("0"),
+            "tranches": [],
+            "avg_exit_price": Decimal("0"),
+            "remaining_quantity": total_quantity,
+        }
+
+        # Calculate tranche sizes (33%, 33%, 34%)
+        num_tranches = min(
+            self._sl_protection_state["tiered_exits_remaining"],
+            self.TIERED_EXIT_LEVELS
+        )
+
+        if num_tranches <= 0:
+            logger.warning(f"[{self._bot_id}] No tiered exits remaining")
+            return result
+
+        tranche_size = total_quantity / Decimal(num_tranches)
+        close_side = "SELL" if side.upper() == "LONG" else "BUY"
+
+        total_value = Decimal("0")
+
+        for i in range(num_tranches):
+            # Last tranche gets remaining quantity to avoid rounding issues
+            if i == num_tranches - 1:
+                qty = result["remaining_quantity"]
+            else:
+                qty = tranche_size.quantize(Decimal("0.001"))
+
+            if qty <= 0:
+                break
+
+            try:
+                order = await self._exchange.futures_create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    order_type="MARKET",
+                    quantity=qty,
+                    reduce_only=True,
+                    bot_id=self._bot_id,
+                )
+
+                if order:
+                    filled_qty = getattr(order, "filled_qty", qty)
+                    fill_price = getattr(order, "avg_price", current_price)
+
+                    result["tranches"].append({
+                        "tranche": i + 1,
+                        "quantity": filled_qty,
+                        "price": fill_price,
+                    })
+
+                    result["total_closed"] += filled_qty
+                    result["remaining_quantity"] -= filled_qty
+                    total_value += filled_qty * fill_price
+
+                    self._sl_protection_state["tiered_exits_remaining"] -= 1
+
+                    logger.info(
+                        f"[{self._bot_id}] Tiered exit {i+1}/{num_tranches}: "
+                        f"{filled_qty} @ {fill_price}"
+                    )
+
+                    # Small delay between tranches
+                    if i < num_tranches - 1:
+                        await asyncio.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"[{self._bot_id}] Tiered exit tranche {i+1} failed: {e}")
+
+        # Calculate average exit price
+        if result["total_closed"] > 0:
+            result["avg_exit_price"] = total_value / result["total_closed"]
+
+        return result
+
+    # =========================================================================
+    # Comprehensive Stop Loss Check (綜合止損檢查)
+    # =========================================================================
+
+    async def comprehensive_stop_loss_check(
+        self,
+        symbol: str,
+        current_price: Decimal,
+        entry_price: Decimal,
+        position_side: str,
+        quantity: Decimal,
+        stop_loss_pct: Decimal,
+        stop_loss_order_id: Optional[str] = None,
+        leverage: int = 1,
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive stop loss check combining all protection layers.
+
+        This is the RECOMMENDED method to call from background monitors.
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+            entry_price: Position entry price
+            position_side: Position side (LONG/SHORT)
+            quantity: Position quantity
+            stop_loss_pct: Stop loss percentage
+            stop_loss_order_id: Exchange stop loss order ID (if any)
+            leverage: Position leverage
+
+        Returns:
+            Dict with comprehensive check results and recommended actions
+        """
+        self._init_stop_loss_protection()
+
+        result = {
+            "action_needed": False,
+            "action_type": None,  # None, REPLACE_SL, BACKUP_CLOSE, EMERGENCY_CLOSE
+            "urgency": "normal",
+            "details": {},
+        }
+
+        # Layer 1: Check exchange stop loss order status
+        if stop_loss_order_id:
+            sl_status = await self.monitor_stop_loss_order(
+                symbol=symbol,
+                stop_loss_order_id=stop_loss_order_id,
+                expected_quantity=quantity,
+            )
+
+            result["details"]["exchange_sl"] = sl_status
+
+            if sl_status["needs_emergency_action"]:
+                result["action_needed"] = True
+                result["action_type"] = "EMERGENCY_CLOSE"
+                result["urgency"] = "critical"
+                return result
+
+            if sl_status["needs_replacement"]:
+                result["action_needed"] = True
+                result["action_type"] = "REPLACE_SL"
+                result["urgency"] = "high"
+                return result
+
+        # Layer 2: Check backup software stop loss
+        backup_check = await self.check_backup_stop_loss(
+            symbol=symbol,
+            current_price=current_price,
+            entry_price=entry_price,
+            position_side=position_side,
+            stop_loss_pct=stop_loss_pct,
+            quantity=quantity,
+        )
+
+        result["details"]["backup_sl"] = backup_check
+
+        if backup_check["should_close"]:
+            result["action_needed"] = True
+            result["action_type"] = "BACKUP_CLOSE"
+            result["urgency"] = backup_check["urgency"]
+
+            # If exchange stop loss should have triggered but didn't, escalate
+            if stop_loss_order_id and backup_check["urgency"] == "critical":
+                result["action_type"] = "EMERGENCY_CLOSE"
+
+            return result
+
+        # Layer 3: Check emergency hard stop
+        emergency_check = await self.check_emergency_stop(
+            symbol=symbol,
+            current_price=current_price,
+            entry_price=entry_price,
+            position_side=position_side,
+            quantity=quantity,
+            leverage=leverage,
+        )
+
+        result["details"]["emergency"] = emergency_check
+
+        if emergency_check["emergency_close"]:
+            result["action_needed"] = True
+            result["action_type"] = "EMERGENCY_CLOSE"
+            result["urgency"] = "critical"
+            return result
+
+        # Gap detection (for monitoring/alerting)
+        last_price = self._sl_protection_state.get("last_price")
+        if last_price:
+            gap_check = self.detect_price_gap(current_price, last_price)
+            result["details"]["gap_check"] = gap_check
+
+        # Update last price
+        self._sl_protection_state["last_price"] = current_price
+        self._sl_protection_state["last_price_time"] = datetime.now(timezone.utc)
+
+        return result
+
+    def get_stop_loss_protection_stats(self) -> Dict[str, Any]:
+        """Get stop loss protection statistics."""
+        self._init_stop_loss_protection()
+
+        state = self._sl_protection_state
+
+        # Calculate average slippage
+        avg_slippage = Decimal("0")
+        if state["slippage_history"]:
+            total_slippage = sum(
+                s["slippage_pct"] for s in state["slippage_history"]
+            )
+            avg_slippage = total_slippage / len(state["slippage_history"])
+
+        return {
+            "consecutive_failures": state["consecutive_failures"],
+            "emergency_mode": state["emergency_mode"],
+            "backup_sl_active": state["backup_sl_active"],
+            "tiered_exits_remaining": state["tiered_exits_remaining"],
+            "total_gap_events": len(state["gap_events"]),
+            "total_slippage_events": len(state["slippage_history"]),
+            "avg_slippage_pct": str(avg_slippage),
+            "last_check_time": state["last_check_time"].isoformat() if state["last_check_time"] else None,
+        }
+
+    def reset_stop_loss_protection(self) -> None:
+        """Reset stop loss protection state (call when position is closed)."""
+        self._init_stop_loss_protection()
+
+        self._sl_protection_state["consecutive_failures"] = 0
+        self._sl_protection_state["emergency_mode"] = False
+        self._sl_protection_state["backup_sl_active"] = False
+        self._sl_protection_state["tiered_exits_remaining"] = self.TIERED_EXIT_LEVELS
+        self._sl_protection_state["last_known_sl_status"] = None
+
+        logger.debug(f"[{self._bot_id}] Stop loss protection state reset")

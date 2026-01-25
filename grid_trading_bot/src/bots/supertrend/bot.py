@@ -424,6 +424,53 @@ class SupertrendBot(BaseBot):
                         )
                     self.mark_position_synced()
 
+                # Comprehensive stop loss check (三層止損保護)
+                if self._position:
+                    ticker = await self._exchange.futures.get_ticker(self._config.symbol)
+                    current_price = Decimal(str(ticker.last_price))
+                    sl_check = await self.comprehensive_stop_loss_check(
+                        symbol=self._config.symbol,
+                        current_price=current_price,
+                        entry_price=self._position.entry_price,
+                        position_side=self._position.side.value.upper(),
+                        quantity=self._position.quantity,
+                        stop_loss_pct=self._config.stop_loss_pct,
+                        stop_loss_order_id=self._position.stop_loss_order_id,
+                        leverage=self._config.leverage,
+                    )
+
+                    if sl_check["action_needed"]:
+                        logger.warning(
+                            f"Stop loss protection triggered: {sl_check['action_type']} "
+                            f"(urgency: {sl_check['urgency']})"
+                        )
+
+                        if sl_check["action_type"] == "EMERGENCY_CLOSE":
+                            await self.execute_emergency_close(
+                                symbol=self._config.symbol,
+                                side=self._position.side.value.upper(),
+                                quantity=self._position.quantity,
+                                reason=sl_check["details"].get("emergency", {}).get("reason", "UNKNOWN"),
+                            )
+                            self._position = None
+                            self.reset_stop_loss_protection()
+
+                        elif sl_check["action_type"] == "REPLACE_SL":
+                            replace_result = await self.replace_failed_stop_loss(
+                                symbol=self._config.symbol,
+                                side=self._position.side.value.upper(),
+                                quantity=self._position.quantity,
+                                entry_price=self._position.entry_price,
+                                stop_loss_pct=self._config.stop_loss_pct,
+                            )
+                            if replace_result["success"]:
+                                self._position.stop_loss_order_id = replace_result["new_order_id"]
+                                self._position.stop_loss_price = replace_result.get("stop_price")
+
+                        elif sl_check["action_type"] == "BACKUP_CLOSE":
+                            await self._close_position(current_price, "BACKUP_STOP_LOSS")
+                            self.reset_stop_loss_protection()
+
                 # Wait 30 seconds between updates
                 await asyncio.sleep(30)
 
