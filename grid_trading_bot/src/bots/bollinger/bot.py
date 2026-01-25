@@ -35,6 +35,7 @@ from src.core import get_logger
 from src.core.models import Kline, MarketType
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
+from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationResult
 from src.master.models import BotState
 from src.notification import NotificationManager
 
@@ -76,6 +77,7 @@ class BollingerBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
         heartbeat_callback: Optional[Callable] = None,
+        signal_coordinator: Optional[SignalCoordinator] = None,
     ):
         """Initialize BollingerBot."""
         super().__init__(
@@ -88,6 +90,9 @@ class BollingerBot(BaseBot):
         )
 
         self._config: BollingerConfig = config
+
+        # Signal Coordinator for multi-bot conflict prevention
+        self._signal_coordinator = signal_coordinator or SignalCoordinator.get_instance()
 
         # Initialize BB calculator
         self._bb_calculator = BollingerCalculator(
@@ -108,6 +113,14 @@ class BollingerBot(BaseBot):
 
         # Statistics
         self._stats = BollingerBotStats()
+
+        # Hysteresis: track last triggered level to prevent oscillation
+        self._last_triggered_level: Optional[int] = None
+        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+
+        # Signal cooldown to prevent signal stacking
+        self._signal_cooldown: int = 0
+        self._cooldown_bars: int = 2
 
         # Background tasks
         self._monitor_task: Optional[asyncio.Task] = None
@@ -475,12 +488,36 @@ class BollingerBot(BaseBot):
     # BB_TREND_GRID Trading Logic
     # =========================================================================
 
-    async def _process_grid_kline(
-        self,
-        kline: Kline,
-    ) -> None:
+    def _check_hysteresis(self, level_index: int, direction: str, grid_price: Decimal, current_price: Decimal) -> bool:
         """
-        Process grid trading logic using kline data.
+        Check if price has moved enough from last triggered level (hysteresis).
+
+        Prevents oscillation around grid levels by requiring price to move
+        away by a minimum percentage before retriggering the same level.
+        """
+        if self._last_triggered_level is None:
+            return True
+        if self._last_triggered_level != level_index:
+            return True
+
+        hysteresis_buffer = grid_price * self._hysteresis_pct
+
+        if direction == "long":
+            if current_price < grid_price - hysteresis_buffer:
+                return True
+        else:
+            if current_price > grid_price + hysteresis_buffer:
+                return True
+
+        logger.debug(
+            f"Hysteresis active: level {level_index} recently triggered, "
+            f"price {current_price} too close to {grid_price}"
+        )
+        return False
+
+    async def _process_grid_kline(self, kline: Kline) -> None:
+        """
+        Process grid trading logic using kline data with hysteresis protection.
 
         BB_TREND_GRID 邏輯 (與回測一致):
         - 趨勢: BB 中軌 (SMA) 判斷
@@ -521,10 +558,19 @@ class BollingerBot(BaseBot):
         if not self._grid or self._current_trend == 0:
             return
 
+        # Decrement signal cooldown
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         # Check existing position for exit
         if self._position:
             await self._check_position_exit(current_price, kline_high, kline_low)
             return  # Don't open new position while holding one
+
+        # Check signal cooldown
+        if self._signal_cooldown > 0:
+            logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
+            return
 
         # Look for entry opportunities
         for level in self._grid.levels:
@@ -537,14 +583,28 @@ class BollingerBot(BaseBot):
             if self._current_trend == 1:
                 # Check if kline low touched grid level
                 if kline_low <= grid_price:
-                    await self._open_position(PositionSide.LONG, grid_price, level.index)
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level.index, "long", grid_price, current_price):
+                        continue
+
+                    success = await self._open_position(PositionSide.LONG, grid_price, level.index)
+                    if success:
+                        self._signal_cooldown = self._cooldown_bars
+                        self._last_triggered_level = level.index
                     break
 
             # Bearish trend: SHORT only (sell rallies)
             elif self._current_trend == -1:
                 # Check if kline high touched grid level
                 if kline_high >= grid_price:
-                    await self._open_position(PositionSide.SHORT, grid_price, level.index)
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level.index, "short", grid_price, current_price):
+                        continue
+
+                    success = await self._open_position(PositionSide.SHORT, grid_price, level.index)
+                    if success:
+                        self._signal_cooldown = self._cooldown_bars
+                        self._last_triggered_level = level.index
                     break
 
     async def _check_position_exit(
@@ -650,6 +710,24 @@ class BollingerBot(BaseBot):
             if self._position:
                 current_value = self._position.quantity * price
                 if current_value >= self._capital * self._config.max_position_pct:
+                    return False
+
+            # Check signal coordinator for multi-bot conflicts
+            if self._signal_coordinator:
+                signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
+                result = await self._signal_coordinator.request_signal(
+                    bot_id=self._bot_id,
+                    symbol=self._config.symbol,
+                    direction=signal_dir,
+                    quantity=quantity,
+                    price=price,
+                    reason=f"BB grid level {grid_level_index}",
+                )
+                if not result.approved:
+                    logger.warning(
+                        f"Signal blocked by coordinator: {result.message} "
+                        f"(conflict with {result.conflicting_bot})"
+                    )
                     return False
 
             # Place market order (through order queue for cross-bot coordination)

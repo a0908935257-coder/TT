@@ -31,6 +31,7 @@ from typing import Any, Dict, Optional
 from src.core import get_logger
 from src.core.models import Kline, KlineInterval, MarketType, OrderType, OrderSide
 from src.bots.base import BaseBot
+from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationResult
 from src.master.models import BotState
 from src.exchange import ExchangeClient
 from src.data import MarketDataManager
@@ -78,6 +79,7 @@ class SupertrendBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
         heartbeat_callback: Optional[callable] = None,
+        signal_coordinator: Optional[SignalCoordinator] = None,
     ):
         # Call BaseBot.__init__ with all required parameters
         super().__init__(
@@ -88,6 +90,9 @@ class SupertrendBot(BaseBot):
             notifier=notifier,
             heartbeat_callback=heartbeat_callback,
         )
+
+        # Signal Coordinator for multi-bot conflict prevention
+        self._signal_coordinator = signal_coordinator or SignalCoordinator.get_instance()
 
         # Indicator
         self._indicator = SupertrendIndicator(
@@ -130,6 +135,14 @@ class SupertrendBot(BaseBot):
         )
         self._consecutive_losses: int = 0
         self._risk_paused: bool = False
+
+        # Hysteresis: track last triggered level to prevent oscillation
+        self._last_triggered_level: Optional[int] = None
+        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+
+        # Signal cooldown to prevent signal stacking
+        self._signal_cooldown: int = 0
+        self._cooldown_bars: int = 2
 
         # Kline callback reference for unsubscribe
         self._kline_callback = None
@@ -461,6 +474,45 @@ class SupertrendBot(BaseBot):
     # Grid Methods (TREND_GRID mode)
     # =========================================================================
 
+    def _check_hysteresis(
+        self, level_index: int, direction: str, grid_price: Decimal, current_price: Decimal
+    ) -> bool:
+        """
+        Check if signal passes hysteresis filter.
+
+        Prevents oscillation by requiring price to move beyond a buffer zone
+        before retriggering the same grid level.
+
+        Args:
+            level_index: Grid level index
+            direction: "long" or "short"
+            grid_price: Grid level price
+            current_price: Current market price
+
+        Returns:
+            True if signal should proceed, False if blocked by hysteresis
+        """
+        if self._last_triggered_level is None:
+            return True
+
+        if self._last_triggered_level != level_index:
+            return True
+
+        hysteresis_buffer = grid_price * self._hysteresis_pct
+
+        if direction == "long":
+            if current_price < grid_price - hysteresis_buffer:
+                return True
+        else:  # short
+            if current_price > grid_price + hysteresis_buffer:
+                return True
+
+        logger.debug(
+            f"Hysteresis active: level {level_index} recently triggered, "
+            f"waiting for price to move beyond buffer zone"
+        )
+        return False
+
     def _calculate_atr(self, period: int) -> Optional[Decimal]:
         """Calculate Average True Range from recent klines."""
         if len(self._recent_klines) < period + 1:
@@ -610,6 +662,10 @@ class SupertrendBot(BaseBot):
 
             # === TREND_GRID Entry Logic ===
 
+            # Decrement signal cooldown
+            if self._signal_cooldown > 0:
+                self._signal_cooldown -= 1
+
             # Initialize or rebuild grid if needed
             if self._should_rebuild_grid(current_price):
                 self._initialize_grid(current_price)
@@ -617,6 +673,11 @@ class SupertrendBot(BaseBot):
 
             # Need trend to be established
             if self._current_trend == 0:
+                return
+
+            # Check signal cooldown
+            if self._signal_cooldown > 0:
+                logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
                 return
 
             # Require minimum bars in trend before entry (trend confirmation)
@@ -634,6 +695,10 @@ class SupertrendBot(BaseBot):
                 entry_level = self._grid_levels[level_idx]
                 # Check if current kline low touched the grid level
                 if not entry_level.is_filled and kline.low <= entry_level.price:
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                        return
+
                     # Check RSI filter before LONG entry
                     if not self._check_rsi_filter(PositionSide.LONG):
                         return
@@ -652,13 +717,20 @@ class SupertrendBot(BaseBot):
                         f"RSI={self._current_rsi:.1f}" if self._current_rsi else ""
                     )
 
-                    await self._open_position(PositionSide.LONG, entry_price, tp_price)
+                    success = await self._open_position(PositionSide.LONG, entry_price, tp_price)
+                    if success:
+                        self._signal_cooldown = self._cooldown_bars
+                        self._last_triggered_level = level_idx
 
             # Bearish trend: SHORT only (sell rallies)
             elif self._current_trend == -1 and level_idx < len(self._grid_levels) - 1:
                 entry_level = self._grid_levels[level_idx + 1]
                 # Check if current kline high touched the grid level
                 if not entry_level.is_filled and kline.high >= entry_level.price:
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                        return
+
                     # Check RSI filter before SHORT entry
                     if not self._check_rsi_filter(PositionSide.SHORT):
                         return
@@ -677,7 +749,10 @@ class SupertrendBot(BaseBot):
                         f"RSI={self._current_rsi:.1f}" if self._current_rsi else ""
                     )
 
-                    await self._open_position(PositionSide.SHORT, entry_price, tp_price)
+                    success = await self._open_position(PositionSide.SHORT, entry_price, tp_price)
+                    if success:
+                        self._signal_cooldown = self._cooldown_bars
+                        self._last_triggered_level = level_idx + 1
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")
@@ -706,7 +781,22 @@ class SupertrendBot(BaseBot):
                             f"Daily PnL: {self._daily_pnl:+.2f}\n"
                             f"Consecutive losses: {self._consecutive_losses}",
                 )
-            return
+            return False
+
+        # Check SignalCoordinator for multi-bot conflict prevention
+        if self._signal_coordinator:
+            signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
+            result = await self._signal_coordinator.request_signal(
+                bot_id=self._bot_id,
+                symbol=self._config.symbol,
+                direction=signal_dir,
+                quantity=Decimal("0"),  # Will be calculated below
+                price=price,
+                reason=f"Supertrend grid level",
+            )
+            if not result.approved:
+                logger.warning(f"Signal blocked by coordinator: {result.message}")
+                return False
 
         try:
             # Calculate position size based on allocated capital
@@ -776,8 +866,11 @@ class SupertrendBot(BaseBot):
                         message=f"Entry: {price}\nSize: {quantity}\nLeverage: {self._config.leverage}x\nStop Loss: {stop_loss_price}{tp_msg}",
                     )
 
+                return True
+
         except Exception as e:
             logger.error(f"Failed to open position: {e}")
+            return False
 
     def _check_trailing_stop(self, current_price: Decimal) -> bool:
         """
