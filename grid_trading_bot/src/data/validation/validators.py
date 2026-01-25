@@ -277,10 +277,25 @@ class PriceValidator:
 
     Checks:
     - Price positivity
-    - Price range
+    - Price range (absolute boundaries)
     - Sudden spikes/drops
     - Stale prices
+    - Infinity/NaN detection
     """
+
+    # Default absolute price limits per asset category
+    DEFAULT_PRICE_LIMITS: Dict[str, Tuple[Decimal, Decimal]] = {
+        # Major cryptocurrencies - allow higher prices
+        "BTC": (Decimal("100"), Decimal("10000000")),      # $100 - $10M
+        "ETH": (Decimal("10"), Decimal("1000000")),        # $10 - $1M
+        # Stablecoins - tight range
+        "USDT": (Decimal("0.9"), Decimal("1.1")),
+        "USDC": (Decimal("0.9"), Decimal("1.1")),
+        "BUSD": (Decimal("0.9"), Decimal("1.1")),
+        "DAI": (Decimal("0.9"), Decimal("1.1")),
+        # Default for other assets
+        "DEFAULT": (Decimal("0.00000001"), Decimal("10000000")),
+    }
 
     def __init__(
         self,
@@ -288,21 +303,69 @@ class PriceValidator:
         max_price: Decimal = Decimal("10000000"),
         max_change_pct: float = 20.0,
         stale_threshold_seconds: int = 60,
+        custom_price_limits: Optional[Dict[str, Tuple[Decimal, Decimal]]] = None,
+        enable_absolute_bounds: bool = True,
     ):
         """
         Initialize validator.
 
         Args:
-            min_price: Minimum valid price
-            max_price: Maximum valid price
+            min_price: Minimum valid price (global default)
+            max_price: Maximum valid price (global default)
             max_change_pct: Maximum allowed instant change
             stale_threshold_seconds: Seconds before price considered stale
+            custom_price_limits: Custom price limits per asset (overrides defaults)
+            enable_absolute_bounds: Enable asset-specific absolute price bounds
         """
         self.min_price = min_price
         self.max_price = max_price
         self.max_change_pct = max_change_pct
         self.stale_threshold_seconds = stale_threshold_seconds
+        self.enable_absolute_bounds = enable_absolute_bounds
         self._last_prices: Dict[str, Tuple[Decimal, datetime]] = {}
+
+        # Merge custom limits with defaults
+        self._price_limits = self.DEFAULT_PRICE_LIMITS.copy()
+        if custom_price_limits:
+            self._price_limits.update(custom_price_limits)
+
+    def _get_asset_limits(self, symbol: str) -> Tuple[Decimal, Decimal]:
+        """
+        Get price limits for a specific symbol.
+
+        Args:
+            symbol: Trading pair (e.g., "BTCUSDT")
+
+        Returns:
+            Tuple of (min_price, max_price) for the asset
+        """
+        # Extract base asset from symbol
+        for asset in ["BTC", "ETH", "USDT", "USDC", "BUSD", "DAI"]:
+            if symbol.upper().startswith(asset):
+                return self._price_limits.get(asset, self._price_limits["DEFAULT"])
+        return self._price_limits["DEFAULT"]
+
+    def _is_valid_number(self, price: Decimal) -> Tuple[bool, Optional[str]]:
+        """
+        Check if price is a valid finite number.
+
+        Args:
+            price: Price to validate
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Check for special values
+            if not price.is_finite():
+                if price.is_nan():
+                    return False, "Price is NaN (Not a Number)"
+                if price.is_infinite():
+                    return False, "Price is infinite"
+                return False, "Price is not a finite number"
+            return True, None
+        except (InvalidOperation, AttributeError):
+            return False, "Price is not a valid Decimal"
 
     def validate(
         self,
@@ -329,6 +392,15 @@ class PriceValidator:
             result.add_issue("Price is None", ValidationSeverity.ERROR)
             return result
 
+        # Check for infinity/NaN
+        is_valid_num, error_msg = self._is_valid_number(price)
+        if not is_valid_num:
+            result.add_issue(
+                f"Invalid price value: {error_msg}",
+                ValidationSeverity.ERROR
+            )
+            return result
+
         # Positivity check
         if price <= Decimal("0"):
             result.add_issue(
@@ -337,7 +409,7 @@ class PriceValidator:
             )
             return result
 
-        # Range check
+        # Global range check
         if price < self.min_price:
             result.add_issue(
                 f"Price {price} below minimum {self.min_price}",
@@ -349,6 +421,20 @@ class PriceValidator:
                 f"Price {price} above maximum {self.max_price}",
                 ValidationSeverity.ERROR
             )
+
+        # Asset-specific absolute bounds check
+        if self.enable_absolute_bounds:
+            asset_min, asset_max = self._get_asset_limits(symbol)
+            if price < asset_min:
+                result.add_issue(
+                    f"Price {price} below asset minimum {asset_min} for {symbol}",
+                    ValidationSeverity.ERROR
+                )
+            if price > asset_max:
+                result.add_issue(
+                    f"Price {price} above asset maximum {asset_max} for {symbol}",
+                    ValidationSeverity.ERROR
+                )
 
         # Sudden change check
         if symbol in self._last_prices:

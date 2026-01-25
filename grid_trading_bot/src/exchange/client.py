@@ -152,6 +152,14 @@ class ExchangeClient:
         # Minimum delay between orders (ms) - helps with rate limiting
         self._min_order_interval_ms = 100
 
+        # =======================================================================
+        # Time Synchronization
+        # =======================================================================
+        self._time_sync_task: Optional[asyncio.Task] = None
+        self._time_sync_interval = 300  # Sync every 5 minutes
+        self._time_offset_warning_ms = 1000  # Warn if offset > 1 second
+        self._time_offset_critical_ms = 5000  # Critical if offset > 5 seconds
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -218,8 +226,11 @@ class ExchangeClient:
             # Start order queue processor
             await self._start_order_queue_processor()
 
+            # Start periodic time sync task
+            await self._start_time_sync_task()
+
             self._connected = True
-            logger.info("ExchangeClient connected (with order queue)")
+            logger.info("ExchangeClient connected (with order queue and time sync)")
             return True
 
         except Exception as e:
@@ -232,6 +243,9 @@ class ExchangeClient:
         logger.info("Closing ExchangeClient")
 
         self._connected = False
+
+        # Stop time sync task
+        await self._stop_time_sync_task()
 
         # Stop order queue processor
         await self._stop_order_queue_processor()
@@ -403,6 +417,118 @@ class ExchangeClient:
             List of Position objects (Futures only)
         """
         return await self._futures.get_positions(symbol)
+
+    # =========================================================================
+    # Time Synchronization Management
+    # =========================================================================
+
+    async def _start_time_sync_task(self) -> None:
+        """Start the background time synchronization task."""
+        if self._time_sync_task is not None:
+            return
+
+        self._time_sync_task = asyncio.create_task(self._time_sync_loop())
+        logger.info("Time sync task started")
+
+    async def _stop_time_sync_task(self) -> None:
+        """Stop the time synchronization task."""
+        if self._time_sync_task:
+            self._time_sync_task.cancel()
+            try:
+                await self._time_sync_task
+            except asyncio.CancelledError:
+                pass
+            self._time_sync_task = None
+            logger.debug("Time sync task stopped")
+
+    async def _time_sync_loop(self) -> None:
+        """
+        Periodically synchronize time with exchange servers.
+
+        Monitors time offset and logs warnings if drift is detected.
+        """
+        try:
+            while self._connected:
+                await asyncio.sleep(self._time_sync_interval)
+
+                if not self._connected:
+                    break
+
+                try:
+                    # Sync both spot and futures
+                    await self._sync_time_with_warning()
+                except Exception as e:
+                    logger.error(f"Time sync failed: {e}")
+
+        except asyncio.CancelledError:
+            logger.debug("Time sync loop cancelled")
+            raise
+
+    async def _sync_time_with_warning(self) -> None:
+        """
+        Synchronize time and check for excessive drift.
+
+        Issues warnings if time offset exceeds thresholds.
+        """
+        # Sync spot
+        await self._spot.sync_time()
+        spot_offset = self._spot._auth.time_offset
+
+        # Sync futures
+        await self._futures.sync_time()
+        futures_offset = self._futures._auth.time_offset
+
+        # Check spot offset
+        if abs(spot_offset) > self._time_offset_critical_ms:
+            logger.error(
+                f"CRITICAL: Spot time offset is {spot_offset}ms "
+                f"(threshold: {self._time_offset_critical_ms}ms). "
+                "Orders may be rejected!"
+            )
+        elif abs(spot_offset) > self._time_offset_warning_ms:
+            logger.warning(
+                f"Spot time offset is {spot_offset}ms "
+                f"(threshold: {self._time_offset_warning_ms}ms)"
+            )
+        else:
+            logger.debug(f"Spot time synced, offset: {spot_offset}ms")
+
+        # Check futures offset
+        if abs(futures_offset) > self._time_offset_critical_ms:
+            logger.error(
+                f"CRITICAL: Futures time offset is {futures_offset}ms "
+                f"(threshold: {self._time_offset_critical_ms}ms). "
+                "Orders may be rejected!"
+            )
+        elif abs(futures_offset) > self._time_offset_warning_ms:
+            logger.warning(
+                f"Futures time offset is {futures_offset}ms "
+                f"(threshold: {self._time_offset_warning_ms}ms)"
+            )
+        else:
+            logger.debug(f"Futures time synced, offset: {futures_offset}ms")
+
+    def get_time_offsets(self) -> dict[str, int]:
+        """
+        Get current time offsets for both spot and futures.
+
+        Returns:
+            Dictionary with 'spot' and 'futures' offset values in milliseconds
+        """
+        return {
+            "spot": self._spot._auth.time_offset,
+            "futures": self._futures._auth.time_offset,
+        }
+
+    async def force_time_sync(self) -> dict[str, int]:
+        """
+        Force immediate time synchronization.
+
+        Returns:
+            Dictionary with updated offset values
+        """
+        await self._sync_time_with_warning()
+        return self.get_time_offsets()
 
     # =========================================================================
     # Order Queue Management (Cross-bot Coordination)
