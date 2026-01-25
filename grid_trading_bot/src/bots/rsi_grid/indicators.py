@@ -4,11 +4,12 @@ RSI-Grid Hybrid Bot Indicators.
 Provides RSI, ATR, and SMA calculation for the hybrid trading strategy.
 """
 
+import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
-from typing import List, Optional
+from decimal import Decimal, InvalidOperation
+from typing import List, Optional, Union
 
 from src.core import get_logger
 from src.core.models import Kline
@@ -16,6 +17,66 @@ from src.core.models import Kline
 from .models import RSIZone
 
 logger = get_logger(__name__)
+
+
+def is_valid_number(value: Union[Decimal, float, None]) -> bool:
+    """
+    Check if a value is a valid number (not NaN, Inf, or None).
+
+    Args:
+        value: Value to check (Decimal, float, or None)
+
+    Returns:
+        True if value is a valid finite number, False otherwise
+    """
+    if value is None:
+        return False
+
+    try:
+        if isinstance(value, Decimal):
+            # Decimal NaN/Inf checks
+            if value.is_nan() or value.is_infinite():
+                return False
+            return True
+        elif isinstance(value, (int, float)):
+            # Float NaN/Inf checks
+            if math.isnan(value) or math.isinf(value):
+                return False
+            return True
+        return False
+    except (TypeError, InvalidOperation):
+        return False
+
+
+def safe_decimal(value: Union[Decimal, float, str, None], default: Decimal = Decimal("0")) -> Decimal:
+    """
+    Safely convert a value to Decimal, returning default on failure.
+
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+
+    Returns:
+        Decimal value or default
+    """
+    if value is None:
+        return default
+
+    try:
+        if isinstance(value, Decimal):
+            if value.is_nan() or value.is_infinite():
+                logger.warning(f"Invalid Decimal value detected: {value}, using default {default}")
+                return default
+            return value
+
+        result = Decimal(str(value))
+        if result.is_nan() or result.is_infinite():
+            logger.warning(f"Converted to invalid Decimal: {value}, using default {default}")
+            return default
+        return result
+    except (InvalidOperation, TypeError, ValueError) as e:
+        logger.warning(f"Failed to convert {value} to Decimal: {e}, using default {default}")
+        return default
 
 
 @dataclass
@@ -166,11 +227,34 @@ class RSICalculator:
         )
 
     def _calculate_rsi(self) -> Decimal:
-        """Calculate RSI from average gain/loss."""
+        """Calculate RSI from average gain/loss with NaN/Inf protection."""
+        # Validate inputs
+        if not is_valid_number(self._avg_gain) or not is_valid_number(self._avg_loss):
+            logger.warning("Invalid avg_gain or avg_loss, returning neutral RSI (50)")
+            return Decimal("50")
+
         if self._avg_loss == 0:
             return Decimal("100")
-        rs = self._avg_gain / self._avg_loss
-        return Decimal("100") - (Decimal("100") / (Decimal("1") + rs))
+
+        try:
+            rs = self._avg_gain / self._avg_loss
+            if not is_valid_number(rs):
+                logger.warning(f"Invalid RS calculated: {rs}, returning neutral RSI (50)")
+                return Decimal("50")
+
+            rsi = Decimal("100") - (Decimal("100") / (Decimal("1") + rs))
+
+            # Final validation
+            if not is_valid_number(rsi):
+                logger.warning(f"Invalid RSI calculated: {rsi}, returning neutral RSI (50)")
+                return Decimal("50")
+
+            # Clamp RSI to valid range [0, 100]
+            return max(Decimal("0"), min(Decimal("100"), rsi))
+
+        except (InvalidOperation, ZeroDivisionError) as e:
+            logger.warning(f"RSI calculation error: {e}, returning neutral RSI (50)")
+            return Decimal("50")
 
     def _get_zone(self, rsi: Decimal) -> RSIZone:
         """Get RSI zone classification."""
@@ -333,24 +417,50 @@ class ATRCalculator:
         if not self._initialized or self._prev_close is None:
             return None
 
-        high = Decimal(str(kline.high))
-        low = Decimal(str(kline.low))
+        # Safe conversion with NaN/Inf protection
+        high = safe_decimal(kline.high)
+        low = safe_decimal(kline.low)
+        close = safe_decimal(kline.close)
 
-        tr = max(
-            high - low,
-            abs(high - self._prev_close),
-            abs(low - self._prev_close)
-        )
+        # Validate inputs
+        if not all(is_valid_number(v) for v in [high, low, close]):
+            logger.warning("Invalid kline data for ATR calculation, skipping update")
+            return None
 
-        # Wilder's smoothing
-        self._atr = (self._atr * (self._period - 1) + tr) / self._period
-        self._prev_close = Decimal(str(kline.close))
+        try:
+            tr = max(
+                high - low,
+                abs(high - self._prev_close),
+                abs(low - self._prev_close)
+            )
 
-        return ATRResult(
-            timestamp=kline.close_time,
-            atr=self._atr,
-            tr=tr,
-        )
+            if not is_valid_number(tr):
+                logger.warning(f"Invalid TR calculated: {tr}, skipping update")
+                return None
+
+            # Wilder's smoothing
+            new_atr = (self._atr * (self._period - 1) + tr) / self._period
+
+            if not is_valid_number(new_atr):
+                logger.warning(f"Invalid ATR calculated: {new_atr}, keeping previous value")
+                return ATRResult(
+                    timestamp=kline.close_time,
+                    atr=self._atr,
+                    tr=tr,
+                )
+
+            self._atr = new_atr
+            self._prev_close = close
+
+            return ATRResult(
+                timestamp=kline.close_time,
+                atr=self._atr,
+                tr=tr,
+            )
+
+        except (InvalidOperation, ZeroDivisionError) as e:
+            logger.warning(f"ATR calculation error: {e}")
+            return None
 
     @property
     def atr(self) -> Optional[Decimal]:
@@ -401,15 +511,26 @@ class SMACalculator:
             close: New close price
 
         Returns:
-            Current SMA or None if insufficient data
+            Current SMA or None if insufficient data or invalid input
         """
-        if not isinstance(close, Decimal):
-            close = Decimal(str(close))
+        # Safe conversion with NaN/Inf protection
+        close = safe_decimal(close)
+
+        if not is_valid_number(close):
+            logger.warning(f"Invalid close price for SMA: {close}, skipping update")
+            return self._sma  # Return previous SMA
 
         self._closes.append(close)
 
         if len(self._closes) >= self._period:
-            self._sma = sum(self._closes) / Decimal(self._period)
+            try:
+                new_sma = sum(self._closes) / Decimal(self._period)
+                if is_valid_number(new_sma):
+                    self._sma = new_sma
+                else:
+                    logger.warning(f"Invalid SMA calculated: {new_sma}, keeping previous value")
+            except (InvalidOperation, ZeroDivisionError) as e:
+                logger.warning(f"SMA calculation error: {e}")
             return self._sma
 
         return None
@@ -422,13 +543,28 @@ class SMACalculator:
             closes: List of close prices
 
         Returns:
-            SMA value or None if insufficient data
+            SMA value or None if insufficient data or calculation error
         """
         if len(closes) < self._period:
             return None
 
-        recent = closes[-self._period:]
-        return sum(recent) / Decimal(self._period)
+        try:
+            # Filter out invalid values
+            recent = [safe_decimal(c) for c in closes[-self._period:]]
+            valid_closes = [c for c in recent if is_valid_number(c)]
+
+            if len(valid_closes) < self._period:
+                logger.warning("Insufficient valid closes for SMA calculation")
+                return None
+
+            result = sum(valid_closes) / Decimal(self._period)
+            if not is_valid_number(result):
+                logger.warning(f"Invalid SMA result: {result}")
+                return None
+            return result
+        except (InvalidOperation, ZeroDivisionError) as e:
+            logger.warning(f"SMA calculate error: {e}")
+            return None
 
     @property
     def sma(self) -> Optional[Decimal]:
@@ -444,16 +580,26 @@ class SMACalculator:
             -1: Downtrend (price < SMA)
             0: Neutral
         """
-        if self._sma is None:
+        if self._sma is None or not is_valid_number(self._sma):
             return 0
 
-        diff_pct = (current_price - self._sma) / self._sma * Decimal("100")
+        current_price = safe_decimal(current_price)
+        if not is_valid_number(current_price) or self._sma == 0:
+            return 0
 
-        if diff_pct > Decimal("0.5"):
-            return 1  # Uptrend
-        elif diff_pct < Decimal("-0.5"):
-            return -1  # Downtrend
-        return 0
+        try:
+            diff_pct = (current_price - self._sma) / self._sma * Decimal("100")
+
+            if not is_valid_number(diff_pct):
+                return 0
+
+            if diff_pct > Decimal("0.5"):
+                return 1  # Uptrend
+            elif diff_pct < Decimal("-0.5"):
+                return -1  # Downtrend
+            return 0
+        except (InvalidOperation, ZeroDivisionError):
+            return 0
 
     def reset(self) -> None:
         """Reset calculator state."""

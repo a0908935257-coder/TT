@@ -143,6 +143,14 @@ class RSIGridBot(BaseBot):
         self._consecutive_losses: int = 0
         self._risk_paused: bool = False
 
+        # Signal cooldown to prevent signal stacking
+        self._signal_cooldown: int = 0
+        self._cooldown_bars: int = 2  # Minimum bars between signals
+
+        # Slippage tracking
+        self._slippage_records: List[Dict] = []
+        self._max_slippage_records: int = 100
+
     # =========================================================================
     # BaseBot Abstract Properties
     # =========================================================================
@@ -630,6 +638,18 @@ class RSIGridBot(BaseBot):
                 fill_price = order.avg_price if order.avg_price else price
                 fill_qty = order.filled_qty
 
+                # Record slippage for backtest vs live comparison
+                slippage = fill_price - price
+                slippage_pct = (slippage / price * Decimal("100")) if price > 0 else Decimal("0")
+                self._record_slippage(
+                    expected_price=price,
+                    actual_price=fill_price,
+                    slippage=slippage,
+                    slippage_pct=slippage_pct,
+                    side=side.value,
+                    quantity=fill_qty,
+                )
+
                 if self._position and self._position.side == side:
                     # Add to position (DCA)
                     total_value = (
@@ -953,6 +973,10 @@ class RSIGridBot(BaseBot):
         """Process new kline data."""
         current_price = kline.close
 
+        # Decrement signal cooldown
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         # Update indicators
         rsi_result = self._rsi_calc.update(kline) if self._rsi_calc else None
         atr_result = self._atr_calc.update(kline) if self._atr_calc else None
@@ -997,6 +1021,11 @@ class RSIGridBot(BaseBot):
         if not self._grid:
             return
 
+        # Check signal cooldown to prevent signal stacking
+        if self._signal_cooldown > 0:
+            logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry check")
+            return
+
         allowed_dir = self._get_allowed_direction(rsi_zone, self._current_trend)
         if allowed_dir == "none":
             return
@@ -1023,6 +1052,7 @@ class RSIGridBot(BaseBot):
                         grid_level=level.index,
                     )
                     if success:
+                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         return
 
         # Short entry: price rises to touch grid level
@@ -1040,6 +1070,7 @@ class RSIGridBot(BaseBot):
                         grid_level=level.index,
                     )
                     if success:
+                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         return
 
     async def _check_exit(
@@ -1085,6 +1116,68 @@ class RSIGridBot(BaseBot):
         value = int(timeframe[:-1])
         multipliers = {"m": 60, "h": 3600, "d": 86400}
         return value * multipliers.get(unit, 60)
+
+    # =========================================================================
+    # Slippage Tracking
+    # =========================================================================
+
+    def _record_slippage(
+        self,
+        expected_price: Decimal,
+        actual_price: Decimal,
+        slippage: Decimal,
+        slippage_pct: Decimal,
+        side: str,
+        quantity: Decimal,
+    ) -> None:
+        """
+        Record slippage for monitoring backtest vs live discrepancy.
+
+        Args:
+            expected_price: Grid level price (same as backtest)
+            actual_price: Actual fill price from exchange
+            slippage: Absolute slippage (actual - expected)
+            slippage_pct: Percentage slippage
+            side: Trade side (long/short)
+            quantity: Trade quantity
+        """
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "expected_price": str(expected_price),
+            "actual_price": str(actual_price),
+            "slippage": str(slippage),
+            "slippage_pct": str(slippage_pct),
+            "side": side,
+            "quantity": str(quantity),
+        }
+        self._slippage_records.append(record)
+
+        # Trim old records
+        if len(self._slippage_records) > self._max_slippage_records:
+            self._slippage_records = self._slippage_records[-self._max_slippage_records:]
+
+        # Log significant slippage
+        if abs(slippage_pct) > Decimal("0.1"):  # > 0.1%
+            logger.warning(
+                f"Significant slippage: {slippage_pct:.4f}% "
+                f"(expected {expected_price}, got {actual_price})"
+            )
+        else:
+            logger.debug(f"Slippage: {slippage_pct:.4f}%")
+
+    def get_slippage_stats(self) -> Dict:
+        """Get slippage statistics for monitoring."""
+        if not self._slippage_records:
+            return {"count": 0, "avg_pct": "0", "max_pct": "0"}
+
+        slippages = [Decimal(r["slippage_pct"]) for r in self._slippage_records]
+        return {
+            "count": len(slippages),
+            "avg_pct": str(sum(slippages) / len(slippages)),
+            "max_pct": str(max(abs(s) for s in slippages)),
+            "min_pct": str(min(slippages)),
+            "recent": self._slippage_records[-5:],
+        }
 
     # =========================================================================
     # BaseBot Extra Methods

@@ -104,6 +104,14 @@ class GridFuturesBot(BaseBot):
         # Statistics
         self._grid_stats = GridFuturesStats()
 
+        # Signal cooldown to prevent signal stacking
+        self._signal_cooldown: int = 0
+        self._cooldown_bars: int = 2  # Minimum bars between signals
+
+        # Slippage tracking
+        self._slippage_records: List[Dict] = []
+        self._max_slippage_records: int = 100
+
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
@@ -424,43 +432,80 @@ class GridFuturesBot(BaseBot):
     # Indicator Calculations
     # =========================================================================
 
+    def _is_valid_decimal(self, value: Optional[Decimal]) -> bool:
+        """Check if a Decimal value is valid (not None, NaN, or Inf)."""
+        if value is None:
+            return False
+        try:
+            return not (value.is_nan() or value.is_infinite())
+        except (AttributeError, TypeError):
+            return False
+
     def _calculate_sma(self, period: int) -> Optional[Decimal]:
-        """Calculate Simple Moving Average."""
+        """Calculate Simple Moving Average with NaN/Inf protection."""
         if len(self._closes) < period:
             return None
-        return sum(self._closes[-period:]) / Decimal(period)
+
+        try:
+            # Filter valid values
+            valid_closes = [c for c in self._closes[-period:] if self._is_valid_decimal(c)]
+            if len(valid_closes) < period:
+                return None
+
+            result = sum(valid_closes) / Decimal(period)
+            if not self._is_valid_decimal(result):
+                logger.warning(f"Invalid SMA result: {result}")
+                return None
+            return result
+        except Exception as e:
+            logger.warning(f"SMA calculation error: {e}")
+            return None
 
     def _calculate_atr(self) -> Optional[Decimal]:
-        """Calculate Average True Range."""
+        """Calculate Average True Range with NaN/Inf protection."""
         period = self._config.atr_period
         if len(self._klines) < period + 1:
             return None
 
-        tr_values = []
-        for i in range(1, period + 1):
-            idx = -i
-            if abs(idx) > len(self._klines) or abs(idx - 1) > len(self._klines):
-                break
+        try:
+            tr_values = []
+            for i in range(1, period + 1):
+                idx = -i
+                if abs(idx) > len(self._klines) or abs(idx - 1) > len(self._klines):
+                    break
 
-            high = self._klines[idx].high
-            low = self._klines[idx].low
-            prev_close = self._klines[idx - 1].close
+                high = self._klines[idx].high
+                low = self._klines[idx].low
+                prev_close = self._klines[idx - 1].close
 
-            tr = max(
-                high - low,
-                abs(high - prev_close),
-                abs(low - prev_close)
-            )
-            tr_values.append(tr)
+                # Validate inputs
+                if not all(self._is_valid_decimal(v) for v in [high, low, prev_close]):
+                    continue
 
-        if not tr_values:
+                tr = max(
+                    high - low,
+                    abs(high - prev_close),
+                    abs(low - prev_close)
+                )
+
+                if self._is_valid_decimal(tr):
+                    tr_values.append(tr)
+
+            if not tr_values:
+                return None
+
+            result = sum(tr_values) / Decimal(len(tr_values))
+            if not self._is_valid_decimal(result):
+                logger.warning(f"Invalid ATR result: {result}")
+                return None
+            return result
+        except Exception as e:
+            logger.warning(f"ATR calculation error: {e}")
             return None
-
-        return sum(tr_values) / Decimal(len(tr_values))
 
     def _determine_trend(self, current_price: Decimal) -> int:
         """
-        Determine market trend.
+        Determine market trend with NaN/Inf protection.
 
         Returns:
             1: Uptrend (price > SMA)
@@ -471,16 +516,25 @@ class GridFuturesBot(BaseBot):
             return 0
 
         sma = self._calculate_sma(self._config.trend_period)
-        if sma is None:
+        if sma is None or sma == 0:
             return 0
 
-        diff_pct = (current_price - sma) / sma * Decimal("100")
+        if not self._is_valid_decimal(current_price):
+            return 0
 
-        if diff_pct > Decimal("1"):  # >1% above SMA
-            return 1
-        elif diff_pct < Decimal("-1"):  # <1% below SMA
-            return -1
-        return 0
+        try:
+            diff_pct = (current_price - sma) / sma * Decimal("100")
+
+            if not self._is_valid_decimal(diff_pct):
+                return 0
+
+            if diff_pct > Decimal("1"):  # >1% above SMA
+                return 1
+            elif diff_pct < Decimal("-1"):  # <1% below SMA
+                return -1
+            return 0
+        except Exception:
+            return 0
 
     def _should_trade_direction(self, direction: str) -> bool:
         """Check if trading in this direction is allowed."""
@@ -639,6 +693,18 @@ class GridFuturesBot(BaseBot):
                 fill_price = order.avg_price if order.avg_price else price
                 fill_qty = order.filled_qty
 
+                # Record slippage for backtest vs live comparison
+                slippage = fill_price - price
+                slippage_pct = (slippage / price * Decimal("100")) if price > 0 else Decimal("0")
+                self._record_slippage(
+                    expected_price=price,
+                    actual_price=fill_price,
+                    slippage=slippage,
+                    slippage_pct=slippage_pct,
+                    side=side.value,
+                    quantity=fill_qty,
+                )
+
                 # Update position
                 if self._position and self._position.side == side:
                     # Add to position (DCA)
@@ -794,6 +860,10 @@ class GridFuturesBot(BaseBot):
             kline_low = kline.low
             kline_high = kline.high
 
+            # Decrement signal cooldown
+            if self._signal_cooldown > 0:
+                self._signal_cooldown -= 1
+
             # Update closes for indicators
             self._closes.append(current_price)
             if len(self._closes) > 500:
@@ -858,12 +928,18 @@ class GridFuturesBot(BaseBot):
 
             # Long entry: K 線低點觸及 grid level (買跌，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_low <= grid_price:
+                # Check signal cooldown to prevent signal stacking
+                if self._signal_cooldown > 0:
+                    logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping long entry")
+                    continue
+
                 if self._should_trade_direction("long"):
                     # 使用 grid level 價格進場（與回測一致）
                     success = await self._open_position(PositionSide.LONG, grid_price)
                     if success:
                         level.state = GridLevelState.LONG_FILLED
                         level.filled_at = datetime.now(timezone.utc)
+                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         logger.info(f"Long entry at grid level {i}: {grid_price}")
 
             # Long exit: K 線高點觸及 grid level
@@ -879,12 +955,18 @@ class GridFuturesBot(BaseBot):
 
             # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
+                # Check signal cooldown to prevent signal stacking
+                if self._signal_cooldown > 0:
+                    logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
+                    continue
+
                 if self._should_trade_direction("short"):
                     # 使用 grid level 價格進場（與回測一致）
                     success = await self._open_position(PositionSide.SHORT, grid_price)
                     if success:
                         level.state = GridLevelState.SHORT_FILLED
                         level.filled_at = datetime.now(timezone.utc)
+                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         logger.info(f"Short entry at grid level {i}: {grid_price}")
 
             # Short exit: K 線低點觸及 grid level
@@ -897,6 +979,72 @@ class GridFuturesBot(BaseBot):
                         partial_qty = self._position.quantity
                     await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
+
+    # =========================================================================
+    # Stop Loss Check
+    # =========================================================================
+
+    # =========================================================================
+    # Slippage Tracking
+    # =========================================================================
+
+    def _record_slippage(
+        self,
+        expected_price: Decimal,
+        actual_price: Decimal,
+        slippage: Decimal,
+        slippage_pct: Decimal,
+        side: str,
+        quantity: Decimal,
+    ) -> None:
+        """
+        Record slippage for monitoring backtest vs live discrepancy.
+
+        Args:
+            expected_price: Grid level price (same as backtest)
+            actual_price: Actual fill price from exchange
+            slippage: Absolute slippage (actual - expected)
+            slippage_pct: Percentage slippage
+            side: Trade side (long/short)
+            quantity: Trade quantity
+        """
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "expected_price": str(expected_price),
+            "actual_price": str(actual_price),
+            "slippage": str(slippage),
+            "slippage_pct": str(slippage_pct),
+            "side": side,
+            "quantity": str(quantity),
+        }
+        self._slippage_records.append(record)
+
+        # Trim old records
+        if len(self._slippage_records) > self._max_slippage_records:
+            self._slippage_records = self._slippage_records[-self._max_slippage_records:]
+
+        # Log significant slippage
+        if abs(slippage_pct) > Decimal("0.1"):  # > 0.1%
+            logger.warning(
+                f"Significant slippage: {slippage_pct:.4f}% "
+                f"(expected {expected_price}, got {actual_price})"
+            )
+        else:
+            logger.debug(f"Slippage: {slippage_pct:.4f}%")
+
+    def get_slippage_stats(self) -> Dict:
+        """Get slippage statistics for monitoring."""
+        if not self._slippage_records:
+            return {"count": 0, "avg_pct": "0", "max_pct": "0"}
+
+        slippages = [Decimal(r["slippage_pct"]) for r in self._slippage_records]
+        return {
+            "count": len(slippages),
+            "avg_pct": str(sum(slippages) / len(slippages)),
+            "max_pct": str(max(abs(s) for s in slippages)),
+            "min_pct": str(min(slippages)),
+            "recent": self._slippage_records[-5:],
+        }
 
     # =========================================================================
     # Stop Loss Check
