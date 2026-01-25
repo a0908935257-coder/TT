@@ -656,6 +656,11 @@ class SupertrendBot(BaseBot):
         try:
             self._current_bar += 1
 
+            # Apply consecutive loss decay (prevents permanent lockout)
+            # Run periodically (every ~10 bars to reduce overhead)
+            if self._current_bar % 10 == 0:
+                self.apply_consecutive_loss_decay()
+
             # Store kline for ATR calculation
             self._recent_klines.append(kline)
             max_klines = self._config.atr_period + 50
@@ -1029,6 +1034,28 @@ class SupertrendBot(BaseBot):
                 if self._config.use_exchange_stop_loss:
                     await self._place_stop_loss_order()
 
+                # Record virtual fill (淨倉位管理 - track per-bot position)
+                order_id_str = str(getattr(order, "order_id", ""))
+                fee = fill_qty * fill_price * self.FEE_RATE
+                self.record_virtual_fill(
+                    symbol=self._config.symbol,
+                    side=order_side,
+                    quantity=fill_qty,
+                    price=fill_price,
+                    order_id=order_id_str,
+                    fee=fee,
+                    is_reduce_only=False,
+                )
+
+                # Record cost basis entry (持倉歸屬 - FIFO tracking)
+                self.record_cost_basis_entry(
+                    symbol=self._config.symbol,
+                    quantity=fill_qty,
+                    price=fill_price,
+                    order_id=order_id_str,
+                    fee=fee,
+                )
+
                 # Log with take profit if provided
                 tp_str = f", TP @ {take_profit:.2f}" if take_profit else ""
                 logger.info(f"Opened {side.value} position: {quantity} @ {price}, SL @ {stop_loss_price}{tp_str}")
@@ -1224,6 +1251,21 @@ class SupertrendBot(BaseBot):
                 )
                 self._trades.append(trade)
                 self._total_pnl += net_pnl
+
+                # Close cost basis with FIFO (持倉歸屬 - P&L attribution)
+                order_id_str = str(getattr(order, "order_id", ""))
+                close_fee = self._position.quantity * exit_price * self.FEE_RATE
+                cost_basis_result = self.close_cost_basis_fifo(
+                    symbol=self._config.symbol,
+                    close_quantity=self._position.quantity,
+                    close_price=exit_price,
+                    close_order_id=order_id_str,
+                    close_fee=close_fee,
+                )
+                logger.debug(
+                    f"Cost basis closed: {len(cost_basis_result.get('matched_lots', []))} lots, "
+                    f"Attributed P&L: {cost_basis_result.get('total_realized_pnl')}"
+                )
 
                 # Update risk tracking
                 self._update_risk_tracking(net_pnl)
