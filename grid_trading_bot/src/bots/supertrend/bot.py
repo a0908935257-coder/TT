@@ -214,6 +214,13 @@ class SupertrendBot(BaseBot):
         # Register for global risk tracking (多策略風控協調)
         await self.register_bot_for_global_risk(self._bot_id, capital)
 
+        # Register for circuit breaker coordination (部分熔斷協調)
+        await self.register_strategy_for_cb(
+            bot_id=self._bot_id,
+            strategy_type="supertrend",
+            dependencies=None,
+        )
+
         logger.info(f"Strategy initial capital set: {capital} USDT")
 
         # Get historical klines to initialize indicator
@@ -389,8 +396,12 @@ class SupertrendBot(BaseBot):
             try:
                 # Get account balance to track capital
                 account = await self._exchange.futures.get_account()
+                capital = self._config.max_capital or Decimal("1000")
                 # Mark capital as updated for risk bypass prevention
                 self.mark_capital_updated()
+
+                # Record capital for CB validation (熔斷誤觸發防護)
+                self.record_capital_for_validation(capital)
 
                 # Apply consecutive loss decay (prevents permanent lockout)
                 self.apply_consecutive_loss_decay()
@@ -400,6 +411,8 @@ class SupertrendBot(BaseBot):
                     ticker = await self._exchange.futures.get_ticker(self._config.symbol)
                     current_price = Decimal(str(ticker.last_price))
                     self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+                    # Record price for CB validation
+                    self.record_price_for_validation(current_price)
 
                 # Check per-strategy risk (風控隔離 - only affects this bot)
                 risk_result = await self.check_strategy_risk()
@@ -408,12 +421,18 @@ class SupertrendBot(BaseBot):
                         f"Strategy risk triggered: {risk_result['risk_level']} - "
                         f"{risk_result.get('action', 'none')}"
                     )
-                    # Trigger circuit breaker on CRITICAL risk level
+                    # Trigger circuit breaker on CRITICAL risk level (with validation)
                     if risk_result["risk_level"] == "CRITICAL":
-                        await self.trigger_circuit_breaker(
-                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}"
+                        ticker = await self._exchange.futures.get_ticker(self._config.symbol)
+                        current_price = Decimal(str(ticker.last_price))
+                        cb_result = await self.trigger_circuit_breaker_safe(
+                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}",
+                            current_price=current_price,
+                            current_capital=self._config.max_capital or Decimal("1000"),
+                            partial=True,
                         )
-                        self._position = None
+                        if cb_result["triggered"]:
+                            self._position = None
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:

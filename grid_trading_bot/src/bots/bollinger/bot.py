@@ -173,6 +173,13 @@ class BollingerBot(BaseBot):
         # Register for global risk tracking (多策略風控協調)
         await self.register_bot_for_global_risk(self._bot_id, self._capital)
 
+        # Register for circuit breaker coordination (部分熔斷協調)
+        await self.register_strategy_for_cb(
+            bot_id=self._bot_id,
+            strategy_type="bollinger",
+            dependencies=None,
+        )
+
         logger.info(f"Initial capital: {self._capital} USDT")
 
         # 3. Load historical klines
@@ -544,6 +551,9 @@ class BollingerBot(BaseBot):
                 self.mark_capital_updated()  # Track data freshness for bypass prevention
                 self._stats.update_drawdown(self._capital, self._initial_capital)
 
+                # Record capital for CB validation (熔斷誤觸發防護)
+                self.record_capital_for_validation(self._capital)
+
                 # Apply consecutive loss decay (prevents permanent lockout)
                 self.apply_consecutive_loss_decay()
 
@@ -552,6 +562,8 @@ class BollingerBot(BaseBot):
                     current_price = self._klines[-1].close if self._klines else Decimal("0")
                     if current_price > 0:
                         self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+                        # Record price for CB validation
+                        self.record_price_for_validation(current_price)
 
                 # Check per-strategy risk (風控隔離 - only affects this bot)
                 risk_result = await self.check_strategy_risk()
@@ -560,12 +572,17 @@ class BollingerBot(BaseBot):
                         f"Strategy risk triggered: {risk_result['risk_level']} - "
                         f"{risk_result.get('action', 'none')}"
                     )
-                    # Trigger circuit breaker on CRITICAL risk level
+                    # Trigger circuit breaker on CRITICAL risk level (with validation)
                     if risk_result["risk_level"] == "CRITICAL":
-                        await self.trigger_circuit_breaker(
-                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}"
+                        current_price = self._klines[-1].close if self._klines else await self._get_current_price()
+                        cb_result = await self.trigger_circuit_breaker_safe(
+                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}",
+                            current_price=current_price,
+                            current_capital=self._capital,
+                            partial=True,
                         )
-                        self._position = None
+                        if cb_result["triggered"]:
+                            self._position = None
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:

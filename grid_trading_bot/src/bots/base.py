@@ -9783,3 +9783,880 @@ class BaseBot(ABC):
         details["adjusted_quantity"] = str(adjusted_quantity)
 
         return True, "Entry validation passed", details
+
+    # =========================================================================
+    # Circuit Breaker False Positive Prevention (熔斷誤觸發防護)
+    # =========================================================================
+    #
+    # Prevents false circuit breaker triggers caused by:
+    # - Data anomalies (bad ticks, API errors)
+    # - Temporary price spikes
+    # - Calculation errors
+    # =========================================================================
+
+    # False Positive Prevention Configuration
+    CB_CONFIRMATION_CHECKS = 3  # Number of consecutive checks required
+    CB_CONFIRMATION_INTERVAL_SECONDS = 5  # Interval between confirmation checks
+    CB_MAX_PRICE_CHANGE_PCT = Decimal("0.10")  # 10% max realistic price change
+    CB_MIN_DATA_FRESHNESS_SECONDS = 30  # Data must be within 30 seconds
+    CB_REQUIRE_MULTIPLE_SOURCES = False  # Require confirmation from multiple sources
+
+    def _init_cb_validation(self) -> None:
+        """Initialize circuit breaker validation state."""
+        if not hasattr(self, "_cb_validation_state"):
+            self._cb_validation_state: Dict[str, Any] = {
+                "pending_trigger": False,
+                "pending_reason": None,
+                "confirmation_count": 0,
+                "first_trigger_time": None,
+                "last_prices": [],  # Recent prices for anomaly detection
+                "last_capital_values": [],  # Recent capital for anomaly detection
+                "false_positive_count": 0,
+                "last_false_positive_time": None,
+            }
+
+    def validate_circuit_breaker_trigger(
+        self,
+        reason: str,
+        current_price: Optional[Decimal] = None,
+        current_capital: Optional[Decimal] = None,
+        loss_pct: Optional[Decimal] = None,
+    ) -> tuple[bool, str]:
+        """
+        Validate if circuit breaker should actually trigger.
+
+        This prevents false positives from data anomalies.
+
+        Args:
+            reason: Reason for potential trigger
+            current_price: Current market price
+            current_capital: Current account capital
+            loss_pct: Calculated loss percentage
+
+        Returns:
+            Tuple of (should_trigger, validation_message)
+        """
+        self._init_cb_validation()
+        state = self._cb_validation_state
+
+        now = datetime.now(timezone.utc)
+
+        # Check 1: Price sanity check - detect impossible price movements
+        if current_price and state["last_prices"]:
+            last_price = state["last_prices"][-1]["price"]
+            price_change_pct = abs((current_price - last_price) / last_price)
+
+            if price_change_pct > self.CB_MAX_PRICE_CHANGE_PCT:
+                logger.warning(
+                    f"[{self._bot_id}] Circuit breaker validation: "
+                    f"Price change {price_change_pct*100:.2f}% exceeds max "
+                    f"{self.CB_MAX_PRICE_CHANGE_PCT*100:.1f}% - possible data anomaly"
+                )
+                state["false_positive_count"] += 1
+                state["last_false_positive_time"] = now
+                return False, f"Price anomaly detected: {price_change_pct*100:.2f}% change"
+
+        # Check 2: Capital sanity check - detect impossible capital changes
+        if current_capital and state["last_capital_values"]:
+            last_capital = state["last_capital_values"][-1]["value"]
+            if last_capital > 0:
+                capital_change_pct = abs((current_capital - last_capital) / last_capital)
+
+                # Capital shouldn't change more than 50% in a short period
+                if capital_change_pct > Decimal("0.50"):
+                    logger.warning(
+                        f"[{self._bot_id}] Circuit breaker validation: "
+                        f"Capital change {capital_change_pct*100:.2f}% too large - possible data error"
+                    )
+                    state["false_positive_count"] += 1
+                    state["last_false_positive_time"] = now
+                    return False, f"Capital anomaly detected: {capital_change_pct*100:.2f}% change"
+
+        # Check 3: Data freshness - ensure we have recent data
+        if hasattr(self, "_last_capital_update_time") and self._last_capital_update_time:
+            data_age = (now - self._last_capital_update_time).total_seconds()
+            if data_age > self.CB_MIN_DATA_FRESHNESS_SECONDS:
+                logger.warning(
+                    f"[{self._bot_id}] Circuit breaker validation: "
+                    f"Data is {data_age:.1f}s old - may be stale"
+                )
+                # Don't trigger on stale data, but don't count as false positive
+                return False, f"Data too stale: {data_age:.1f}s old"
+
+        # Check 4: Require confirmation (multiple consecutive checks)
+        if not state["pending_trigger"]:
+            # First trigger - start confirmation process
+            state["pending_trigger"] = True
+            state["pending_reason"] = reason
+            state["confirmation_count"] = 1
+            state["first_trigger_time"] = now
+
+            logger.info(
+                f"[{self._bot_id}] Circuit breaker pending: {reason} "
+                f"(confirmation 1/{self.CB_CONFIRMATION_CHECKS})"
+            )
+            return False, f"Confirmation required (1/{self.CB_CONFIRMATION_CHECKS})"
+
+        else:
+            # Subsequent trigger - check if same reason and increment
+            if state["pending_reason"] == reason:
+                state["confirmation_count"] += 1
+
+                if state["confirmation_count"] >= self.CB_CONFIRMATION_CHECKS:
+                    # Confirmed - allow trigger
+                    logger.info(
+                        f"[{self._bot_id}] Circuit breaker confirmed after "
+                        f"{state['confirmation_count']} checks"
+                    )
+                    self._reset_cb_validation()
+                    return True, "Circuit breaker confirmed"
+                else:
+                    logger.info(
+                        f"[{self._bot_id}] Circuit breaker pending: {reason} "
+                        f"(confirmation {state['confirmation_count']}/{self.CB_CONFIRMATION_CHECKS})"
+                    )
+                    return False, f"Confirmation required ({state['confirmation_count']}/{self.CB_CONFIRMATION_CHECKS})"
+            else:
+                # Different reason - reset confirmation
+                state["pending_reason"] = reason
+                state["confirmation_count"] = 1
+                state["first_trigger_time"] = now
+                return False, f"New reason, confirmation reset (1/{self.CB_CONFIRMATION_CHECKS})"
+
+    def record_price_for_validation(self, price: Decimal) -> None:
+        """Record price for circuit breaker validation."""
+        self._init_cb_validation()
+
+        self._cb_validation_state["last_prices"].append({
+            "price": price,
+            "time": datetime.now(timezone.utc),
+        })
+
+        # Keep only last 10 prices
+        self._cb_validation_state["last_prices"] = \
+            self._cb_validation_state["last_prices"][-10:]
+
+    def record_capital_for_validation(self, capital: Decimal) -> None:
+        """Record capital for circuit breaker validation."""
+        self._init_cb_validation()
+
+        self._cb_validation_state["last_capital_values"].append({
+            "value": capital,
+            "time": datetime.now(timezone.utc),
+        })
+
+        # Keep only last 10 values
+        self._cb_validation_state["last_capital_values"] = \
+            self._cb_validation_state["last_capital_values"][-10:]
+
+    def _reset_cb_validation(self) -> None:
+        """Reset circuit breaker validation state."""
+        self._init_cb_validation()
+        self._cb_validation_state["pending_trigger"] = False
+        self._cb_validation_state["pending_reason"] = None
+        self._cb_validation_state["confirmation_count"] = 0
+        self._cb_validation_state["first_trigger_time"] = None
+
+    def cancel_pending_circuit_breaker(self) -> None:
+        """
+        Cancel a pending circuit breaker trigger.
+
+        Call this when conditions improve before confirmation completes.
+        """
+        self._init_cb_validation()
+
+        if self._cb_validation_state["pending_trigger"]:
+            logger.info(
+                f"[{self._bot_id}] Pending circuit breaker cancelled - "
+                f"conditions improved"
+            )
+            self._reset_cb_validation()
+
+    # =========================================================================
+    # Smart Circuit Breaker Recovery (智慧熔斷恢復)
+    # =========================================================================
+    #
+    # Determines optimal timing and conditions for safe trading resumption.
+    # =========================================================================
+
+    # Recovery Configuration
+    CB_MIN_RECOVERY_HOURS = 4  # Minimum hours before recovery check
+    CB_MAX_RECOVERY_HOURS = 48  # Maximum hours before forced review
+    CB_RECOVERY_VOLATILITY_THRESHOLD = Decimal("0.02")  # 2% max volatility for recovery
+    CB_RECOVERY_POSITION_SIZE_PCT = Decimal("0.50")  # Start with 50% position size
+    CB_GRADUATED_RECOVERY_LEVELS = 3  # Number of graduated recovery levels
+
+    def _init_cb_recovery(self) -> None:
+        """Initialize circuit breaker recovery state."""
+        if not hasattr(self, "_cb_recovery_state"):
+            self._cb_recovery_state: Dict[str, Any] = {
+                "recovery_level": 0,  # 0=locked, 1=limited, 2=reduced, 3=full
+                "recovery_start_time": None,
+                "last_recovery_check": None,
+                "recovery_conditions_met": False,
+                "manual_override": False,
+                "recovery_position_multiplier": Decimal("0"),
+                "consecutive_profitable_trades": 0,
+                "volatility_readings": [],
+            }
+
+    def check_recovery_conditions(
+        self,
+        current_volatility: Optional[Decimal] = None,
+        market_trend: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Check if conditions are suitable for circuit breaker recovery.
+
+        Args:
+            current_volatility: Current market volatility (e.g., ATR/price)
+            market_trend: Current market trend ("bullish", "bearish", "neutral")
+
+        Returns:
+            Dict with recovery assessment
+        """
+        self._init_cb_recovery()
+        self._init_circuit_breaker()
+
+        cb_state = self._circuit_breaker_state
+        recovery_state = self._cb_recovery_state
+
+        now = datetime.now(timezone.utc)
+
+        result = {
+            "can_recover": False,
+            "recovery_level": recovery_state["recovery_level"],
+            "position_multiplier": recovery_state["recovery_position_multiplier"],
+            "reasons": [],
+            "recommendations": [],
+        }
+
+        # Check if circuit breaker is active
+        if not cb_state["is_triggered"]:
+            result["can_recover"] = True
+            result["recovery_level"] = 3
+            result["position_multiplier"] = Decimal("1.0")
+            result["reasons"].append("Circuit breaker not active")
+            return result
+
+        # Check minimum recovery time
+        if cb_state["trigger_time"]:
+            hours_since_trigger = (now - cb_state["trigger_time"]).total_seconds() / 3600
+
+            if hours_since_trigger < self.CB_MIN_RECOVERY_HOURS:
+                result["reasons"].append(
+                    f"Minimum recovery time not met ({hours_since_trigger:.1f}h / "
+                    f"{self.CB_MIN_RECOVERY_HOURS}h)"
+                )
+                result["recommendations"].append(
+                    f"Wait {self.CB_MIN_RECOVERY_HOURS - hours_since_trigger:.1f} more hours"
+                )
+
+            elif hours_since_trigger > self.CB_MAX_RECOVERY_HOURS:
+                result["recommendations"].append(
+                    f"Extended lockout ({hours_since_trigger:.1f}h) - manual review recommended"
+                )
+
+        # Check volatility conditions
+        if current_volatility is not None:
+            recovery_state["volatility_readings"].append({
+                "value": current_volatility,
+                "time": now,
+            })
+            # Keep only last 10 readings
+            recovery_state["volatility_readings"] = \
+                recovery_state["volatility_readings"][-10:]
+
+            if current_volatility > self.CB_RECOVERY_VOLATILITY_THRESHOLD:
+                result["reasons"].append(
+                    f"Volatility too high ({current_volatility*100:.2f}% > "
+                    f"{self.CB_RECOVERY_VOLATILITY_THRESHOLD*100:.1f}%)"
+                )
+                result["recommendations"].append("Wait for volatility to decrease")
+            else:
+                result["reasons"].append("Volatility acceptable")
+
+        # Check for manual override
+        if recovery_state["manual_override"]:
+            result["can_recover"] = True
+            result["reasons"].append("Manual override active")
+
+        # Determine recovery level based on conditions
+        conditions_count = len([r for r in result["reasons"] if "acceptable" in r.lower() or "met" in r.lower()])
+
+        if recovery_state["manual_override"]:
+            recovery_level = min(recovery_state["recovery_level"] + 1, 3)
+        elif conditions_count >= 2 and hours_since_trigger >= self.CB_MIN_RECOVERY_HOURS:
+            recovery_level = 1  # Limited recovery
+        else:
+            recovery_level = 0  # Still locked
+
+        recovery_state["recovery_level"] = recovery_level
+        result["recovery_level"] = recovery_level
+
+        # Set position multiplier based on recovery level
+        if recovery_level == 0:
+            result["position_multiplier"] = Decimal("0")
+        elif recovery_level == 1:
+            result["position_multiplier"] = Decimal("0.33")  # 33%
+        elif recovery_level == 2:
+            result["position_multiplier"] = Decimal("0.66")  # 66%
+        else:
+            result["position_multiplier"] = Decimal("1.0")  # Full
+
+        recovery_state["recovery_position_multiplier"] = result["position_multiplier"]
+        recovery_state["last_recovery_check"] = now
+
+        result["can_recover"] = recovery_level > 0
+
+        return result
+
+    def request_manual_recovery(self, override_level: int = 1) -> Dict[str, Any]:
+        """
+        Request manual recovery from circuit breaker.
+
+        Args:
+            override_level: Recovery level to set (1=limited, 2=reduced, 3=full)
+
+        Returns:
+            Dict with recovery result
+        """
+        self._init_cb_recovery()
+        self._init_circuit_breaker()
+
+        result = {
+            "success": False,
+            "previous_level": self._cb_recovery_state["recovery_level"],
+            "new_level": override_level,
+            "message": None,
+        }
+
+        if not self._circuit_breaker_state["is_triggered"]:
+            result["success"] = True
+            result["message"] = "Circuit breaker not active - no recovery needed"
+            return result
+
+        # Validate override level
+        override_level = max(1, min(3, override_level))
+
+        self._cb_recovery_state["manual_override"] = True
+        self._cb_recovery_state["recovery_level"] = override_level
+        self._cb_recovery_state["recovery_start_time"] = datetime.now(timezone.utc)
+
+        # Set position multiplier
+        if override_level == 1:
+            self._cb_recovery_state["recovery_position_multiplier"] = Decimal("0.33")
+        elif override_level == 2:
+            self._cb_recovery_state["recovery_position_multiplier"] = Decimal("0.66")
+        else:
+            self._cb_recovery_state["recovery_position_multiplier"] = Decimal("1.0")
+
+        result["success"] = True
+        result["message"] = f"Manual recovery to level {override_level}"
+
+        logger.info(
+            f"[{self._bot_id}] Manual circuit breaker recovery: level {override_level}, "
+            f"position multiplier {self._cb_recovery_state['recovery_position_multiplier']}"
+        )
+
+        return result
+
+    def record_trade_result_for_recovery(self, is_profitable: bool) -> None:
+        """
+        Record trade result for graduated recovery assessment.
+
+        Args:
+            is_profitable: Whether the trade was profitable
+        """
+        self._init_cb_recovery()
+
+        if is_profitable:
+            self._cb_recovery_state["consecutive_profitable_trades"] += 1
+
+            # Automatically upgrade recovery level after successful trades
+            if self._cb_recovery_state["consecutive_profitable_trades"] >= 3:
+                current_level = self._cb_recovery_state["recovery_level"]
+                if current_level < 3:
+                    self._cb_recovery_state["recovery_level"] = current_level + 1
+                    self._cb_recovery_state["consecutive_profitable_trades"] = 0
+
+                    # Update position multiplier
+                    if self._cb_recovery_state["recovery_level"] == 2:
+                        self._cb_recovery_state["recovery_position_multiplier"] = Decimal("0.66")
+                    elif self._cb_recovery_state["recovery_level"] == 3:
+                        self._cb_recovery_state["recovery_position_multiplier"] = Decimal("1.0")
+
+                    logger.info(
+                        f"[{self._bot_id}] Recovery level upgraded to "
+                        f"{self._cb_recovery_state['recovery_level']} after profitable trades"
+                    )
+        else:
+            # Reset consecutive count on loss
+            self._cb_recovery_state["consecutive_profitable_trades"] = 0
+
+            # Downgrade recovery level on loss during recovery
+            if self._cb_recovery_state["recovery_level"] > 1:
+                self._cb_recovery_state["recovery_level"] -= 1
+
+                if self._cb_recovery_state["recovery_level"] == 1:
+                    self._cb_recovery_state["recovery_position_multiplier"] = Decimal("0.33")
+                elif self._cb_recovery_state["recovery_level"] == 2:
+                    self._cb_recovery_state["recovery_position_multiplier"] = Decimal("0.66")
+
+                logger.warning(
+                    f"[{self._bot_id}] Recovery level downgraded to "
+                    f"{self._cb_recovery_state['recovery_level']} after loss"
+                )
+
+    def get_recovery_position_multiplier(self) -> Decimal:
+        """Get current position size multiplier based on recovery state."""
+        self._init_cb_recovery()
+
+        # If circuit breaker not active, full size
+        if not hasattr(self, "_circuit_breaker_state") or \
+           not self._circuit_breaker_state.get("is_triggered"):
+            return Decimal("1.0")
+
+        return self._cb_recovery_state["recovery_position_multiplier"]
+
+    def full_recovery(self) -> None:
+        """Perform full recovery from circuit breaker."""
+        self._init_cb_recovery()
+        self._init_circuit_breaker()
+
+        self._circuit_breaker_state["is_triggered"] = False
+        self._circuit_breaker_state["trigger_reason"] = None
+        self._circuit_breaker_state["lockout_until"] = None
+
+        self._cb_recovery_state["recovery_level"] = 3
+        self._cb_recovery_state["recovery_position_multiplier"] = Decimal("1.0")
+        self._cb_recovery_state["manual_override"] = False
+        self._cb_recovery_state["consecutive_profitable_trades"] = 0
+
+        logger.info(f"[{self._bot_id}] Full circuit breaker recovery completed")
+
+    # =========================================================================
+    # Partial Circuit Breaker (部分熔斷邏輯)
+    # =========================================================================
+    #
+    # Allows selective circuit breaker affecting only specific strategies
+    # while considering inter-strategy dependencies.
+    # =========================================================================
+
+    # Partial Circuit Breaker Configuration
+    CB_ALLOW_PARTIAL = True  # Allow partial (strategy-level) circuit breaker
+    CB_DEPENDENCY_CHECK = True  # Check strategy dependencies before partial CB
+
+    # Class-level tracking for multi-strategy coordination
+    _global_cb_registry: Optional[Dict[str, Any]] = None
+    _global_cb_lock: Optional[asyncio.Lock] = None
+
+    @classmethod
+    def _init_global_cb_registry(cls) -> None:
+        """Initialize global circuit breaker registry."""
+        if cls._global_cb_registry is None:
+            cls._global_cb_registry = {
+                "strategies": {},  # bot_id -> CB state
+                "dependencies": {},  # bot_id -> list of dependent bot_ids
+                "global_cb_active": False,
+                "global_cb_reason": None,
+            }
+        if cls._global_cb_lock is None:
+            cls._global_cb_lock = asyncio.Lock()
+
+    @classmethod
+    async def register_strategy_for_cb(
+        cls,
+        bot_id: str,
+        strategy_type: str,
+        dependencies: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Register a strategy for partial circuit breaker coordination.
+
+        Args:
+            bot_id: Bot identifier
+            strategy_type: Type of strategy (e.g., "grid", "trend", "scalp")
+            dependencies: List of bot_ids this strategy depends on
+        """
+        cls._init_global_cb_registry()
+
+        async with cls._global_cb_lock:
+            cls._global_cb_registry["strategies"][bot_id] = {
+                "strategy_type": strategy_type,
+                "cb_active": False,
+                "cb_reason": None,
+                "cb_time": None,
+                "can_trade": True,
+            }
+
+            if dependencies:
+                cls._global_cb_registry["dependencies"][bot_id] = dependencies
+
+            logger.debug(
+                f"Registered strategy {bot_id} ({strategy_type}) for CB coordination"
+            )
+
+    @classmethod
+    async def trigger_partial_circuit_breaker(
+        cls,
+        bot_id: str,
+        reason: str,
+        affect_dependents: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Trigger circuit breaker for a specific strategy only.
+
+        Args:
+            bot_id: Bot to trigger CB for
+            reason: Reason for CB
+            affect_dependents: Whether to also affect dependent strategies
+
+        Returns:
+            Dict with affected strategies
+        """
+        cls._init_global_cb_registry()
+
+        result = {
+            "triggered_for": [bot_id],
+            "affected_dependents": [],
+            "reason": reason,
+        }
+
+        async with cls._global_cb_lock:
+            # Mark the primary strategy
+            if bot_id in cls._global_cb_registry["strategies"]:
+                cls._global_cb_registry["strategies"][bot_id]["cb_active"] = True
+                cls._global_cb_registry["strategies"][bot_id]["cb_reason"] = reason
+                cls._global_cb_registry["strategies"][bot_id]["cb_time"] = datetime.now(timezone.utc)
+                cls._global_cb_registry["strategies"][bot_id]["can_trade"] = False
+
+            # Find and affect dependents if requested
+            if affect_dependents and cls.CB_DEPENDENCY_CHECK:
+                for dep_bot_id, deps in cls._global_cb_registry["dependencies"].items():
+                    if bot_id in deps:
+                        # This strategy depends on the CB'd strategy
+                        if dep_bot_id in cls._global_cb_registry["strategies"]:
+                            cls._global_cb_registry["strategies"][dep_bot_id]["can_trade"] = False
+                            result["affected_dependents"].append(dep_bot_id)
+
+                            logger.warning(
+                                f"Strategy {dep_bot_id} affected by partial CB "
+                                f"(depends on {bot_id})"
+                            )
+
+        logger.info(
+            f"Partial circuit breaker triggered for {bot_id}: {reason}, "
+            f"affected dependents: {result['affected_dependents']}"
+        )
+
+        return result
+
+    @classmethod
+    async def trigger_global_circuit_breaker(
+        cls,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """
+        Trigger global circuit breaker affecting all strategies.
+
+        Args:
+            reason: Reason for global CB
+
+        Returns:
+            Dict with all affected strategies
+        """
+        cls._init_global_cb_registry()
+
+        result = {
+            "global": True,
+            "reason": reason,
+            "affected_strategies": [],
+        }
+
+        async with cls._global_cb_lock:
+            cls._global_cb_registry["global_cb_active"] = True
+            cls._global_cb_registry["global_cb_reason"] = reason
+
+            for bot_id, state in cls._global_cb_registry["strategies"].items():
+                state["cb_active"] = True
+                state["cb_reason"] = f"GLOBAL: {reason}"
+                state["cb_time"] = datetime.now(timezone.utc)
+                state["can_trade"] = False
+                result["affected_strategies"].append(bot_id)
+
+        logger.critical(
+            f"GLOBAL circuit breaker triggered: {reason}, "
+            f"affected: {result['affected_strategies']}"
+        )
+
+        return result
+
+    @classmethod
+    async def check_strategy_can_trade(cls, bot_id: str) -> tuple[bool, Optional[str]]:
+        """
+        Check if a specific strategy can trade.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            Tuple of (can_trade, reason_if_not)
+        """
+        cls._init_global_cb_registry()
+
+        async with cls._global_cb_lock:
+            # Check global CB first
+            if cls._global_cb_registry["global_cb_active"]:
+                return False, f"Global CB: {cls._global_cb_registry['global_cb_reason']}"
+
+            # Check strategy-specific CB
+            if bot_id in cls._global_cb_registry["strategies"]:
+                state = cls._global_cb_registry["strategies"][bot_id]
+                if not state["can_trade"]:
+                    return False, state.get("cb_reason", "Strategy CB active")
+
+            # Check if any dependency is in CB
+            if bot_id in cls._global_cb_registry["dependencies"]:
+                for dep_id in cls._global_cb_registry["dependencies"][bot_id]:
+                    if dep_id in cls._global_cb_registry["strategies"]:
+                        dep_state = cls._global_cb_registry["strategies"][dep_id]
+                        if dep_state["cb_active"]:
+                            return False, f"Dependency {dep_id} in CB"
+
+        return True, None
+
+    @classmethod
+    async def recover_partial_circuit_breaker(
+        cls,
+        bot_id: str,
+        recover_dependents: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Recover a specific strategy from circuit breaker.
+
+        Args:
+            bot_id: Bot to recover
+            recover_dependents: Whether to also recover dependent strategies
+
+        Returns:
+            Dict with recovered strategies
+        """
+        cls._init_global_cb_registry()
+
+        result = {
+            "recovered": [bot_id],
+            "recovered_dependents": [],
+        }
+
+        async with cls._global_cb_lock:
+            if bot_id in cls._global_cb_registry["strategies"]:
+                cls._global_cb_registry["strategies"][bot_id]["cb_active"] = False
+                cls._global_cb_registry["strategies"][bot_id]["cb_reason"] = None
+                cls._global_cb_registry["strategies"][bot_id]["can_trade"] = True
+
+            # Recover dependents if requested
+            if recover_dependents:
+                for dep_bot_id, deps in cls._global_cb_registry["dependencies"].items():
+                    if bot_id in deps:
+                        # Check if all dependencies are now clear
+                        all_deps_clear = True
+                        for d in deps:
+                            if d in cls._global_cb_registry["strategies"]:
+                                if cls._global_cb_registry["strategies"][d]["cb_active"]:
+                                    all_deps_clear = False
+                                    break
+
+                        if all_deps_clear and dep_bot_id in cls._global_cb_registry["strategies"]:
+                            cls._global_cb_registry["strategies"][dep_bot_id]["can_trade"] = True
+                            result["recovered_dependents"].append(dep_bot_id)
+
+        logger.info(
+            f"Partial CB recovery for {bot_id}, "
+            f"recovered dependents: {result['recovered_dependents']}"
+        )
+
+        return result
+
+    @classmethod
+    async def recover_global_circuit_breaker(cls) -> Dict[str, Any]:
+        """
+        Recover from global circuit breaker.
+
+        Returns:
+            Dict with all recovered strategies
+        """
+        cls._init_global_cb_registry()
+
+        result = {
+            "recovered_strategies": [],
+        }
+
+        async with cls._global_cb_lock:
+            cls._global_cb_registry["global_cb_active"] = False
+            cls._global_cb_registry["global_cb_reason"] = None
+
+            for bot_id, state in cls._global_cb_registry["strategies"].items():
+                state["cb_active"] = False
+                state["cb_reason"] = None
+                state["can_trade"] = True
+                result["recovered_strategies"].append(bot_id)
+
+        logger.info(
+            f"Global CB recovery, recovered: {result['recovered_strategies']}"
+        )
+
+        return result
+
+    @classmethod
+    def get_cb_coordination_status(cls) -> Dict[str, Any]:
+        """Get circuit breaker coordination status across all strategies."""
+        cls._init_global_cb_registry()
+
+        return {
+            "global_cb_active": cls._global_cb_registry["global_cb_active"],
+            "global_cb_reason": cls._global_cb_registry["global_cb_reason"],
+            "strategies": {
+                bot_id: {
+                    "type": state["strategy_type"],
+                    "cb_active": state["cb_active"],
+                    "can_trade": state["can_trade"],
+                    "reason": state.get("cb_reason"),
+                }
+                for bot_id, state in cls._global_cb_registry["strategies"].items()
+            },
+            "dependencies": cls._global_cb_registry["dependencies"],
+        }
+
+    # =========================================================================
+    # Enhanced Circuit Breaker Trigger with Validation
+    # =========================================================================
+
+    async def trigger_circuit_breaker_safe(
+        self,
+        reason: str,
+        current_price: Optional[Decimal] = None,
+        current_capital: Optional[Decimal] = None,
+        loss_pct: Optional[Decimal] = None,
+        partial: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Safely trigger circuit breaker with validation.
+
+        This is the RECOMMENDED method to use instead of trigger_circuit_breaker.
+
+        Args:
+            reason: Reason for triggering
+            current_price: Current market price
+            current_capital: Current account capital
+            loss_pct: Calculated loss percentage
+            partial: Whether to trigger partial CB (strategy-only) vs full
+
+        Returns:
+            Dict with trigger result
+        """
+        result = {
+            "triggered": False,
+            "validated": False,
+            "validation_message": None,
+            "partial": partial,
+        }
+
+        # Validate the trigger
+        should_trigger, validation_msg = self.validate_circuit_breaker_trigger(
+            reason=reason,
+            current_price=current_price,
+            current_capital=current_capital,
+            loss_pct=loss_pct,
+        )
+
+        result["validated"] = should_trigger
+        result["validation_message"] = validation_msg
+
+        if not should_trigger:
+            logger.info(
+                f"[{self._bot_id}] Circuit breaker NOT triggered: {validation_msg}"
+            )
+            return result
+
+        # Trigger validated - proceed
+        if partial and self.CB_ALLOW_PARTIAL:
+            # Partial (strategy-only) circuit breaker
+            cb_result = await self.trigger_partial_circuit_breaker(
+                bot_id=self._bot_id,
+                reason=reason,
+                affect_dependents=self.CB_DEPENDENCY_CHECK,
+            )
+            result["triggered"] = True
+            result["affected"] = cb_result
+
+            # Also trigger local circuit breaker
+            await self.trigger_circuit_breaker(reason=reason, force_close=False)
+
+        else:
+            # Full circuit breaker for this strategy
+            cb_result = await self.trigger_circuit_breaker(
+                reason=reason,
+                force_close=True,
+            )
+            result["triggered"] = True
+            result["details"] = cb_result
+
+        return result
+
+    async def check_can_trade_with_cb(self) -> tuple[bool, str]:
+        """
+        Check if trading is allowed considering all CB states.
+
+        This combines local and global CB checks.
+
+        Returns:
+            Tuple of (can_trade, reason)
+        """
+        # Check local circuit breaker
+        local_active, local_reason = self.is_circuit_breaker_active()
+        if local_active:
+            return False, local_reason
+
+        # Check global/partial CB coordination
+        global_can_trade, global_reason = await self.check_strategy_can_trade(self._bot_id)
+        if not global_can_trade:
+            return False, global_reason
+
+        # Check recovery state
+        recovery_mult = self.get_recovery_position_multiplier()
+        if recovery_mult <= 0:
+            return False, "Recovery position multiplier is 0"
+
+        return True, "Trading allowed"
+
+    def get_comprehensive_cb_status(self) -> Dict[str, Any]:
+        """Get comprehensive circuit breaker status."""
+        self._init_cb_validation()
+        self._init_cb_recovery()
+        self._init_circuit_breaker()
+
+        return {
+            "local": {
+                "is_triggered": self._circuit_breaker_state["is_triggered"],
+                "trigger_reason": self._circuit_breaker_state["trigger_reason"],
+                "lockout_remaining": (
+                    (self._circuit_breaker_state["lockout_until"] - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if self._circuit_breaker_state["lockout_until"] and
+                       datetime.now(timezone.utc) < self._circuit_breaker_state["lockout_until"]
+                    else 0
+                ),
+            },
+            "validation": {
+                "pending_trigger": self._cb_validation_state["pending_trigger"],
+                "confirmation_count": self._cb_validation_state["confirmation_count"],
+                "false_positive_count": self._cb_validation_state["false_positive_count"],
+            },
+            "recovery": {
+                "recovery_level": self._cb_recovery_state["recovery_level"],
+                "position_multiplier": str(self._cb_recovery_state["recovery_position_multiplier"]),
+                "manual_override": self._cb_recovery_state["manual_override"],
+                "consecutive_profitable": self._cb_recovery_state["consecutive_profitable_trades"],
+            },
+            "global": self.get_cb_coordination_status() if hasattr(self, "_global_cb_registry") else None,
+        }
