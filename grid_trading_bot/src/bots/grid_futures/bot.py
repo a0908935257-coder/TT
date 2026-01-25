@@ -169,6 +169,9 @@ class GridFuturesBot(BaseBot):
         # Initialize per-strategy risk tracking (風控相互影響隔離)
         self.set_strategy_initial_capital(self._capital)
 
+        # Register for global risk tracking (多策略風控協調)
+        await self.register_bot_for_global_risk(self._bot_id, self._capital)
+
         logger.info(f"Initial capital: {self._capital} USDT")
 
         # Check minimum capital requirement (need at least ~$100 for 0.001 BTC)
@@ -755,6 +758,17 @@ class GridFuturesBot(BaseBot):
                         f"(conflict with {result.conflicting_bot})"
                     )
                     return False
+
+            # Check global risk limits (多策略風控協調 - 防止總體風險超標)
+            exposure = quantity * price
+            global_ok, global_msg, global_details = await self.check_global_risk_limits(
+                bot_id=self._bot_id,
+                symbol=self._config.symbol,
+                additional_exposure=exposure,
+            )
+            if not global_ok:
+                logger.warning(f"Global risk check failed: {global_msg}")
+                return False
 
             # Mark order as pending (for deduplication)
             order_key = self._mark_order_pending(

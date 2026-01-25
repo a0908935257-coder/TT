@@ -210,6 +210,10 @@ class SupertrendBot(BaseBot):
         # Initialize per-strategy risk tracking (風控相互影響隔離)
         capital = self._config.max_capital or Decimal("1000")
         self.set_strategy_initial_capital(capital)
+
+        # Register for global risk tracking (多策略風控協調)
+        await self.register_bot_for_global_risk(self._bot_id, capital)
+
         logger.info(f"Strategy initial capital set: {capital} USDT")
 
         # Get historical klines to initialize indicator
@@ -959,6 +963,8 @@ class SupertrendBot(BaseBot):
                 logger.warning(f"Signal blocked by coordinator: {result.message}")
                 return False
 
+        # Note: Global risk check is done after calculating quantity below
+
         try:
             # Validate price before calculation (indicator boundary check)
             if not self._validate_price(price, "entry_price"):
@@ -996,6 +1002,17 @@ class SupertrendBot(BaseBot):
 
             if quantity <= 0:
                 logger.warning("Insufficient balance to open position")
+                return False
+
+            # Check global risk limits (多策略風控協調 - 防止總體風險超標)
+            exposure = quantity * price
+            global_ok, global_msg, global_details = await self.check_global_risk_limits(
+                bot_id=self._bot_id,
+                symbol=self._config.symbol,
+                additional_exposure=exposure,
+            )
+            if not global_ok:
+                logger.warning(f"Global risk check failed: {global_msg}")
                 return False
 
             # Check for duplicate order (prevent double-entry on retry)

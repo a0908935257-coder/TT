@@ -7233,3 +7233,664 @@ class BaseBot(ABC):
                 for symbol, v in fp["price_deviation_overrides"].items()
             },
         }
+
+    # =========================================================================
+    # Risk Control Latency Prevention (風控延遲防護)
+    # Synchronous risk gate to prevent orders slipping through
+    # =========================================================================
+
+    # Risk check cache TTL (milliseconds)
+    RISK_CACHE_TTL_MS = 500  # Risk data valid for 500ms
+    RISK_GATE_TIMEOUT_SECONDS = 5  # Max wait for risk gate
+
+    def _init_risk_latency_prevention(self) -> None:
+        """Initialize risk latency prevention."""
+        if not hasattr(self, "_risk_latency"):
+            self._risk_latency = {
+                "order_lock": asyncio.Lock(),
+                "last_risk_check_time": None,
+                "last_risk_check_result": None,
+                "orders_blocked_by_latency": 0,
+                "orders_passed": 0,
+                "avg_check_latency_ms": 0,
+                "check_latency_samples": [],
+            }
+
+    async def acquire_risk_gate(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        timeout_seconds: Optional[float] = None,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Acquire risk gate with atomic check-and-reserve.
+
+        This ensures no orders can slip through between risk check and execution.
+        Uses a lock to make the entire check-reserve-execute flow atomic.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+            timeout_seconds: Max wait time for gate
+
+        Returns:
+            Tuple of (acquired, message, details)
+        """
+        self._init_risk_latency_prevention()
+        latency = self._risk_latency
+        timeout = timeout_seconds or self.RISK_GATE_TIMEOUT_SECONDS
+
+        details = {
+            "gate_acquired": False,
+            "wait_time_ms": 0,
+            "risk_check_fresh": False,
+            "cached_result_used": False,
+        }
+
+        start_time = time.time()
+
+        try:
+            # Try to acquire the order lock with timeout
+            acquired = await asyncio.wait_for(
+                latency["order_lock"].acquire(),
+                timeout=timeout,
+            )
+
+            if not acquired:
+                details["wait_time_ms"] = (time.time() - start_time) * 1000
+                latency["orders_blocked_by_latency"] += 1
+                return False, "Failed to acquire risk gate (timeout)", details
+
+            details["gate_acquired"] = True
+            details["wait_time_ms"] = (time.time() - start_time) * 1000
+
+            # Check if we have a recent valid risk check result
+            now = datetime.now(timezone.utc)
+            if latency["last_risk_check_time"]:
+                age_ms = (now - latency["last_risk_check_time"]).total_seconds() * 1000
+                if age_ms < self.RISK_CACHE_TTL_MS and latency["last_risk_check_result"]:
+                    # Use cached result
+                    cached = latency["last_risk_check_result"]
+                    details["cached_result_used"] = True
+                    details["cache_age_ms"] = age_ms
+
+                    if not cached.get("is_allowed", False):
+                        latency["order_lock"].release()
+                        return False, f"Cached risk check failed: {cached.get('message')}", details
+
+                    details["risk_check_fresh"] = True
+                    latency["orders_passed"] += 1
+                    # Don't release lock - caller will release after order execution
+                    return True, "Risk gate acquired (cached)", details
+
+            # Perform fresh risk check
+            check_start = time.time()
+            is_allowed, message, check_details = await self.safe_pre_trade_risk_check(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+            )
+            check_latency_ms = (time.time() - check_start) * 1000
+
+            # Update latency tracking
+            latency["check_latency_samples"].append(check_latency_ms)
+            if len(latency["check_latency_samples"]) > 100:
+                latency["check_latency_samples"] = latency["check_latency_samples"][-100:]
+            latency["avg_check_latency_ms"] = (
+                sum(latency["check_latency_samples"]) / len(latency["check_latency_samples"])
+            )
+
+            # Cache the result
+            latency["last_risk_check_time"] = now
+            latency["last_risk_check_result"] = {
+                "is_allowed": is_allowed,
+                "message": message,
+                "details": check_details,
+            }
+
+            details["risk_check_fresh"] = True
+            details["check_latency_ms"] = check_latency_ms
+            details.update(check_details)
+
+            if not is_allowed:
+                latency["order_lock"].release()
+                latency["orders_blocked_by_latency"] += 1
+                return False, message, details
+
+            latency["orders_passed"] += 1
+            # Don't release lock - caller will release after order execution
+            return True, "Risk gate acquired", details
+
+        except asyncio.TimeoutError:
+            details["wait_time_ms"] = timeout * 1000
+            latency["orders_blocked_by_latency"] += 1
+            return False, f"Risk gate timeout after {timeout}s", details
+
+        except Exception as e:
+            if latency["order_lock"].locked():
+                latency["order_lock"].release()
+            logger.error(f"[{self._bot_id}] Risk gate error: {e}")
+            return False, f"Risk gate error: {e}", details
+
+    def release_risk_gate(self) -> None:
+        """Release the risk gate after order execution."""
+        self._init_risk_latency_prevention()
+        if self._risk_latency["order_lock"].locked():
+            self._risk_latency["order_lock"].release()
+
+    def invalidate_risk_cache(self) -> None:
+        """Invalidate the risk check cache (call after significant state changes)."""
+        self._init_risk_latency_prevention()
+        self._risk_latency["last_risk_check_time"] = None
+        self._risk_latency["last_risk_check_result"] = None
+
+    def get_risk_latency_stats(self) -> Dict[str, Any]:
+        """Get risk latency statistics."""
+        self._init_risk_latency_prevention()
+        latency = self._risk_latency
+
+        return {
+            "bot_id": self._bot_id,
+            "orders_passed": latency["orders_passed"],
+            "orders_blocked_by_latency": latency["orders_blocked_by_latency"],
+            "avg_check_latency_ms": round(latency["avg_check_latency_ms"], 2),
+            "cache_ttl_ms": self.RISK_CACHE_TTL_MS,
+            "gate_timeout_seconds": self.RISK_GATE_TIMEOUT_SECONDS,
+        }
+
+    # =========================================================================
+    # Multi-Strategy Risk Coordination (多策略風控協調)
+    # Global risk aggregation across all bots
+    # =========================================================================
+
+    # Global risk thresholds (aggregate across all strategies)
+    GLOBAL_MAX_TOTAL_EXPOSURE_PCT = Decimal("0.80")  # 80% max total exposure
+    GLOBAL_MAX_SINGLE_SYMBOL_PCT = Decimal("0.50")   # 50% max per symbol
+    GLOBAL_MAX_DRAWDOWN_PCT = Decimal("0.15")        # 15% max drawdown
+    GLOBAL_MAX_DAILY_LOSS_PCT = Decimal("0.05")      # 5% max daily loss
+
+    # Class-level tracking for cross-bot coordination
+    _global_risk_tracker: Optional[Dict[str, Any]] = None
+    _global_risk_lock: Optional[asyncio.Lock] = None
+
+    @classmethod
+    def _init_global_risk_tracker(cls) -> None:
+        """Initialize global risk tracker (class-level, shared across all bots)."""
+        if cls._global_risk_tracker is None:
+            cls._global_risk_tracker = {
+                "total_capital": Decimal("0"),
+                "bot_exposures": {},  # bot_id -> exposure amount
+                "symbol_exposures": {},  # symbol -> total exposure
+                "daily_pnl": Decimal("0"),
+                "daily_start_time": datetime.now(timezone.utc).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                ),
+                "peak_capital": Decimal("0"),
+                "current_drawdown_pct": Decimal("0"),
+                "last_update_time": None,
+                "registered_bots": set(),
+                "blocked_orders_global": 0,
+            }
+        if cls._global_risk_lock is None:
+            cls._global_risk_lock = asyncio.Lock()
+
+    @classmethod
+    async def register_bot_for_global_risk(
+        cls,
+        bot_id: str,
+        allocated_capital: Decimal,
+    ) -> None:
+        """
+        Register a bot for global risk tracking.
+
+        Args:
+            bot_id: Bot identifier
+            allocated_capital: Capital allocated to this bot
+        """
+        cls._init_global_risk_tracker()
+
+        async with cls._global_risk_lock:
+            cls._global_risk_tracker["registered_bots"].add(bot_id)
+            cls._global_risk_tracker["bot_exposures"][bot_id] = Decimal("0")
+
+            # Update total capital
+            cls._global_risk_tracker["total_capital"] += allocated_capital
+            if cls._global_risk_tracker["total_capital"] > cls._global_risk_tracker["peak_capital"]:
+                cls._global_risk_tracker["peak_capital"] = cls._global_risk_tracker["total_capital"]
+
+            logger.info(
+                f"Bot {bot_id} registered for global risk tracking, "
+                f"Total capital: {cls._global_risk_tracker['total_capital']}"
+            )
+
+    @classmethod
+    async def update_bot_exposure(
+        cls,
+        bot_id: str,
+        symbol: str,
+        exposure_amount: Decimal,
+    ) -> None:
+        """
+        Update a bot's exposure for global risk tracking.
+
+        Args:
+            bot_id: Bot identifier
+            symbol: Trading symbol
+            exposure_amount: Current exposure amount (notional value)
+        """
+        cls._init_global_risk_tracker()
+
+        async with cls._global_risk_lock:
+            # Update bot exposure
+            cls._global_risk_tracker["bot_exposures"][bot_id] = exposure_amount
+
+            # Update symbol exposure (sum across all bots)
+            # This is a simplified approach - in production, track per-bot-per-symbol
+            if symbol not in cls._global_risk_tracker["symbol_exposures"]:
+                cls._global_risk_tracker["symbol_exposures"][symbol] = Decimal("0")
+
+            cls._global_risk_tracker["symbol_exposures"][symbol] = exposure_amount
+            cls._global_risk_tracker["last_update_time"] = datetime.now(timezone.utc)
+
+    @classmethod
+    async def update_global_pnl(cls, pnl_change: Decimal) -> None:
+        """Update global daily P&L."""
+        cls._init_global_risk_tracker()
+
+        async with cls._global_risk_lock:
+            tracker = cls._global_risk_tracker
+
+            # Reset daily P&L if new day
+            now = datetime.now(timezone.utc)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if today_start > tracker["daily_start_time"]:
+                tracker["daily_pnl"] = Decimal("0")
+                tracker["daily_start_time"] = today_start
+
+            tracker["daily_pnl"] += pnl_change
+
+            # Update drawdown
+            tracker["total_capital"] += pnl_change
+            if tracker["total_capital"] > tracker["peak_capital"]:
+                tracker["peak_capital"] = tracker["total_capital"]
+
+            if tracker["peak_capital"] > 0:
+                tracker["current_drawdown_pct"] = (
+                    (tracker["peak_capital"] - tracker["total_capital"]) /
+                    tracker["peak_capital"]
+                )
+
+    @classmethod
+    async def check_global_risk_limits(
+        cls,
+        bot_id: str,
+        symbol: str,
+        additional_exposure: Decimal,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Check if an order would violate global risk limits.
+
+        This is the SYNCHRONOUS global check that happens at trade time.
+
+        Args:
+            bot_id: Bot requesting the check
+            symbol: Symbol to trade
+            additional_exposure: Additional exposure from this order
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        cls._init_global_risk_tracker()
+
+        details = {
+            "global_check": True,
+            "violations": [],
+        }
+
+        async with cls._global_risk_lock:
+            tracker = cls._global_risk_tracker
+            total_capital = tracker["total_capital"]
+
+            if total_capital <= 0:
+                return True, "No capital tracked (global check skipped)", details
+
+            # 1. Check total exposure limit
+            current_total_exposure = sum(tracker["bot_exposures"].values())
+            new_total_exposure = current_total_exposure + additional_exposure
+            total_exposure_pct = new_total_exposure / total_capital
+
+            if total_exposure_pct > cls.GLOBAL_MAX_TOTAL_EXPOSURE_PCT:
+                details["violations"].append({
+                    "type": "TOTAL_EXPOSURE",
+                    "current_pct": str(total_exposure_pct),
+                    "limit_pct": str(cls.GLOBAL_MAX_TOTAL_EXPOSURE_PCT),
+                })
+
+            # 2. Check single symbol exposure limit
+            current_symbol_exposure = tracker["symbol_exposures"].get(symbol, Decimal("0"))
+            new_symbol_exposure = current_symbol_exposure + additional_exposure
+            symbol_exposure_pct = new_symbol_exposure / total_capital
+
+            if symbol_exposure_pct > cls.GLOBAL_MAX_SINGLE_SYMBOL_PCT:
+                details["violations"].append({
+                    "type": "SYMBOL_EXPOSURE",
+                    "symbol": symbol,
+                    "current_pct": str(symbol_exposure_pct),
+                    "limit_pct": str(cls.GLOBAL_MAX_SINGLE_SYMBOL_PCT),
+                })
+
+            # 3. Check drawdown limit
+            if tracker["current_drawdown_pct"] > cls.GLOBAL_MAX_DRAWDOWN_PCT:
+                details["violations"].append({
+                    "type": "DRAWDOWN",
+                    "current_pct": str(tracker["current_drawdown_pct"]),
+                    "limit_pct": str(cls.GLOBAL_MAX_DRAWDOWN_PCT),
+                })
+
+            # 4. Check daily loss limit
+            if total_capital > 0:
+                daily_loss_pct = abs(tracker["daily_pnl"] / total_capital) if tracker["daily_pnl"] < 0 else Decimal("0")
+                if daily_loss_pct > cls.GLOBAL_MAX_DAILY_LOSS_PCT:
+                    details["violations"].append({
+                        "type": "DAILY_LOSS",
+                        "current_pct": str(daily_loss_pct),
+                        "limit_pct": str(cls.GLOBAL_MAX_DAILY_LOSS_PCT),
+                    })
+
+            # Return result
+            if details["violations"]:
+                tracker["blocked_orders_global"] += 1
+                violation_types = [v["type"] for v in details["violations"]]
+                return False, f"Global risk limits exceeded: {', '.join(violation_types)}", details
+
+            details["total_exposure_pct"] = str(total_exposure_pct)
+            details["symbol_exposure_pct"] = str(symbol_exposure_pct)
+            details["drawdown_pct"] = str(tracker["current_drawdown_pct"])
+
+            return True, "Global risk check passed", details
+
+    @classmethod
+    def get_global_risk_status(cls) -> Dict[str, Any]:
+        """Get global risk status across all bots."""
+        cls._init_global_risk_tracker()
+        tracker = cls._global_risk_tracker
+
+        total_exposure = sum(tracker["bot_exposures"].values())
+        total_capital = tracker["total_capital"]
+
+        return {
+            "total_capital": str(total_capital),
+            "peak_capital": str(tracker["peak_capital"]),
+            "total_exposure": str(total_exposure),
+            "total_exposure_pct": str(total_exposure / total_capital) if total_capital > 0 else "0",
+            "current_drawdown_pct": str(tracker["current_drawdown_pct"]),
+            "daily_pnl": str(tracker["daily_pnl"]),
+            "registered_bots": list(tracker["registered_bots"]),
+            "bot_exposures": {k: str(v) for k, v in tracker["bot_exposures"].items()},
+            "symbol_exposures": {k: str(v) for k, v in tracker["symbol_exposures"].items()},
+            "blocked_orders_global": tracker["blocked_orders_global"],
+            "last_update_time": tracker["last_update_time"].isoformat() if tracker["last_update_time"] else None,
+        }
+
+    # =========================================================================
+    # Risk Parameter Validation (風控參數驗證)
+    # Validate risk parameters to prevent misconfiguration
+    # =========================================================================
+
+    @staticmethod
+    def validate_risk_parameters(params: Dict[str, Any]) -> tuple[bool, List[str]]:
+        """
+        Validate risk parameters for correctness.
+
+        Checks for:
+        - Range validity (min > 0, max > min)
+        - Percentage constraints (0 < pct <= 1 for ratios)
+        - Logical consistency (warning < danger thresholds)
+        - Unit correctness
+
+        Args:
+            params: Dictionary of risk parameters to validate
+
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        errors = []
+
+        # Define validation rules
+        percentage_params = [
+            "position_size_pct", "max_position_pct", "stop_loss_pct",
+            "take_profit_pct", "daily_loss_limit_pct", "max_drawdown_pct",
+            "warning_loss_pct", "danger_loss_pct", "fee_rate",
+            "slippage_tolerance_pct", "price_deviation_pct",
+        ]
+
+        positive_params = [
+            "leverage", "grid_count", "atr_period", "rsi_period",
+            "bb_period", "cooldown_seconds", "timeout_seconds",
+            "max_retries", "order_timeout_ms",
+        ]
+
+        min_max_pairs = [
+            ("min_order_value", "max_order_value"),
+            ("min_quantity", "max_quantity"),
+            ("lower_price", "upper_price"),
+        ]
+
+        threshold_pairs = [
+            ("warning_loss_pct", "danger_loss_pct"),  # warning < danger
+            ("warning_drawdown_pct", "danger_drawdown_pct"),
+        ]
+
+        # Validate percentage parameters (0 < value <= 1 or 0 < value <= 100)
+        for param in percentage_params:
+            if param in params:
+                value = params[param]
+                try:
+                    decimal_value = Decimal(str(value))
+
+                    # Check if it's in 0-1 range or 0-100 range
+                    if decimal_value <= 0:
+                        errors.append(f"{param} must be > 0 (got {value})")
+                    elif decimal_value > 100:
+                        errors.append(f"{param} appears invalid: {value} (expected percentage)")
+                    elif decimal_value > 1 and "pct" in param.lower():
+                        # Likely using percentage as whole number (e.g., 50 instead of 0.50)
+                        logger.warning(
+                            f"Parameter {param}={value} may be using wrong unit "
+                            f"(expected 0-1, got {value})"
+                        )
+                except (ValueError, TypeError, decimal.InvalidOperation):
+                    errors.append(f"{param} is not a valid number: {value}")
+
+        # Validate positive parameters
+        for param in positive_params:
+            if param in params:
+                value = params[param]
+                try:
+                    num_value = float(value) if not isinstance(value, (int, float)) else value
+                    if num_value <= 0:
+                        errors.append(f"{param} must be > 0 (got {value})")
+                except (ValueError, TypeError):
+                    errors.append(f"{param} is not a valid number: {value}")
+
+        # Validate min/max pairs
+        for min_param, max_param in min_max_pairs:
+            if min_param in params and max_param in params:
+                try:
+                    min_val = Decimal(str(params[min_param]))
+                    max_val = Decimal(str(params[max_param]))
+                    if min_val >= max_val:
+                        errors.append(
+                            f"{min_param} ({min_val}) must be < {max_param} ({max_val})"
+                        )
+                except (ValueError, TypeError, decimal.InvalidOperation):
+                    pass  # Already caught by other validators
+
+        # Validate threshold pairs (warning < danger)
+        for warning_param, danger_param in threshold_pairs:
+            if warning_param in params and danger_param in params:
+                try:
+                    warning_val = Decimal(str(params[warning_param]))
+                    danger_val = Decimal(str(params[danger_param]))
+                    if warning_val >= danger_val:
+                        errors.append(
+                            f"{warning_param} ({warning_val}) must be < {danger_param} ({danger_val})"
+                        )
+                except (ValueError, TypeError, decimal.InvalidOperation):
+                    pass
+
+        # Validate leverage
+        if "leverage" in params:
+            try:
+                leverage = int(params["leverage"])
+                if leverage < 1 or leverage > 125:
+                    errors.append(f"leverage must be 1-125 (got {leverage})")
+            except (ValueError, TypeError):
+                errors.append(f"leverage is not a valid integer: {params['leverage']}")
+
+        # Validate grid count
+        if "grid_count" in params:
+            try:
+                grid_count = int(params["grid_count"])
+                if grid_count < 2 or grid_count > 200:
+                    errors.append(f"grid_count must be 2-200 (got {grid_count})")
+            except (ValueError, TypeError):
+                errors.append(f"grid_count is not a valid integer: {params['grid_count']}")
+
+        is_valid = len(errors) == 0
+        return is_valid, errors
+
+    @staticmethod
+    def normalize_percentage_params(params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize percentage parameters to decimal form (0-1).
+
+        If a parameter looks like it's in percentage form (e.g., 50 instead of 0.50),
+        convert it to decimal form.
+
+        Args:
+            params: Dictionary of parameters
+
+        Returns:
+            Normalized parameters
+        """
+        percentage_params = [
+            "position_size_pct", "max_position_pct", "stop_loss_pct",
+            "take_profit_pct", "daily_loss_limit_pct", "max_drawdown_pct",
+            "fee_rate",
+        ]
+
+        normalized = params.copy()
+
+        for param in percentage_params:
+            if param in normalized:
+                try:
+                    value = Decimal(str(normalized[param]))
+                    # If value > 1, assume it's in percentage form (e.g., 50 = 50%)
+                    if value > 1 and value <= 100:
+                        normalized[param] = value / 100
+                        logger.info(
+                            f"Normalized {param}: {value}% -> {normalized[param]}"
+                        )
+                except (ValueError, TypeError, decimal.InvalidOperation):
+                    pass
+
+        return normalized
+
+    def validate_bot_config(self) -> tuple[bool, List[str]]:
+        """
+        Validate this bot's configuration.
+
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        if not hasattr(self, "_config"):
+            return False, ["No config found"]
+
+        # Convert config to dict for validation
+        config_dict = {}
+        for attr in dir(self._config):
+            if not attr.startswith("_"):
+                try:
+                    value = getattr(self._config, attr)
+                    if not callable(value):
+                        config_dict[attr] = value
+                except Exception:
+                    pass
+
+        return self.validate_risk_parameters(config_dict)
+
+    async def pre_trade_with_global_check(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Complete pre-trade validation including global risk check.
+
+        This is the RECOMMENDED method to call before placing any order.
+        It combines:
+        1. Risk gate acquisition (atomic check-and-reserve)
+        2. Global multi-strategy risk check
+        3. Strategy-level risk check
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        details = {
+            "gate_check": False,
+            "global_check": False,
+            "strategy_check": False,
+        }
+
+        # 1. Acquire risk gate (atomic lock + strategy check)
+        gate_acquired, gate_msg, gate_details = await self.acquire_risk_gate(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+        )
+
+        details["gate_check"] = gate_acquired
+        details["gate_details"] = gate_details
+
+        if not gate_acquired:
+            return False, f"Risk gate: {gate_msg}", details
+
+        try:
+            # 2. Check global risk limits
+            exposure = quantity * price
+            global_ok, global_msg, global_details = await self.check_global_risk_limits(
+                bot_id=self._bot_id,
+                symbol=symbol,
+                additional_exposure=exposure,
+            )
+
+            details["global_check"] = global_ok
+            details["global_details"] = global_details
+
+            if not global_ok:
+                self.release_risk_gate()
+                return False, f"Global risk: {global_msg}", details
+
+            # All checks passed
+            details["strategy_check"] = True
+            return True, "All pre-trade checks passed", details
+
+        except Exception as e:
+            self.release_risk_gate()
+            logger.error(f"[{self._bot_id}] Pre-trade global check error: {e}")
+            return False, f"Pre-trade error: {e}", details
