@@ -15,7 +15,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.core.models import MarketType
 
@@ -1313,10 +1314,19 @@ class BaseBot(ABC):
     # =========================================================================
 
     # State schema version for compatibility checking
+    # Increment MAJOR for breaking changes, MINOR for new fields, PATCH for fixes
     STATE_SCHEMA_VERSION = 2
+    STATE_SCHEMA_VERSION_STR = "2.0.0"
 
     # Maximum age for state to be considered valid (24 hours)
     MAX_STATE_AGE_HOURS = 24
+
+    # Maximum number of state snapshots to keep for rollback
+    MAX_STATE_SNAPSHOTS = 5
+
+    # State migration functions (override in subclass if needed)
+    # Format: {(from_version, to_version): migration_function}
+    STATE_MIGRATIONS: Dict[tuple, Callable] = {}
 
     def _create_state_snapshot(self) -> Dict[str, Any]:
         """
@@ -1436,6 +1446,225 @@ class BaseBot(ABC):
                 return False, "Checksum mismatch - state may be corrupted"
 
         return True, "State snapshot is valid"
+
+    def _migrate_state_data(
+        self,
+        state_data: Dict[str, Any],
+        from_version: int,
+        to_version: int,
+    ) -> Tuple[Dict[str, Any], bool, str]:
+        """
+        Migrate state data between schema versions.
+
+        Supports both upgrade (older -> newer) and downgrade (newer -> older).
+
+        Args:
+            state_data: State data to migrate
+            from_version: Source schema version
+            to_version: Target schema version
+
+        Returns:
+            Tuple of (migrated_data, success, message)
+        """
+        if from_version == to_version:
+            return state_data, True, "No migration needed"
+
+        # Check if migration is possible
+        direction = "upgrade" if from_version < to_version else "downgrade"
+
+        logger.info(
+            f"[{self._bot_id}] Attempting {direction} migration: "
+            f"v{from_version} -> v{to_version}"
+        )
+
+        # Look for migration function
+        migration_key = (from_version, to_version)
+        if migration_key in self.STATE_MIGRATIONS:
+            try:
+                migrated = self.STATE_MIGRATIONS[migration_key](state_data.copy())
+                logger.info(
+                    f"[{self._bot_id}] Migration successful: v{from_version} -> v{to_version}"
+                )
+                return migrated, True, f"Migrated from v{from_version} to v{to_version}"
+            except Exception as e:
+                logger.error(f"[{self._bot_id}] Migration failed: {e}")
+                return state_data, False, f"Migration failed: {e}"
+
+        # Try step-by-step migration
+        current_version = from_version
+        current_data = state_data.copy()
+        step = 1 if from_version < to_version else -1
+
+        while current_version != to_version:
+            next_version = current_version + step
+            step_key = (current_version, next_version)
+
+            if step_key in self.STATE_MIGRATIONS:
+                try:
+                    current_data = self.STATE_MIGRATIONS[step_key](current_data)
+                    current_version = next_version
+                except Exception as e:
+                    logger.error(
+                        f"[{self._bot_id}] Step migration failed at "
+                        f"v{current_version} -> v{next_version}: {e}"
+                    )
+                    return state_data, False, f"Step migration failed: {e}"
+            else:
+                # No migration path found
+                logger.warning(
+                    f"[{self._bot_id}] No migration path from "
+                    f"v{current_version} to v{next_version}"
+                )
+                return state_data, False, f"No migration path from v{from_version} to v{to_version}"
+
+        return current_data, True, f"Migrated from v{from_version} to v{to_version}"
+
+    def _validate_and_migrate_snapshot(
+        self,
+        snapshot: Dict[str, Any],
+        max_age_hours: Optional[int] = None,
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        Validate and potentially migrate a state snapshot.
+
+        Args:
+            snapshot: The state snapshot
+            max_age_hours: Maximum age in hours
+
+        Returns:
+            Tuple of (is_valid, message, migrated_state_data)
+        """
+        # Basic validation first
+        is_valid, message = self._validate_state_snapshot(snapshot, max_age_hours)
+
+        if is_valid:
+            return True, message, snapshot.get("state", {})
+
+        # Check if it's a version mismatch that we can migrate
+        if "Schema version mismatch" in message:
+            saved_version = snapshot.get("schema_version", 0)
+
+            # Try migration
+            state_data = snapshot.get("state", {})
+            migrated_data, success, migrate_msg = self._migrate_state_data(
+                state_data, saved_version, self.STATE_SCHEMA_VERSION
+            )
+
+            if success:
+                logger.info(f"[{self._bot_id}] {migrate_msg}")
+                return True, migrate_msg, migrated_data
+            else:
+                return False, f"Cannot restore: {message}. Migration failed: {migrate_msg}", {}
+
+        return False, message, {}
+
+    async def create_rollback_snapshot(
+        self,
+        description: str = "Manual snapshot",
+        mark_stable: bool = False,
+    ) -> Optional[str]:
+        """
+        Create a rollback snapshot of current state.
+
+        Args:
+            description: Description of this snapshot
+            mark_stable: Whether to mark as known stable state
+
+        Returns:
+            Snapshot ID if successful, None otherwise
+        """
+        try:
+            from src.infrastructure.version_manager import Version, VersionManager
+
+            # Get or create version manager
+            if not hasattr(self, '_version_manager'):
+                self._version_manager = VersionManager(
+                    current_version=Version.parse(self.STATE_SCHEMA_VERSION_STR),
+                    storage_path=Path(f"data/snapshots/{self._bot_id}"),
+                    max_snapshots=self.MAX_STATE_SNAPSHOTS,
+                )
+
+            # Create snapshot
+            state_data = self._get_state_data()
+            snapshot = self._version_manager.create_snapshot(
+                state_data=state_data,
+                description=description,
+                bot_id=self._bot_id,
+                mark_stable=mark_stable,
+                tags={"bot_type": self.bot_type, "symbol": self.symbol},
+            )
+
+            logger.info(
+                f"[{self._bot_id}] Created rollback snapshot: {snapshot.snapshot_id} "
+                f"(stable={mark_stable})"
+            )
+
+            return snapshot.snapshot_id
+
+        except ImportError:
+            logger.debug(f"[{self._bot_id}] Version manager not available")
+            return None
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Failed to create rollback snapshot: {e}")
+            return None
+
+    async def rollback_to_snapshot(
+        self,
+        snapshot_id: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """
+        Rollback to a previous state snapshot.
+
+        Args:
+            snapshot_id: ID of snapshot to rollback to (None = last stable)
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            from src.infrastructure.version_manager import VersionManager
+
+            if not hasattr(self, '_version_manager'):
+                return False, "Version manager not initialized - no snapshots available"
+
+            # Get snapshot
+            if snapshot_id:
+                success, state_data, message = self._version_manager.rollback_to_snapshot(
+                    snapshot_id
+                )
+            else:
+                success, state_data, message = self._version_manager.rollback_to_stable()
+
+            if not success:
+                return False, message
+
+            # Apply state (subclass should implement _apply_restored_state)
+            if hasattr(self, '_apply_restored_state'):
+                await self._apply_restored_state(state_data)
+
+            logger.info(f"[{self._bot_id}] Rollback successful: {message}")
+            return True, message
+
+        except ImportError:
+            return False, "Version manager not available"
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Rollback failed: {e}")
+            return False, f"Rollback failed: {e}"
+
+    async def mark_current_state_stable(self) -> bool:
+        """
+        Mark current state as stable (known good state).
+
+        Call this after confirming the bot is working correctly.
+
+        Returns:
+            True if successful
+        """
+        snapshot_id = await self.create_rollback_snapshot(
+            description="Marked as stable",
+            mark_stable=True,
+        )
+        return snapshot_id is not None
 
     async def _save_state_atomic(
         self,
