@@ -6479,3 +6479,757 @@ class BaseBot(ABC):
         summary["total_unrealized_pnl"] = str(summary["total_unrealized_pnl"])
 
         return summary
+
+    # =========================================================================
+    # Proportional Partial Close Allocation (部分平倉分配)
+    # Fairly distribute partial closes across strategies sharing a position
+    # =========================================================================
+
+    def _init_partial_close_tracker(self) -> None:
+        """Initialize partial close tracking."""
+        if not hasattr(self, "_partial_close_log"):
+            self._partial_close_log: List[Dict[str, Any]] = []
+            # Log of all partial closes for audit
+
+    def allocate_partial_close(
+        self,
+        symbol: str,
+        total_close_quantity: Decimal,
+        close_price: Decimal,
+        close_order_id: str,
+        contributing_bots: Optional[Dict[str, Decimal]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Allocate a partial close proportionally across contributing strategies.
+
+        When multiple strategies share a position (via SharedPositionManager),
+        this method distributes the close quantity fairly based on each
+        strategy's contribution.
+
+        Args:
+            symbol: Trading symbol
+            total_close_quantity: Total quantity being closed
+            close_price: Close price
+            close_order_id: Order ID for tracking
+            contributing_bots: Dict of bot_id -> contributed_quantity
+                              If None, uses virtual position for this bot only
+
+        Returns:
+            Allocation result with per-bot P&L attribution
+        """
+        self._init_partial_close_tracker()
+        self._init_cost_basis_tracking()
+
+        result = {
+            "symbol": symbol,
+            "total_close_quantity": str(total_close_quantity),
+            "close_price": str(close_price),
+            "close_order_id": close_order_id,
+            "allocations": {},
+            "total_pnl": Decimal("0"),
+            "unallocated_quantity": Decimal("0"),
+        }
+
+        # If no contributing bots provided, this bot owns entire position
+        if contributing_bots is None:
+            contributing_bots = {self._bot_id: total_close_quantity}
+
+        # Calculate total contribution
+        total_contribution = sum(contributing_bots.values())
+
+        if total_contribution <= 0:
+            result["unallocated_quantity"] = total_close_quantity
+            logger.warning(
+                f"[{self._bot_id}] No contributions found for partial close: {symbol}"
+            )
+            return result
+
+        remaining_to_allocate = total_close_quantity
+
+        # Allocate proportionally to each bot
+        for bot_id, contribution in contributing_bots.items():
+            if contribution <= 0:
+                continue
+
+            # Calculate proportional share
+            share_pct = contribution / total_contribution
+            allocated_qty = (total_close_quantity * share_pct).quantize(
+                Decimal("0.00000001")
+            )
+
+            # Ensure we don't over-allocate
+            allocated_qty = min(allocated_qty, remaining_to_allocate, contribution)
+
+            if allocated_qty <= 0:
+                continue
+
+            # For this bot, use FIFO cost basis
+            if bot_id == self._bot_id:
+                close_result = self.close_cost_basis_fifo(
+                    symbol=symbol,
+                    close_quantity=allocated_qty,
+                    close_price=close_price,
+                    close_order_id=close_order_id,
+                )
+                bot_pnl = close_result.get("total_realized_pnl", Decimal("0"))
+            else:
+                # For other bots, calculate estimated P&L
+                # (They should call their own close_cost_basis_fifo)
+                bot_pnl = Decimal("0")  # Unknown for other bots
+
+            result["allocations"][bot_id] = {
+                "original_contribution": str(contribution),
+                "allocated_quantity": str(allocated_qty),
+                "share_pct": str(share_pct),
+                "realized_pnl": str(bot_pnl),
+            }
+
+            result["total_pnl"] += bot_pnl
+            remaining_to_allocate -= allocated_qty
+
+        result["unallocated_quantity"] = str(remaining_to_allocate)
+        result["total_pnl"] = str(result["total_pnl"])
+
+        # Log partial close for audit
+        self._partial_close_log.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": symbol,
+            "close_order_id": close_order_id,
+            "total_quantity": str(total_close_quantity),
+            "allocations": result["allocations"],
+        })
+
+        # Keep only last 100 entries
+        self._partial_close_log = self._partial_close_log[-100:]
+
+        logger.info(
+            f"[{self._bot_id}] Partial close allocated: {symbol}, "
+            f"Total={total_close_quantity}, "
+            f"Bots={len(result['allocations'])}, "
+            f"P&L={result['total_pnl']}"
+        )
+
+        return result
+
+    def get_partial_close_history(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get partial close history for audit."""
+        self._init_partial_close_tracker()
+
+        history = self._partial_close_log
+        if symbol:
+            history = [h for h in history if h["symbol"] == symbol]
+
+        return history[-limit:]
+
+    # =========================================================================
+    # Risk Bypass Prevention (風控繞過防護)
+    # Ensure risk controls cannot be silently bypassed
+    # =========================================================================
+
+    # Data freshness thresholds
+    RISK_DATA_MAX_AGE_SECONDS = 60  # Max age of risk data before considered stale
+    RISK_CHECK_RETRY_COUNT = 3  # Retry count for failed risk checks
+    RISK_CHECK_RETRY_DELAY = 1.0  # Seconds between retries
+
+    def _init_risk_bypass_prevention(self) -> None:
+        """Initialize risk bypass prevention tracking."""
+        if not hasattr(self, "_risk_bypass_tracking"):
+            self._risk_bypass_tracking = {
+                "last_capital_update": None,
+                "last_position_sync": None,
+                "failed_risk_checks": 0,
+                "bypass_alerts": [],
+                "is_risk_data_stale": False,
+                "forced_pause_due_to_stale_data": False,
+            }
+
+    async def verify_risk_data_freshness(self) -> tuple[bool, str]:
+        """
+        Verify that risk-related data is fresh enough for decision making.
+
+        Returns:
+            Tuple of (is_fresh, message)
+        """
+        self._init_risk_bypass_prevention()
+        tracking = self._risk_bypass_tracking
+        now = datetime.now(timezone.utc)
+
+        issues = []
+
+        # Check capital data freshness
+        if tracking["last_capital_update"]:
+            age = (now - tracking["last_capital_update"]).total_seconds()
+            if age > self.RISK_DATA_MAX_AGE_SECONDS:
+                issues.append(f"Capital data stale ({age:.0f}s old)")
+        else:
+            issues.append("Capital data never updated")
+
+        # Check position sync freshness
+        if tracking["last_position_sync"]:
+            age = (now - tracking["last_position_sync"]).total_seconds()
+            if age > self.RISK_DATA_MAX_AGE_SECONDS * 2:  # More lenient for position
+                issues.append(f"Position data stale ({age:.0f}s old)")
+
+        if issues:
+            tracking["is_risk_data_stale"] = True
+            msg = "; ".join(issues)
+            logger.warning(f"[{self._bot_id}] Risk data freshness issue: {msg}")
+            return False, msg
+
+        tracking["is_risk_data_stale"] = False
+        return True, "Data is fresh"
+
+    def mark_capital_updated(self) -> None:
+        """Mark capital data as freshly updated."""
+        self._init_risk_bypass_prevention()
+        self._risk_bypass_tracking["last_capital_update"] = datetime.now(timezone.utc)
+
+    def mark_position_synced(self) -> None:
+        """Mark position data as freshly synced."""
+        self._init_risk_bypass_prevention()
+        self._risk_bypass_tracking["last_position_sync"] = datetime.now(timezone.utc)
+
+    async def execute_risk_action_with_verification(
+        self,
+        action: str,
+        action_func: Any,  # Callable or coroutine
+        verification_func: Optional[Any] = None,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Execute a risk action with verification and retry logic.
+
+        Prevents silent failures in critical risk operations.
+
+        Args:
+            action: Description of the action
+            action_func: Function/coroutine to execute
+            verification_func: Optional function to verify success
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Result dict with success status and details
+        """
+        self._init_risk_bypass_prevention()
+
+        result = {
+            "action": action,
+            "success": False,
+            "attempts": 0,
+            "verified": False,
+            "error": None,
+            "details": {},
+        }
+
+        for attempt in range(max_retries):
+            result["attempts"] = attempt + 1
+
+            try:
+                # Execute action
+                if asyncio.iscoroutinefunction(action_func):
+                    action_result = await action_func()
+                elif asyncio.iscoroutine(action_func):
+                    action_result = await action_func
+                else:
+                    action_result = action_func()
+
+                result["details"]["action_result"] = str(action_result)[:200]
+
+                # Verify if verification function provided
+                if verification_func:
+                    await asyncio.sleep(0.5)  # Brief delay for state to settle
+
+                    if asyncio.iscoroutinefunction(verification_func):
+                        verified = await verification_func()
+                    else:
+                        verified = verification_func()
+
+                    result["verified"] = bool(verified)
+
+                    if not verified:
+                        logger.warning(
+                            f"[{self._bot_id}] Risk action '{action}' executed but "
+                            f"verification failed (attempt {attempt + 1}/{max_retries})"
+                        )
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(self.RISK_CHECK_RETRY_DELAY)
+                            continue
+                        else:
+                            result["error"] = "Verification failed after all retries"
+                            return result
+                else:
+                    result["verified"] = True
+
+                result["success"] = True
+                logger.info(
+                    f"[{self._bot_id}] Risk action '{action}' executed successfully "
+                    f"(attempt {attempt + 1})"
+                )
+                return result
+
+            except Exception as e:
+                result["error"] = str(e)
+                logger.error(
+                    f"[{self._bot_id}] Risk action '{action}' failed "
+                    f"(attempt {attempt + 1}/{max_retries}): {e}"
+                )
+
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(self.RISK_CHECK_RETRY_DELAY)
+
+        # All retries failed - record bypass alert
+        self._risk_bypass_tracking["failed_risk_checks"] += 1
+        self._risk_bypass_tracking["bypass_alerts"].append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "error": result["error"],
+            "attempts": result["attempts"],
+        })
+
+        # Keep only last 50 alerts
+        self._risk_bypass_tracking["bypass_alerts"] = (
+            self._risk_bypass_tracking["bypass_alerts"][-50:]
+        )
+
+        logger.critical(
+            f"[{self._bot_id}] RISK BYPASS ALERT: Action '{action}' failed after "
+            f"{max_retries} attempts. Error: {result['error']}"
+        )
+
+        return result
+
+    async def safe_pre_trade_risk_check(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Perform pre-trade risk check with bypass prevention.
+
+        This method ensures risk checks cannot be silently skipped.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        self._init_risk_bypass_prevention()
+        tracking = self._risk_bypass_tracking
+
+        details = {
+            "data_fresh": False,
+            "risk_check_passed": False,
+            "strategy_risk_ok": False,
+            "bypass_prevented": False,
+        }
+
+        # 1. Verify data freshness
+        is_fresh, freshness_msg = await self.verify_risk_data_freshness()
+        details["data_fresh"] = is_fresh
+
+        if not is_fresh:
+            # Force update before proceeding
+            try:
+                await self._update_capital()
+                self.mark_capital_updated()
+                details["data_fresh"] = True
+            except Exception as e:
+                # Data stale and update failed - block trade
+                details["bypass_prevented"] = True
+                logger.warning(
+                    f"[{self._bot_id}] Trade blocked due to stale data: {freshness_msg}"
+                )
+                return False, f"Risk data stale and refresh failed: {e}", details
+
+        # 2. Check strategy-level risk
+        try:
+            risk_result = await self.check_strategy_risk()
+            details["strategy_risk_level"] = risk_result.get("risk_level")
+
+            if risk_result["risk_level"] in ["DANGER", "CRITICAL"]:
+                details["strategy_risk_ok"] = False
+                return False, f"Strategy risk too high: {risk_result['risk_level']}", details
+
+            details["strategy_risk_ok"] = True
+
+        except Exception as e:
+            # Risk check failed - err on side of caution
+            details["bypass_prevented"] = True
+            logger.error(f"[{self._bot_id}] Strategy risk check failed: {e}")
+            return False, f"Risk check failed (blocking trade): {e}", details
+
+        # 3. Run full pre-order validation if available
+        try:
+            if hasattr(self, "_full_pre_order_validation"):
+                is_allowed, msg, validation_details = await self._full_pre_order_validation(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=price,
+                )
+                details["risk_check_passed"] = is_allowed
+                details.update(validation_details)
+
+                if not is_allowed:
+                    return False, msg, details
+            else:
+                details["risk_check_passed"] = True
+
+        except Exception as e:
+            details["bypass_prevented"] = True
+            logger.error(f"[{self._bot_id}] Pre-order validation failed: {e}")
+            return False, f"Pre-order validation failed: {e}", details
+
+        return True, "All risk checks passed", details
+
+    def get_risk_bypass_status(self) -> Dict[str, Any]:
+        """Get current risk bypass prevention status."""
+        self._init_risk_bypass_prevention()
+        tracking = self._risk_bypass_tracking
+
+        return {
+            "bot_id": self._bot_id,
+            "last_capital_update": (
+                tracking["last_capital_update"].isoformat()
+                if tracking["last_capital_update"] else None
+            ),
+            "last_position_sync": (
+                tracking["last_position_sync"].isoformat()
+                if tracking["last_position_sync"] else None
+            ),
+            "failed_risk_checks": tracking["failed_risk_checks"],
+            "is_risk_data_stale": tracking["is_risk_data_stale"],
+            "forced_pause_due_to_stale_data": tracking["forced_pause_due_to_stale_data"],
+            "recent_bypass_alerts": tracking["bypass_alerts"][-5:],
+        }
+
+    # =========================================================================
+    # Risk False Positive Prevention (風控誤判防護)
+    # Prevent legitimate trades from being incorrectly blocked
+    # =========================================================================
+
+    # Alert persistence thresholds
+    ALERT_PERSISTENCE_WINDOW_SECONDS = 30  # Time window for alert persistence check
+    ALERT_PERSISTENCE_COUNT = 2  # Number of consecutive alerts before action
+    CONSECUTIVE_LOSS_DECAY_HOURS = 24  # Hours before consecutive losses decay
+
+    def _init_false_positive_prevention(self) -> None:
+        """Initialize false positive prevention tracking."""
+        if not hasattr(self, "_fp_prevention"):
+            self._fp_prevention = {
+                "alert_history": [],  # Recent alerts for persistence check
+                "blocked_orders": [],  # Orders blocked for review
+                "false_positive_overrides": [],  # Manual overrides
+                "consecutive_loss_start_time": None,
+                "price_deviation_overrides": {},  # symbol -> max_deviation
+            }
+
+    def record_risk_alert(
+        self,
+        alert_type: str,
+        level: str,
+        metric_value: Decimal,
+        threshold: Decimal,
+        message: str,
+    ) -> bool:
+        """
+        Record a risk alert and check if it persists.
+
+        Returns True if alert persists (should take action).
+
+        Args:
+            alert_type: Type of alert (e.g., "consecutive_loss", "drawdown")
+            level: Alert level
+            metric_value: Current metric value
+            threshold: Threshold that was exceeded
+            message: Alert message
+
+        Returns:
+            True if alert persists and action should be taken
+        """
+        self._init_false_positive_prevention()
+        now = datetime.now(timezone.utc)
+
+        # Record alert
+        alert = {
+            "timestamp": now.isoformat(),
+            "type": alert_type,
+            "level": level,
+            "metric_value": str(metric_value),
+            "threshold": str(threshold),
+            "message": message,
+        }
+        self._fp_prevention["alert_history"].append(alert)
+
+        # Keep only recent alerts
+        cutoff = now - timedelta(seconds=self.ALERT_PERSISTENCE_WINDOW_SECONDS * 2)
+        self._fp_prevention["alert_history"] = [
+            a for a in self._fp_prevention["alert_history"]
+            if datetime.fromisoformat(a["timestamp"]) > cutoff
+        ]
+
+        # Check persistence
+        recent_alerts = [
+            a for a in self._fp_prevention["alert_history"]
+            if a["type"] == alert_type
+            and datetime.fromisoformat(a["timestamp"]) > (
+                now - timedelta(seconds=self.ALERT_PERSISTENCE_WINDOW_SECONDS)
+            )
+        ]
+
+        if len(recent_alerts) >= self.ALERT_PERSISTENCE_COUNT:
+            logger.info(
+                f"[{self._bot_id}] Alert '{alert_type}' persists "
+                f"({len(recent_alerts)} occurrences in {self.ALERT_PERSISTENCE_WINDOW_SECONDS}s)"
+            )
+            return True
+
+        logger.debug(
+            f"[{self._bot_id}] Alert '{alert_type}' recorded but not persistent yet "
+            f"({len(recent_alerts)}/{self.ALERT_PERSISTENCE_COUNT})"
+        )
+        return False
+
+    def apply_consecutive_loss_decay(self) -> int:
+        """
+        Apply time decay to consecutive loss counter.
+
+        Consecutive losses should gradually reset over time to prevent
+        permanent strategy lockout from a single unlucky streak.
+
+        Returns:
+            Adjusted consecutive loss count
+        """
+        self._init_strategy_risk_tracking()
+        self._init_false_positive_prevention()
+
+        risk = self._strategy_risk
+        fp = self._fp_prevention
+        now = datetime.now(timezone.utc)
+
+        current_losses = risk["consecutive_losses"]
+
+        if current_losses == 0:
+            fp["consecutive_loss_start_time"] = None
+            return 0
+
+        if fp["consecutive_loss_start_time"] is None:
+            fp["consecutive_loss_start_time"] = now
+            return current_losses
+
+        # Calculate decay
+        hours_elapsed = (now - fp["consecutive_loss_start_time"]).total_seconds() / 3600
+
+        if hours_elapsed >= self.CONSECUTIVE_LOSS_DECAY_HOURS:
+            # Full decay - reset to 0
+            decay_amount = current_losses
+            risk["consecutive_losses"] = 0
+            fp["consecutive_loss_start_time"] = None
+            logger.info(
+                f"[{self._bot_id}] Consecutive losses fully decayed "
+                f"(was {current_losses}, now 0 after {hours_elapsed:.1f}h)"
+            )
+            return 0
+        elif hours_elapsed >= self.CONSECUTIVE_LOSS_DECAY_HOURS / 2:
+            # Half decay - reduce by half (minimum 1)
+            decay_amount = max(1, current_losses // 2)
+            risk["consecutive_losses"] = current_losses - decay_amount
+            logger.info(
+                f"[{self._bot_id}] Consecutive losses partially decayed "
+                f"(was {current_losses}, now {risk['consecutive_losses']} "
+                f"after {hours_elapsed:.1f}h)"
+            )
+            return risk["consecutive_losses"]
+
+        return current_losses
+
+    def set_price_deviation_override(
+        self,
+        symbol: str,
+        max_deviation_pct: Decimal,
+        reason: str = "",
+    ) -> None:
+        """
+        Set custom price deviation threshold for a specific symbol.
+
+        Use this to prevent false positives for volatile assets.
+
+        Args:
+            symbol: Trading symbol
+            max_deviation_pct: Maximum allowed deviation (e.g., 0.05 for 5%)
+            reason: Reason for override
+        """
+        self._init_false_positive_prevention()
+
+        self._fp_prevention["price_deviation_overrides"][symbol] = {
+            "max_deviation_pct": max_deviation_pct,
+            "reason": reason,
+            "set_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        logger.info(
+            f"[{self._bot_id}] Price deviation override set for {symbol}: "
+            f"{max_deviation_pct:.2%}, Reason: {reason}"
+        )
+
+    def get_price_deviation_threshold(self, symbol: str) -> Decimal:
+        """
+        Get price deviation threshold for a symbol.
+
+        Returns symbol-specific override if set, otherwise default.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Maximum allowed price deviation percentage
+        """
+        self._init_false_positive_prevention()
+
+        override = self._fp_prevention["price_deviation_overrides"].get(symbol)
+        if override:
+            return override["max_deviation_pct"]
+
+        # Default threshold (can be overridden per-symbol)
+        return Decimal("0.05")  # 5% default (more lenient than pre_trade_checker)
+
+    def record_blocked_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        block_reason: str,
+    ) -> str:
+        """
+        Record an order that was blocked for later review.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+            block_reason: Reason for blocking
+
+        Returns:
+            Block ID for reference
+        """
+        self._init_false_positive_prevention()
+
+        block_id = f"{self._bot_id}_{int(time.time()*1000)}"
+
+        record = {
+            "block_id": block_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": symbol,
+            "side": side,
+            "quantity": str(quantity),
+            "price": str(price),
+            "block_reason": block_reason,
+            "reviewed": False,
+            "override_applied": False,
+        }
+
+        self._fp_prevention["blocked_orders"].append(record)
+
+        # Keep only last 100 blocked orders
+        self._fp_prevention["blocked_orders"] = (
+            self._fp_prevention["blocked_orders"][-100:]
+        )
+
+        logger.warning(
+            f"[{self._bot_id}] Order blocked: {side} {quantity} {symbol} @ {price}, "
+            f"Reason: {block_reason}, Block ID: {block_id}"
+        )
+
+        return block_id
+
+    def get_blocked_orders(
+        self,
+        symbol: Optional[str] = None,
+        unreviewed_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get blocked orders for review."""
+        self._init_false_positive_prevention()
+
+        orders = self._fp_prevention["blocked_orders"]
+
+        if symbol:
+            orders = [o for o in orders if o["symbol"] == symbol]
+
+        if unreviewed_only:
+            orders = [o for o in orders if not o["reviewed"]]
+
+        return orders
+
+    def override_blocked_order(
+        self,
+        block_id: str,
+        reason: str,
+    ) -> bool:
+        """
+        Override a blocked order (mark as reviewed and allow similar in future).
+
+        Args:
+            block_id: Block ID from record_blocked_order
+            reason: Reason for override
+
+        Returns:
+            True if override applied
+        """
+        self._init_false_positive_prevention()
+
+        for order in self._fp_prevention["blocked_orders"]:
+            if order["block_id"] == block_id:
+                order["reviewed"] = True
+                order["override_applied"] = True
+                order["override_reason"] = reason
+                order["override_at"] = datetime.now(timezone.utc).isoformat()
+
+                # Record override for future reference
+                self._fp_prevention["false_positive_overrides"].append({
+                    "block_id": block_id,
+                    "symbol": order["symbol"],
+                    "block_reason": order["block_reason"],
+                    "override_reason": reason,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+                logger.info(
+                    f"[{self._bot_id}] Override applied for block {block_id}: {reason}"
+                )
+                return True
+
+        return False
+
+    def get_false_positive_status(self) -> Dict[str, Any]:
+        """Get false positive prevention status."""
+        self._init_false_positive_prevention()
+        fp = self._fp_prevention
+
+        return {
+            "bot_id": self._bot_id,
+            "recent_alerts": len(fp["alert_history"]),
+            "blocked_orders_total": len(fp["blocked_orders"]),
+            "blocked_orders_unreviewed": len([
+                o for o in fp["blocked_orders"] if not o["reviewed"]
+            ]),
+            "overrides_applied": len(fp["false_positive_overrides"]),
+            "price_deviation_overrides": {
+                symbol: {
+                    "max_pct": str(v["max_deviation_pct"]),
+                    "reason": v["reason"],
+                }
+                for symbol, v in fp["price_deviation_overrides"].items()
+            },
+        }

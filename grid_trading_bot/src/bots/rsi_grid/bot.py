@@ -1206,7 +1206,11 @@ class RSIGridBot(BaseBot):
             try:
                 # Update capital and drawdown periodically
                 await self._update_capital()
+                self.mark_capital_updated()  # Track data freshness for bypass prevention
                 self._stats.update_drawdown(self._capital, self._initial_capital)
+
+                # Apply consecutive loss decay (prevents permanent lockout)
+                self.apply_consecutive_loss_decay()
 
                 # Update virtual position unrealized P&L
                 if self._position:
