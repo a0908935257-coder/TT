@@ -2229,6 +2229,523 @@ class BaseBot(ABC):
             return False
 
     # =========================================================================
+    # Order Type Validation and Fallback
+    # =========================================================================
+
+    # Supported order types for different exchanges
+    SUPPORTED_ORDER_TYPES = ["MARKET", "LIMIT", "STOP_MARKET", "STOP_LIMIT"]
+
+    async def _validate_order_type(
+        self,
+        order_type: str,
+        symbol: str,
+    ) -> tuple[bool, str]:
+        """
+        Validate order type is supported by exchange.
+
+        Args:
+            order_type: Order type to validate
+            symbol: Trading symbol
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        order_type_upper = order_type.upper()
+
+        if order_type_upper not in self.SUPPORTED_ORDER_TYPES:
+            return False, f"Unsupported order type: {order_type}"
+
+        # Check exchange-specific support via symbol info
+        symbol_info = await self._get_symbol_info(symbol)
+        if symbol_info:
+            supported_types = getattr(symbol_info, "order_types", None)
+            if supported_types and order_type_upper not in supported_types:
+                return False, f"Order type {order_type} not supported for {symbol}"
+
+        return True, "OK"
+
+    def _get_fallback_order_type(self, original_type: str) -> Optional[str]:
+        """
+        Get fallback order type if original is not supported.
+
+        Args:
+            original_type: Original order type
+
+        Returns:
+            Fallback order type or None
+        """
+        fallback_map = {
+            "LIMIT": "MARKET",  # If LIMIT fails, use MARKET
+            "STOP_LIMIT": "STOP_MARKET",  # If STOP_LIMIT fails, use STOP_MARKET
+        }
+        return fallback_map.get(original_type.upper())
+
+    # =========================================================================
+    # Slippage Protection
+    # =========================================================================
+
+    # Default slippage limits
+    DEFAULT_MAX_SLIPPAGE_PCT = Decimal("0.5")  # 0.5% max slippage
+    WARNING_SLIPPAGE_PCT = Decimal("0.1")  # 0.1% warning threshold
+
+    def _init_slippage_tracking(self) -> None:
+        """Initialize slippage tracking."""
+        if not hasattr(self, "_slippage_records"):
+            self._slippage_records: list = []
+        if not hasattr(self, "_max_slippage_pct"):
+            self._max_slippage_pct = self.DEFAULT_MAX_SLIPPAGE_PCT
+
+    def _record_slippage(
+        self,
+        expected_price: Decimal,
+        actual_price: Decimal,
+        side: str,
+        quantity: Decimal,
+    ) -> Decimal:
+        """
+        Record and calculate slippage for an order.
+
+        Args:
+            expected_price: Expected execution price
+            actual_price: Actual execution price
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+
+        Returns:
+            Slippage percentage (positive = unfavorable)
+        """
+        self._init_slippage_tracking()
+
+        # Calculate slippage (positive = unfavorable for trader)
+        if side.upper() == "BUY":
+            # For BUY: slippage = (actual - expected) / expected
+            slippage = actual_price - expected_price
+        else:
+            # For SELL: slippage = (expected - actual) / expected
+            slippage = expected_price - actual_price
+
+        slippage_pct = (slippage / expected_price * Decimal("100")) if expected_price > 0 else Decimal("0")
+
+        # Record
+        record = {
+            "timestamp": time.time(),
+            "expected_price": str(expected_price),
+            "actual_price": str(actual_price),
+            "side": side,
+            "quantity": str(quantity),
+            "slippage": str(slippage),
+            "slippage_pct": str(slippage_pct),
+        }
+        self._slippage_records.append(record)
+
+        # Keep last 100 records
+        if len(self._slippage_records) > 100:
+            self._slippage_records = self._slippage_records[-100:]
+
+        # Log significant slippage
+        if abs(slippage_pct) > self.WARNING_SLIPPAGE_PCT:
+            logger.warning(
+                f"[{self._bot_id}] Significant slippage: {slippage_pct:.3f}% "
+                f"(expected={expected_price}, actual={actual_price}, side={side})"
+            )
+
+        return slippage_pct
+
+    def _check_slippage_acceptable(
+        self,
+        expected_price: Decimal,
+        actual_price: Decimal,
+        side: str,
+        max_slippage_pct: Optional[Decimal] = None,
+    ) -> tuple[bool, Decimal]:
+        """
+        Check if slippage is within acceptable limits.
+
+        Args:
+            expected_price: Expected execution price
+            actual_price: Actual execution price
+            side: Order side (BUY/SELL)
+            max_slippage_pct: Maximum acceptable slippage percentage
+
+        Returns:
+            Tuple of (is_acceptable, slippage_pct)
+        """
+        if max_slippage_pct is None:
+            max_slippage_pct = self._max_slippage_pct if hasattr(self, "_max_slippage_pct") else self.DEFAULT_MAX_SLIPPAGE_PCT
+
+        # Calculate slippage
+        if side.upper() == "BUY":
+            slippage = actual_price - expected_price
+        else:
+            slippage = expected_price - actual_price
+
+        slippage_pct = (slippage / expected_price * Decimal("100")) if expected_price > 0 else Decimal("0")
+
+        # Positive slippage means unfavorable
+        is_acceptable = slippage_pct <= max_slippage_pct
+
+        if not is_acceptable:
+            logger.warning(
+                f"[{self._bot_id}] Slippage exceeds limit: {slippage_pct:.3f}% > {max_slippage_pct}%"
+            )
+
+        return is_acceptable, slippage_pct
+
+    def get_slippage_stats(self) -> Dict[str, Any]:
+        """
+        Get slippage statistics.
+
+        Returns:
+            Dictionary with slippage statistics
+        """
+        self._init_slippage_tracking()
+
+        if not self._slippage_records:
+            return {
+                "count": 0,
+                "avg_slippage_pct": "0",
+                "max_slippage_pct": "0",
+                "min_slippage_pct": "0",
+            }
+
+        slippages = [Decimal(r["slippage_pct"]) for r in self._slippage_records]
+        return {
+            "count": len(slippages),
+            "avg_slippage_pct": str(sum(slippages) / len(slippages)),
+            "max_slippage_pct": str(max(slippages)),
+            "min_slippage_pct": str(min(slippages)),
+            "recent": self._slippage_records[-5:],
+        }
+
+    async def _estimate_slippage(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+    ) -> tuple[Decimal, Decimal]:
+        """
+        Estimate slippage before placing order using orderbook.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+
+        Returns:
+            Tuple of (estimated_fill_price, estimated_slippage_pct)
+        """
+        try:
+            # Get orderbook
+            orderbook = await self._exchange.futures.get_orderbook(symbol, limit=20)
+
+            if not orderbook:
+                return Decimal("0"), Decimal("0")
+
+            # Use asks for BUY, bids for SELL
+            levels = orderbook.asks if side.upper() == "BUY" else orderbook.bids
+
+            if not levels:
+                return Decimal("0"), Decimal("0")
+
+            # Best price
+            best_price = levels[0][0]
+
+            # Calculate average fill price
+            remaining_qty = quantity
+            total_cost = Decimal("0")
+
+            for price, qty in levels:
+                fill_qty = min(remaining_qty, qty)
+                total_cost += price * fill_qty
+                remaining_qty -= fill_qty
+                if remaining_qty <= 0:
+                    break
+
+            if remaining_qty > 0:
+                # Not enough liquidity
+                logger.warning(
+                    f"[{self._bot_id}] Insufficient liquidity for {quantity} {symbol}"
+                )
+                return Decimal("0"), Decimal("100")  # 100% slippage = no liquidity
+
+            avg_fill_price = total_cost / quantity
+            slippage_pct = abs(avg_fill_price - best_price) / best_price * Decimal("100")
+
+            return avg_fill_price, slippage_pct
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Failed to estimate slippage: {e}")
+            return Decimal("0"), Decimal("0")
+
+    # =========================================================================
+    # Partial Fill Handling
+    # =========================================================================
+
+    # Minimum fill percentage to consider order successful
+    MIN_FILL_PERCENTAGE = Decimal("80")  # 80% minimum fill
+
+    async def _handle_partial_fill(
+        self,
+        order_id: str,
+        symbol: str,
+        expected_quantity: Decimal,
+        filled_quantity: Decimal,
+        avg_price: Optional[Decimal] = None,
+    ) -> Dict[str, Any]:
+        """
+        Handle partial fill situation.
+
+        Args:
+            order_id: Order ID
+            symbol: Trading symbol
+            expected_quantity: Expected order quantity
+            filled_quantity: Actually filled quantity
+            avg_price: Average fill price
+
+        Returns:
+            Dictionary with fill details and recommended action
+        """
+        fill_pct = (filled_quantity / expected_quantity * Decimal("100")) if expected_quantity > 0 else Decimal("0")
+        unfilled_qty = expected_quantity - filled_quantity
+
+        result = {
+            "order_id": order_id,
+            "expected_quantity": str(expected_quantity),
+            "filled_quantity": str(filled_quantity),
+            "unfilled_quantity": str(unfilled_qty),
+            "fill_percentage": str(fill_pct),
+            "avg_price": str(avg_price) if avg_price else None,
+            "is_acceptable": fill_pct >= self.MIN_FILL_PERCENTAGE,
+            "action": "none",
+        }
+
+        if filled_quantity == Decimal("0"):
+            result["action"] = "retry_or_cancel"
+            logger.warning(
+                f"[{self._bot_id}] Order {order_id} not filled at all - "
+                f"consider retry or cancel"
+            )
+
+        elif fill_pct < self.MIN_FILL_PERCENTAGE:
+            result["action"] = "cancel_remaining"
+            logger.warning(
+                f"[{self._bot_id}] Order {order_id} partial fill below threshold: "
+                f"{fill_pct:.1f}% < {self.MIN_FILL_PERCENTAGE}%"
+            )
+
+        else:
+            result["action"] = "accept"
+            if unfilled_qty > 0:
+                logger.info(
+                    f"[{self._bot_id}] Order {order_id} acceptable partial fill: "
+                    f"{fill_pct:.1f}% ({filled_quantity}/{expected_quantity})"
+                )
+
+        return result
+
+    async def _wait_for_fill_with_partial_handling(
+        self,
+        order_id: str,
+        symbol: str,
+        expected_quantity: Decimal,
+        timeout_seconds: float = 30.0,
+        poll_interval: float = 1.0,
+        cancel_on_timeout: bool = True,
+    ) -> tuple[bool, Dict[str, Any]]:
+        """
+        Wait for order fill with proper partial fill handling.
+
+        Args:
+            order_id: Order ID to monitor
+            symbol: Trading symbol
+            expected_quantity: Expected fill quantity
+            timeout_seconds: Maximum wait time
+            poll_interval: Polling interval
+            cancel_on_timeout: Whether to cancel remaining on timeout
+
+        Returns:
+            Tuple of (is_successful, fill_details)
+        """
+        start_time = time.time()
+        last_filled_qty = Decimal("0")
+
+        while True:
+            elapsed = time.time() - start_time
+
+            if elapsed > timeout_seconds:
+                # Timeout - check final status
+                try:
+                    order = await self._exchange.futures.get_order(
+                        symbol=symbol,
+                        order_id=order_id,
+                    )
+
+                    if order:
+                        filled_qty = getattr(order, "filled_qty", Decimal("0"))
+                        avg_price = getattr(order, "avg_price", None)
+                        status = getattr(order, "status", "").upper()
+
+                        # Handle partial fill on timeout
+                        if filled_qty > 0 and filled_qty < expected_quantity:
+                            fill_result = await self._handle_partial_fill(
+                                order_id, symbol, expected_quantity, filled_qty, avg_price
+                            )
+
+                            # Cancel remaining if requested
+                            if cancel_on_timeout and status not in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
+                                logger.info(
+                                    f"[{self._bot_id}] Cancelling remaining order {order_id} "
+                                    f"after timeout"
+                                )
+                                await self._cancel_order_with_timeout(order_id, symbol)
+
+                            return fill_result["is_acceptable"], fill_result
+
+                        elif filled_qty == expected_quantity:
+                            return True, {
+                                "order_id": order_id,
+                                "filled_quantity": str(filled_qty),
+                                "avg_price": str(avg_price) if avg_price else None,
+                                "action": "filled",
+                            }
+
+                except Exception as e:
+                    logger.error(f"[{self._bot_id}] Error getting final order status: {e}")
+
+                return False, {
+                    "order_id": order_id,
+                    "action": "timeout",
+                    "message": f"Order timed out after {timeout_seconds}s",
+                }
+
+            try:
+                # Poll order status
+                order = await self._exchange.futures.get_order(
+                    symbol=symbol,
+                    order_id=order_id,
+                )
+
+                if order:
+                    status = getattr(order, "status", "").upper()
+                    filled_qty = getattr(order, "filled_qty", Decimal("0"))
+                    avg_price = getattr(order, "avg_price", None)
+
+                    if status == "FILLED":
+                        return True, {
+                            "order_id": order_id,
+                            "filled_quantity": str(filled_qty),
+                            "avg_price": str(avg_price) if avg_price else None,
+                            "action": "filled",
+                        }
+
+                    if status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                        # Order ended - handle any partial fill
+                        if filled_qty > 0:
+                            fill_result = await self._handle_partial_fill(
+                                order_id, symbol, expected_quantity, filled_qty, avg_price
+                            )
+                            return fill_result["is_acceptable"], fill_result
+
+                        return False, {
+                            "order_id": order_id,
+                            "status": status,
+                            "action": "failed",
+                        }
+
+                    # Still active - log progress
+                    if filled_qty > last_filled_qty:
+                        logger.debug(
+                            f"[{self._bot_id}] Order {order_id} partial fill progress: "
+                            f"{filled_qty}/{expected_quantity}"
+                        )
+                        last_filled_qty = filled_qty
+
+            except Exception as e:
+                logger.warning(f"[{self._bot_id}] Error polling order status: {e}")
+
+            await asyncio.sleep(poll_interval)
+
+    async def _place_order_with_slippage_check(
+        self,
+        order_func: Callable,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        expected_price: Decimal,
+        max_slippage_pct: Optional[Decimal] = None,
+    ) -> tuple[Optional[Any], Dict[str, Any]]:
+        """
+        Place order with pre and post slippage checks.
+
+        Args:
+            order_func: Async function that places the order
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            expected_price: Expected execution price
+            max_slippage_pct: Maximum acceptable slippage
+
+        Returns:
+            Tuple of (order_result, slippage_info)
+        """
+        slippage_info = {
+            "pre_check_passed": True,
+            "estimated_slippage_pct": "0",
+            "actual_slippage_pct": "0",
+            "slippage_acceptable": True,
+        }
+
+        # Pre-order slippage estimate
+        est_price, est_slippage = await self._estimate_slippage(symbol, side, quantity)
+        slippage_info["estimated_slippage_pct"] = str(est_slippage)
+
+        if max_slippage_pct is None:
+            max_slippage_pct = self.DEFAULT_MAX_SLIPPAGE_PCT
+
+        if est_slippage > max_slippage_pct:
+            logger.warning(
+                f"[{self._bot_id}] Pre-order slippage check failed: "
+                f"estimated {est_slippage:.2f}% > max {max_slippage_pct}%"
+            )
+            slippage_info["pre_check_passed"] = False
+
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title="⚠️ High Slippage Warning",
+                    message=(
+                        f"Bot: {self._bot_id}\n"
+                        f"Symbol: {symbol}\n"
+                        f"Estimated slippage: {est_slippage:.2f}%\n"
+                        f"Max allowed: {max_slippage_pct}%\n"
+                        f"Order blocked"
+                    ),
+                )
+
+            return None, slippage_info
+
+        # Place order
+        order = await order_func()
+
+        if order:
+            actual_price = getattr(order, "avg_price", None) or expected_price
+            is_acceptable, actual_slippage = self._check_slippage_acceptable(
+                expected_price, actual_price, side, max_slippage_pct
+            )
+            slippage_info["actual_slippage_pct"] = str(actual_slippage)
+            slippage_info["slippage_acceptable"] = is_acceptable
+
+            # Record slippage
+            self._record_slippage(expected_price, actual_price, side, quantity)
+
+            if not is_acceptable:
+                logger.warning(
+                    f"[{self._bot_id}] Post-order slippage exceeded: "
+                    f"{actual_slippage:.2f}% > {max_slippage_pct}%"
+                )
+
+        return order, slippage_info
+
+    # =========================================================================
     # Pre-Order Validation (Combined Checks)
     # =========================================================================
 

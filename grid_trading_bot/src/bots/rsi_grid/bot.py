@@ -152,9 +152,8 @@ class RSIGridBot(BaseBot):
         self._signal_cooldown: int = 0
         self._cooldown_bars: int = 2  # Minimum bars between signals
 
-        # Slippage tracking
-        self._slippage_records: List[Dict] = []
-        self._max_slippage_records: int = 100
+        # Slippage tracking (from BaseBot)
+        self._init_slippage_tracking()
 
         # Hysteresis: track last triggered level to prevent oscillation
         self._last_triggered_level: Optional[int] = None
@@ -738,17 +737,37 @@ class RSIGridBot(BaseBot):
                 fill_price = order.avg_price if order.avg_price else price
                 fill_qty = order.filled_qty
 
-                # Record slippage for backtest vs live comparison
-                slippage = fill_price - price
-                slippage_pct = (slippage / price * Decimal("100")) if price > 0 else Decimal("0")
-                self._record_slippage(
+                # Check for partial fill
+                if fill_qty < quantity:
+                    fill_result = await self._handle_partial_fill(
+                        order_id=str(getattr(order, "order_id", "")),
+                        symbol=self._config.symbol,
+                        expected_quantity=quantity,
+                        filled_quantity=fill_qty,
+                        avg_price=fill_price,
+                    )
+                    if not fill_result["is_acceptable"]:
+                        logger.warning(f"Partial fill not acceptable: {fill_result}")
+                        return False
+
+                # Record and check slippage (using BaseBot method)
+                slippage_pct = self._record_slippage(
                     expected_price=price,
                     actual_price=fill_price,
-                    slippage=slippage,
-                    slippage_pct=slippage_pct,
-                    side=side.value,
+                    side=order_side,
                     quantity=fill_qty,
                 )
+
+                # Check if slippage is acceptable
+                is_acceptable, _ = self._check_slippage_acceptable(
+                    expected_price=price,
+                    actual_price=fill_price,
+                    side=order_side,
+                )
+                if not is_acceptable:
+                    logger.warning(
+                        f"Slippage exceeded limit ({slippage_pct:.4f}% > {self.DEFAULT_MAX_SLIPPAGE_PCT}%)"
+                    )
 
                 if self._position and self._position.side == side:
                     # Add to position (DCA)
@@ -1320,66 +1339,9 @@ class RSIGridBot(BaseBot):
         return value * multipliers.get(unit, 60)
 
     # =========================================================================
-    # Slippage Tracking
+    # Slippage Tracking - inherited from BaseBot
+    # Methods: _record_slippage, _check_slippage_acceptable, get_slippage_stats
     # =========================================================================
-
-    def _record_slippage(
-        self,
-        expected_price: Decimal,
-        actual_price: Decimal,
-        slippage: Decimal,
-        slippage_pct: Decimal,
-        side: str,
-        quantity: Decimal,
-    ) -> None:
-        """
-        Record slippage for monitoring backtest vs live discrepancy.
-
-        Args:
-            expected_price: Grid level price (same as backtest)
-            actual_price: Actual fill price from exchange
-            slippage: Absolute slippage (actual - expected)
-            slippage_pct: Percentage slippage
-            side: Trade side (long/short)
-            quantity: Trade quantity
-        """
-        record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "expected_price": str(expected_price),
-            "actual_price": str(actual_price),
-            "slippage": str(slippage),
-            "slippage_pct": str(slippage_pct),
-            "side": side,
-            "quantity": str(quantity),
-        }
-        self._slippage_records.append(record)
-
-        # Trim old records
-        if len(self._slippage_records) > self._max_slippage_records:
-            self._slippage_records = self._slippage_records[-self._max_slippage_records:]
-
-        # Log significant slippage
-        if abs(slippage_pct) > Decimal("0.1"):  # > 0.1%
-            logger.warning(
-                f"Significant slippage: {slippage_pct:.4f}% "
-                f"(expected {expected_price}, got {actual_price})"
-            )
-        else:
-            logger.debug(f"Slippage: {slippage_pct:.4f}%")
-
-    def get_slippage_stats(self) -> Dict:
-        """Get slippage statistics for monitoring."""
-        if not self._slippage_records:
-            return {"count": 0, "avg_pct": "0", "max_pct": "0"}
-
-        slippages = [Decimal(r["slippage_pct"]) for r in self._slippage_records]
-        return {
-            "count": len(slippages),
-            "avg_pct": str(sum(slippages) / len(slippages)),
-            "max_pct": str(max(abs(s) for s in slippages)),
-            "min_pct": str(min(slippages)),
-            "recent": self._slippage_records[-5:],
-        }
 
     # =========================================================================
     # BaseBot Extra Methods

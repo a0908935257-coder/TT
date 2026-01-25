@@ -137,6 +137,9 @@ class BollingerBot(BaseBot):
         self._prev_kline: Optional[Kline] = None
         self._interval_seconds: int = self._parse_interval_to_seconds(config.timeframe)
 
+        # Slippage tracking (from BaseBot)
+        self._init_slippage_tracking()
+
     # =========================================================================
     # Properties
     # =========================================================================
@@ -867,6 +870,38 @@ class BollingerBot(BaseBot):
             if order:
                 fill_price = order.avg_price if order.avg_price else price
                 fill_qty = order.filled_qty
+
+                # Check for partial fill
+                if fill_qty < quantity:
+                    fill_result = await self._handle_partial_fill(
+                        order_id=str(getattr(order, "order_id", "")),
+                        symbol=self._config.symbol,
+                        expected_quantity=quantity,
+                        filled_quantity=fill_qty,
+                        avg_price=fill_price,
+                    )
+                    if not fill_result["is_acceptable"]:
+                        logger.warning(f"Partial fill not acceptable: {fill_result}")
+                        return False
+
+                # Record and check slippage (using BaseBot method)
+                slippage_pct = self._record_slippage(
+                    expected_price=price,
+                    actual_price=fill_price,
+                    side=order_side,
+                    quantity=fill_qty,
+                )
+
+                # Check if slippage is acceptable
+                is_acceptable, _ = self._check_slippage_acceptable(
+                    expected_price=price,
+                    actual_price=fill_price,
+                    side=order_side,
+                )
+                if not is_acceptable:
+                    logger.warning(
+                        f"Slippage exceeded limit ({slippage_pct:.4f}% > {self.DEFAULT_MAX_SLIPPAGE_PCT}%)"
+                    )
 
                 # Calculate TP/SL prices
                 grid_spacing = self._grid.grid_spacing if self._grid else price * Decimal("0.01")
