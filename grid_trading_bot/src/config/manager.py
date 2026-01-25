@@ -1,17 +1,38 @@
 """
 Configuration Manager.
 
-Provides a singleton configuration manager with hot reload support
-and change notification callbacks.
+Provides a singleton configuration manager with hot reload support,
+change notification callbacks, and comprehensive validation.
+
+Features:
+- Configuration validation with clear error messages
+- Hot reload support with validation
+- Configuration sync verification
+- Deployment version tracking
+- Auto-correction of common mistakes (unit conversion)
 """
 
+import hashlib
+import json
 import threading
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .exceptions import ConfigNotLoadedError, ConfigReloadError
+from .exceptions import ConfigNotLoadedError, ConfigReloadError, ConfigValidationError
 from .loader import ConfigLoader
 from .models import AppConfig
+from .validator import (
+    ConfigValidator,
+    ValidationRule,
+    Unit,
+    compute_config_checksum,
+)
+
+from src.core import get_logger
+
+logger = get_logger(__name__)
 
 
 class ConfigManager:
@@ -225,6 +246,196 @@ class ConfigManager:
             True if configuration is loaded
         """
         return self._config is not None
+
+    # =========================================================================
+    # Bot Configuration Validation
+    # =========================================================================
+
+    def validate_bot_config(
+        self,
+        bot_type: str,
+        config: Dict[str, Any],
+        auto_correct: bool = True,
+    ) -> Tuple[bool, List[str], Dict[str, Any]]:
+        """
+        Validate a bot's configuration with detailed error messages.
+
+        Args:
+            bot_type: Bot type (grid_futures, bollinger, supertrend, rsi_grid)
+            config: Configuration dictionary to validate
+            auto_correct: Whether to auto-correct common mistakes
+
+        Returns:
+            Tuple of (is_valid, errors, normalized_config)
+
+        Example:
+            >>> is_valid, errors, config = manager.validate_bot_config(
+            ...     "grid_futures",
+            ...     {"symbol": "BTCUSDT", "leverage": 10, "stop_loss_pct": 5}
+            ... )
+            >>> # stop_loss_pct=5 will be auto-corrected to 0.05
+        """
+        validator = self._get_bot_validator(bot_type)
+
+        # Auto-correct common mistakes
+        if auto_correct:
+            config = self._auto_correct_config(config)
+
+        return validator.validate(config)
+
+    def _get_bot_validator(self, bot_type: str) -> ConfigValidator:
+        """Get validator for a specific bot type."""
+        validator = ConfigValidator()
+
+        # Add bot-specific rules
+        if bot_type == "grid_futures":
+            validator.add_rule(ValidationRule(
+                name="direction",
+                unit=Unit.COUNT,
+                allowed_values=["LONG", "SHORT", "NEUTRAL", "long", "short", "neutral"],
+                required=False,
+                default="NEUTRAL",
+                description="Grid direction",
+            ))
+
+        elif bot_type == "bollinger":
+            validator.add_rule(ValidationRule(
+                name="take_profit_grids",
+                unit=Unit.COUNT,
+                min_value=Decimal("1"),
+                max_value=Decimal("10"),
+                required=False,
+                default=1,
+                description="Number of grids for take profit",
+            ))
+
+        elif bot_type == "supertrend":
+            validator.add_rule(ValidationRule(
+                name="use_rsi_filter",
+                unit=Unit.COUNT,
+                allowed_values=[True, False],
+                required=False,
+                default=True,
+                description="Enable RSI filter",
+            ))
+            validator.add_rule(ValidationRule(
+                name="rsi_overbought",
+                unit=Unit.COUNT,
+                min_value=Decimal("50"),
+                max_value=Decimal("90"),
+                required=False,
+                default=60,
+                description="RSI overbought threshold",
+            ))
+            validator.add_rule(ValidationRule(
+                name="rsi_oversold",
+                unit=Unit.COUNT,
+                min_value=Decimal("10"),
+                max_value=Decimal("50"),
+                required=False,
+                default=40,
+                description="RSI oversold threshold",
+            ))
+
+        elif bot_type == "rsi_grid":
+            validator.add_rule(ValidationRule(
+                name="rsi_upper",
+                unit=Unit.COUNT,
+                min_value=Decimal("50"),
+                max_value=Decimal("90"),
+                required=False,
+                default=70,
+                description="RSI upper threshold",
+            ))
+            validator.add_rule(ValidationRule(
+                name="rsi_lower",
+                unit=Unit.COUNT,
+                min_value=Decimal("10"),
+                max_value=Decimal("50"),
+                required=False,
+                default=30,
+                description="RSI lower threshold",
+            ))
+
+        return validator
+
+    def _auto_correct_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Auto-correct common configuration mistakes.
+
+        - Converts percentage values from whole numbers to decimals
+        - Logs warnings for corrected values
+        """
+        corrected = config.copy()
+
+        # Percentage fields that should be in decimal format (0.05 = 5%)
+        decimal_pct_fields = [
+            "stop_loss_pct",
+            "take_profit_pct",
+            "position_size_pct",
+            "max_position_pct",
+            "grid_range_pct",
+            "daily_loss_limit_pct",
+            "trailing_stop_pct",
+            "rebuild_threshold_pct",
+            "fallback_range_pct",
+        ]
+
+        for field in decimal_pct_fields:
+            if field in corrected:
+                value = corrected[field]
+                try:
+                    decimal_val = Decimal(str(value))
+                    # If value > 1, it's likely in whole percentage format
+                    if decimal_val > Decimal("1"):
+                        corrected_val = decimal_val / Decimal("100")
+                        logger.warning(
+                            f"Auto-correcting {field}: {value} -> {corrected_val} "
+                            f"(expected decimal format, e.g., 0.05 for 5%)"
+                        )
+                        corrected[field] = corrected_val
+                except Exception:
+                    pass
+
+        return corrected
+
+    def get_config_checksum(self) -> str:
+        """
+        Get checksum of current configuration for sync verification.
+
+        Returns:
+            SHA256 checksum (first 16 characters)
+        """
+        if self._config is None:
+            return ""
+
+        # Convert config to dict for hashing
+        config_dict = {}
+        for attr in dir(self._config):
+            if not attr.startswith("_"):
+                value = getattr(self._config, attr)
+                if not callable(value):
+                    config_dict[attr] = value
+
+        return compute_config_checksum(config_dict)
+
+    def verify_config_sync(
+        self,
+        expected_checksum: str,
+    ) -> Tuple[bool, str]:
+        """
+        Verify configuration matches expected checksum.
+
+        Used for multi-node sync verification.
+
+        Args:
+            expected_checksum: Expected configuration checksum
+
+        Returns:
+            Tuple of (is_synced, actual_checksum)
+        """
+        actual = self.get_config_checksum()
+        return actual == expected_checksum, actual
 
     @classmethod
     def reset(cls) -> None:

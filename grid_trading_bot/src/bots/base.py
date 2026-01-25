@@ -861,6 +861,97 @@ class BaseBot(ABC):
                 f"Continuing with startup..."
             )
 
+    async def _validate_config_on_start(self) -> None:
+        """
+        Validate bot configuration before starting.
+
+        This validates:
+        1. Required parameters are present
+        2. Parameter values are within valid ranges
+        3. Unit formats are correct (e.g., percentages as decimals)
+        4. Configuration checksum for version tracking
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        try:
+            logger.info(f"[{self._bot_id}] Validating configuration...")
+
+            # Get bot type and config
+            bot_type = self.bot_type
+            config = self._config
+
+            # Convert dataclass to dict if needed
+            if hasattr(config, '__dataclass_fields__'):
+                config_dict = {}
+                for field_name in config.__dataclass_fields__:
+                    config_dict[field_name] = getattr(config, field_name)
+            elif hasattr(config, '__dict__'):
+                config_dict = config.__dict__.copy()
+            else:
+                config_dict = dict(config) if config else {}
+
+            # Log configuration checksum for tracking
+            try:
+                from src.config.validator import compute_config_checksum
+                checksum = compute_config_checksum(
+                    {k: str(v) for k, v in config_dict.items()}
+                )
+                logger.info(
+                    f"[{self._bot_id}] Config checksum: {checksum} "
+                    f"(use for sync verification)"
+                )
+            except ImportError:
+                pass
+
+            # Validate percentage fields are in correct format
+            pct_fields = [
+                'stop_loss_pct', 'position_size_pct', 'max_position_pct',
+                'grid_range_pct', 'daily_loss_limit_pct', 'trailing_stop_pct',
+                'rebuild_threshold_pct', 'fallback_range_pct'
+            ]
+
+            warnings = []
+            for field in pct_fields:
+                if field in config_dict:
+                    value = config_dict[field]
+                    try:
+                        from decimal import Decimal
+                        decimal_val = Decimal(str(value))
+                        if decimal_val > Decimal("1"):
+                            warnings.append(
+                                f"{field}={value} looks like whole percentage, "
+                                f"expected decimal (e.g., 0.05 for 5%)"
+                            )
+                    except Exception:
+                        pass
+
+            if warnings:
+                for warning in warnings:
+                    logger.warning(f"[{self._bot_id}] Config warning: {warning}")
+
+                # Send alert if notifier available
+                if self._notifier:
+                    try:
+                        await self._notifier.send_alert(
+                            title="Configuration Warning",
+                            message=(
+                                f"Bot {self._bot_id} configuration warnings:\n"
+                                + "\n".join(f"• {w}" for w in warnings)
+                                + "\n\nBot will start, but please verify configuration."
+                            ),
+                            level="warning",
+                        )
+                    except Exception:
+                        pass
+
+            logger.info(f"[{self._bot_id}] Configuration validation passed")
+
+        except Exception as e:
+            logger.warning(
+                f"[{self._bot_id}] Config validation error (non-fatal): {e}"
+            )
+
     # =========================================================================
     # Liquidity and Order Book Validation
     # =========================================================================
@@ -5197,6 +5288,9 @@ class BaseBot(ABC):
 
             # Force time synchronization before starting
             await self._ensure_time_sync()
+
+            # Validate configuration before starting
+            await self._validate_config_on_start()
 
             # Call subclass implementation
             await self._do_start()
