@@ -1577,6 +1577,134 @@ class BaseBot(ABC):
     ORDER_ERROR_TIMEOUT = "TIMEOUT"
     ORDER_ERROR_UNKNOWN = "UNKNOWN"
 
+    # =========================================================================
+    # Multi-Strategy Resource Management
+    # =========================================================================
+
+    def _init_resource_tracking(self) -> None:
+        """Initialize multi-strategy resource tracking."""
+        if not hasattr(self, "_pending_order_value"):
+            self._pending_order_value: Decimal = Decimal("0")
+        if not hasattr(self, "_pending_orders_lock"):
+            self._pending_orders_lock = asyncio.Lock()
+        if not hasattr(self, "_allocated_capital"):
+            self._allocated_capital: Optional[Decimal] = None
+        if not hasattr(self, "_capital_usage"):
+            self._capital_usage: Decimal = Decimal("0")
+
+    def set_allocated_capital(self, amount: Decimal) -> None:
+        """
+        Set the allocated capital for this bot.
+
+        This should be called by FundManager when allocating funds.
+        The bot will not exceed this allocation even if more balance is available.
+
+        Args:
+            amount: Maximum capital this bot can use
+        """
+        self._init_resource_tracking()
+        self._allocated_capital = amount
+        logger.info(f"[{self._bot_id}] Capital allocation set: {amount} USDT")
+
+    def get_allocated_capital(self) -> Optional[Decimal]:
+        """Get the allocated capital for this bot."""
+        self._init_resource_tracking()
+        return self._allocated_capital
+
+    def get_capital_usage(self) -> Decimal:
+        """Get current capital usage (open positions + pending orders)."""
+        self._init_resource_tracking()
+        return self._capital_usage + self._pending_order_value
+
+    def get_available_capital(self) -> Decimal:
+        """
+        Get available capital considering allocation and pending orders.
+
+        Returns:
+            Available capital (allocation - usage - pending)
+        """
+        self._init_resource_tracking()
+        if self._allocated_capital is None:
+            return Decimal("999999999")  # No limit
+
+        usage = self.get_capital_usage()
+        available = self._allocated_capital - usage
+        return max(available, Decimal("0"))
+
+    async def _reserve_capital_for_order(
+        self,
+        required_margin: Decimal,
+    ) -> tuple[bool, str]:
+        """
+        Reserve capital for a pending order.
+
+        This prevents concurrent orders from exceeding allocated capital.
+
+        Args:
+            required_margin: Margin required for the order
+
+        Returns:
+            Tuple of (success, message)
+        """
+        self._init_resource_tracking()
+
+        async with self._pending_orders_lock:
+            available = self.get_available_capital()
+
+            if required_margin > available:
+                return False, (
+                    f"Exceeds allocation: need {required_margin:.2f}, "
+                    f"available {available:.2f} "
+                    f"(allocated: {self._allocated_capital}, "
+                    f"usage: {self._capital_usage}, "
+                    f"pending: {self._pending_order_value})"
+                )
+
+            self._pending_order_value += required_margin
+            logger.debug(
+                f"[{self._bot_id}] Reserved {required_margin:.2f} USDT "
+                f"(total pending: {self._pending_order_value:.2f})"
+            )
+            return True, "Capital reserved"
+
+    async def _release_capital_reservation(
+        self,
+        amount: Decimal,
+        add_to_usage: bool = False,
+    ) -> None:
+        """
+        Release capital reservation after order completes.
+
+        Args:
+            amount: Amount to release from pending
+            add_to_usage: If True, add to capital_usage (order filled)
+        """
+        self._init_resource_tracking()
+
+        async with self._pending_orders_lock:
+            self._pending_order_value = max(
+                Decimal("0"),
+                self._pending_order_value - amount
+            )
+
+            if add_to_usage:
+                self._capital_usage += amount
+
+            logger.debug(
+                f"[{self._bot_id}] Released {amount:.2f} USDT reservation "
+                f"(add_to_usage={add_to_usage})"
+            )
+
+    def _update_capital_usage(self, delta: Decimal) -> None:
+        """
+        Update capital usage after position change.
+
+        Args:
+            delta: Change in capital usage (positive = increased, negative = reduced)
+        """
+        self._init_resource_tracking()
+        self._capital_usage = max(Decimal("0"), self._capital_usage + delta)
+
     async def _check_balance_for_order(
         self,
         symbol: str,
@@ -1587,6 +1715,11 @@ class BaseBot(ABC):
         """
         Check if account has sufficient balance for order.
 
+        This method checks:
+        1. Exchange available balance
+        2. Allocated capital limit (if set)
+        3. Pending order reservations
+
         Args:
             symbol: Trading symbol
             quantity: Order quantity
@@ -1596,17 +1729,29 @@ class BaseBot(ABC):
         Returns:
             Tuple of (has_sufficient_balance, message)
         """
-        try:
-            # Get account balance
-            balance = await self._exchange.futures.get_balance("USDT")
-            available = balance.free if balance else Decimal("0")
+        self._init_resource_tracking()
 
+        try:
             # Calculate required margin
             notional_value = quantity * price
             required_margin = notional_value / Decimal(leverage)
 
             # Add buffer for fees (0.1%)
             required_with_fees = required_margin * Decimal("1.001")
+
+            # Check 1: Allocated capital (if set)
+            if self._allocated_capital is not None:
+                available_allocation = self.get_available_capital()
+                if required_with_fees > available_allocation:
+                    return False, (
+                        f"Exceeds allocation: need {required_with_fees:.2f} USDT, "
+                        f"available {available_allocation:.2f} USDT "
+                        f"(allocated: {self._allocated_capital})"
+                    )
+
+            # Check 2: Exchange balance
+            balance = await self._exchange.futures.get_balance("USDT")
+            available = balance.free if balance else Decimal("0")
 
             if available < required_with_fees:
                 return False, (
@@ -1619,6 +1764,281 @@ class BaseBot(ABC):
         except Exception as e:
             logger.error(f"[{self._bot_id}] Balance check failed: {e}")
             return False, f"Balance check error: {e}"
+
+    async def _check_balance_and_reserve(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        price: Decimal,
+        leverage: int = 1,
+    ) -> tuple[bool, str, Decimal]:
+        """
+        Check balance and reserve capital atomically.
+
+        This combines balance check and reservation to prevent race conditions.
+
+        Args:
+            symbol: Trading symbol
+            quantity: Order quantity
+            price: Order price
+            leverage: Position leverage
+
+        Returns:
+            Tuple of (success, message, reserved_amount)
+        """
+        # Calculate required margin
+        notional_value = quantity * price
+        required_margin = notional_value / Decimal(leverage)
+        required_with_fees = required_margin * Decimal("1.001")
+
+        # Check and reserve atomically
+        ok, msg = await self._check_balance_for_order(
+            symbol, quantity, price, leverage
+        )
+        if not ok:
+            return False, msg, Decimal("0")
+
+        # Reserve capital
+        reserve_ok, reserve_msg = await self._reserve_capital_for_order(required_with_fees)
+        if not reserve_ok:
+            return False, reserve_msg, Decimal("0")
+
+        return True, msg, required_with_fees
+
+    # =========================================================================
+    # API Rate Limit Awareness
+    # =========================================================================
+
+    async def _check_rate_limit_ok(self) -> tuple[bool, str]:
+        """
+        Check if API rate limit allows placing an order.
+
+        This method should be called before placing orders to avoid
+        rate limit errors.
+
+        Returns:
+            Tuple of (is_ok, message)
+        """
+        try:
+            # Check if exchange has rate limit info
+            if hasattr(self._exchange, "get_rate_limit_status"):
+                status = await self._exchange.get_rate_limit_status()
+                if status.get("is_limited", False):
+                    retry_after = status.get("retry_after_seconds", 60)
+                    return False, f"Rate limited, retry after {retry_after}s"
+
+            # Check order queue status
+            if hasattr(self._exchange, "get_order_queue_status"):
+                queue_status = self._exchange.get_order_queue_status()
+                if queue_status.get("queue_size", 0) > 50:
+                    return False, (
+                        f"Order queue congested: {queue_status['queue_size']} pending"
+                    )
+
+            return True, "Rate limit OK"
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Rate limit check failed: {e}")
+            return True, "Rate limit check unavailable"
+
+    async def _wait_for_rate_limit(
+        self,
+        max_wait_seconds: float = 30.0,
+        check_interval: float = 1.0,
+    ) -> bool:
+        """
+        Wait for rate limit to clear.
+
+        Args:
+            max_wait_seconds: Maximum time to wait
+            check_interval: Check interval
+
+        Returns:
+            True if rate limit cleared within timeout
+        """
+        start_time = time.time()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > max_wait_seconds:
+                logger.warning(
+                    f"[{self._bot_id}] Rate limit wait timeout after {max_wait_seconds}s"
+                )
+                return False
+
+            is_ok, msg = await self._check_rate_limit_ok()
+            if is_ok:
+                return True
+
+            logger.debug(f"[{self._bot_id}] Waiting for rate limit: {msg}")
+            await asyncio.sleep(check_interval)
+
+    # =========================================================================
+    # Position Coordination
+    # =========================================================================
+
+    async def _check_position_limit(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        leverage: int = 1,
+    ) -> tuple[bool, str]:
+        """
+        Check if position limit allows the order.
+
+        This method checks:
+        1. Bot's own position limit (from config)
+        2. Shared position manager limit (if available)
+        3. Account-wide position limit
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            leverage: Position leverage
+
+        Returns:
+            Tuple of (is_allowed, message)
+        """
+        try:
+            # Check config-based position limit
+            max_position_pct = getattr(self._config, "max_position_pct", Decimal("0.5"))
+            capital = self._allocated_capital or Decimal("10000")
+
+            # Get current position
+            current_position = await self._get_current_position(symbol)
+            current_qty = current_position.get("quantity", Decimal("0")) if current_position else Decimal("0")
+
+            # Calculate new total position
+            if side.upper() == "BUY":
+                new_qty = current_qty + quantity
+            else:
+                new_qty = current_qty - quantity
+
+            # Get price for notional calculation
+            ticker = await self._exchange.futures.get_ticker(symbol)
+            price = Decimal(str(ticker.last_price)) if ticker else Decimal("1")
+
+            # Check position value vs capital
+            position_value = abs(new_qty) * price / Decimal(leverage)
+            max_position_value = capital * max_position_pct
+
+            if position_value > max_position_value:
+                return False, (
+                    f"Position limit exceeded: {position_value:.2f} > "
+                    f"{max_position_value:.2f} ({max_position_pct*100}% of {capital})"
+                )
+
+            return True, "Position within limits"
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Position limit check failed: {e}")
+            return True, "Position limit check unavailable"
+
+    async def _get_current_position(self, symbol: str) -> Optional[Dict]:
+        """
+        Get current position for symbol.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Position dict or None if no position
+        """
+        try:
+            positions = await self._exchange.futures.get_positions()
+            for pos in positions:
+                if getattr(pos, "symbol", "") == symbol:
+                    qty = getattr(pos, "position_amount", Decimal("0"))
+                    if qty != 0:
+                        return {
+                            "symbol": symbol,
+                            "quantity": qty,
+                            "side": "LONG" if qty > 0 else "SHORT",
+                            "entry_price": getattr(pos, "entry_price", Decimal("0")),
+                        }
+            return None
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Get position failed: {e}")
+            return None
+
+    # =========================================================================
+    # Comprehensive Pre-Order Check
+    # =========================================================================
+
+    async def _comprehensive_pre_order_check(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        leverage: int = 1,
+        reserve_capital: bool = True,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Comprehensive pre-order validation including all resource checks.
+
+        This method performs:
+        1. Balance check (exchange + allocation)
+        2. Rate limit check
+        3. Position limit check
+        4. Capital reservation (optional)
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+            leverage: Position leverage
+            reserve_capital: Whether to reserve capital on success
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        details = {
+            "balance_ok": False,
+            "rate_limit_ok": False,
+            "position_ok": False,
+            "reserved_amount": Decimal("0"),
+        }
+
+        # 1. Check balance and optionally reserve
+        if reserve_capital:
+            balance_ok, balance_msg, reserved = await self._check_balance_and_reserve(
+                symbol, quantity, price, leverage
+            )
+            details["reserved_amount"] = reserved
+        else:
+            balance_ok, balance_msg = await self._check_balance_for_order(
+                symbol, quantity, price, leverage
+            )
+
+        details["balance_ok"] = balance_ok
+        if not balance_ok:
+            return False, balance_msg, details
+
+        # 2. Check rate limit
+        rate_ok, rate_msg = await self._check_rate_limit_ok()
+        details["rate_limit_ok"] = rate_ok
+        if not rate_ok:
+            # Release reservation if we reserved capital
+            if reserve_capital and details["reserved_amount"] > 0:
+                await self._release_capital_reservation(details["reserved_amount"])
+            return False, rate_msg, details
+
+        # 3. Check position limit
+        position_ok, position_msg = await self._check_position_limit(
+            symbol, side, quantity, leverage
+        )
+        details["position_ok"] = position_ok
+        if not position_ok:
+            # Release reservation
+            if reserve_capital and details["reserved_amount"] > 0:
+                await self._release_capital_reservation(details["reserved_amount"])
+            return False, position_msg, details
+
+        return True, "All pre-order checks passed", details
 
     def _classify_order_error(self, error: Exception) -> tuple[str, str]:
         """
