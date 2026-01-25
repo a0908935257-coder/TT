@@ -27,6 +27,15 @@ from .core.position_manager import (
     SharedPosition,
     SharedPositionManager,
 )
+from .core.signal_coordinator import (
+    ConflictRecord,
+    ConflictResolution,
+    ConflictType,
+    CoordinationResult,
+    SignalCoordinator,
+    SignalDirection,
+    SignalRequest,
+)
 from .manager import FundManager
 from .models.config import AllocationStrategy, BotAllocation, FundManagerConfig
 from .models.records import AllocationRecord, BalanceSnapshot, DispatchResult
@@ -47,6 +56,14 @@ __all__ = [
     "SharedPosition",
     "PositionChange",
     "PositionSide",
+    # Signal Coordinator
+    "SignalCoordinator",
+    "SignalDirection",
+    "SignalRequest",
+    "CoordinationResult",
+    "ConflictRecord",
+    "ConflictResolution",
+    "ConflictType",
     # Allocators
     "BaseAllocator",
     "FixedRatioAllocator",

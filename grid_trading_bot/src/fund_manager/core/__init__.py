@@ -19,6 +19,15 @@ from .position_manager import (
     SharedPosition,
     SharedPositionManager,
 )
+from .signal_coordinator import (
+    ConflictRecord,
+    ConflictResolution,
+    ConflictType,
+    CoordinationResult,
+    SignalCoordinator,
+    SignalDirection,
+    SignalRequest,
+)
 
 __all__ = [
     # Fund Pool
@@ -36,4 +45,12 @@ __all__ = [
     "SharedPosition",
     "PositionChange",
     "PositionSide",
+    # Signal Coordinator
+    "SignalCoordinator",
+    "SignalDirection",
+    "SignalRequest",
+    "CoordinationResult",
+    "ConflictRecord",
+    "ConflictResolution",
+    "ConflictType",
 ]

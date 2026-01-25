@@ -129,6 +129,12 @@ class RSICalculator:
         self._rsi: Optional[Decimal] = None
         self._initialized = False
 
+        # Cache for preventing duplicate calculations
+        self._cache_timestamp: Optional[datetime] = None
+        self._cache_result: Optional[RSIResult] = None
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
+
     def initialize(self, klines: List[Kline]) -> Optional[RSIResult]:
         """
         Initialize RSI with historical klines.
@@ -190,7 +196,7 @@ class RSICalculator:
 
     def update(self, kline: Kline) -> Optional[RSIResult]:
         """
-        Update RSI with new kline.
+        Update RSI with new kline (with caching).
 
         Args:
             kline: New kline data
@@ -200,6 +206,13 @@ class RSICalculator:
         """
         if not self._initialized or self._prev_close is None:
             return None
+
+        # Check cache - return cached result if same kline
+        if self._cache_timestamp == kline.close_time and self._cache_result is not None:
+            self._cache_hits += 1
+            return self._cache_result
+
+        self._cache_misses += 1
 
         current_close = Decimal(str(kline.close))
         change = current_close - self._prev_close
@@ -218,13 +231,19 @@ class RSICalculator:
         self._rsi = self._calculate_rsi()
         self._prev_close = current_close
 
-        return RSIResult(
+        result = RSIResult(
             timestamp=kline.close_time,
             rsi=self._rsi,
             avg_gain=self._avg_gain,
             avg_loss=self._avg_loss,
             zone=self._get_zone(self._rsi),
         )
+
+        # Update cache
+        self._cache_timestamp = kline.close_time
+        self._cache_result = result
+
+        return result
 
     def _calculate_rsi(self) -> Decimal:
         """Calculate RSI from average gain/loss with NaN/Inf protection."""
@@ -302,6 +321,19 @@ class RSICalculator:
             "zone": self.zone.value,
             "is_oversold": self.is_oversold,
             "is_overbought": self.is_overbought,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+        }
+
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "total": total,
+            "hit_rate_pct": round(hit_rate, 2),
         }
 
     def reset(self) -> None:
@@ -311,6 +343,10 @@ class RSICalculator:
         self._prev_close = None
         self._rsi = None
         self._initialized = False
+        self._cache_timestamp = None
+        self._cache_result = None
+        self._cache_hits = 0
+        self._cache_misses = 0
 
 
 @dataclass
@@ -347,6 +383,12 @@ class ATRCalculator:
         self._atr: Optional[Decimal] = None
         self._prev_close: Optional[Decimal] = None
         self._initialized = False
+
+        # Cache for preventing duplicate calculations
+        self._cache_timestamp: Optional[datetime] = None
+        self._cache_result: Optional[ATRResult] = None
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
 
     def initialize(self, klines: List[Kline]) -> Optional[ATRResult]:
         """
@@ -406,7 +448,7 @@ class ATRCalculator:
 
     def update(self, kline: Kline) -> Optional[ATRResult]:
         """
-        Update ATR with new kline.
+        Update ATR with new kline (with caching).
 
         Args:
             kline: New kline data
@@ -416,6 +458,13 @@ class ATRCalculator:
         """
         if not self._initialized or self._prev_close is None:
             return None
+
+        # Check cache - return cached result if same kline
+        if self._cache_timestamp == kline.close_time and self._cache_result is not None:
+            self._cache_hits += 1
+            return self._cache_result
+
+        self._cache_misses += 1
 
         # Safe conversion with NaN/Inf protection
         high = safe_decimal(kline.high)
@@ -443,20 +492,25 @@ class ATRCalculator:
 
             if not is_valid_number(new_atr):
                 logger.warning(f"Invalid ATR calculated: {new_atr}, keeping previous value")
-                return ATRResult(
+                result = ATRResult(
+                    timestamp=kline.close_time,
+                    atr=self._atr,
+                    tr=tr,
+                )
+            else:
+                self._atr = new_atr
+                self._prev_close = close
+                result = ATRResult(
                     timestamp=kline.close_time,
                     atr=self._atr,
                     tr=tr,
                 )
 
-            self._atr = new_atr
-            self._prev_close = close
+            # Update cache
+            self._cache_timestamp = kline.close_time
+            self._cache_result = result
 
-            return ATRResult(
-                timestamp=kline.close_time,
-                atr=self._atr,
-                tr=tr,
-            )
+            return result
 
         except (InvalidOperation, ZeroDivisionError) as e:
             logger.warning(f"ATR calculation error: {e}")
@@ -472,6 +526,19 @@ class ATRCalculator:
         return {
             "atr": float(self._atr) if self._atr else None,
             "prev_close": float(self._prev_close) if self._prev_close else None,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+        }
+
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "total": total,
+            "hit_rate_pct": round(hit_rate, 2),
         }
 
     def reset(self) -> None:
@@ -479,6 +546,10 @@ class ATRCalculator:
         self._atr = None
         self._prev_close = None
         self._initialized = False
+        self._cache_timestamp = None
+        self._cache_result = None
+        self._cache_hits = 0
+        self._cache_misses = 0
 
 
 class SMACalculator:

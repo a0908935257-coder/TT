@@ -35,6 +35,7 @@ from src.core import get_logger
 from src.core.models import Kline, MarketType, OrderSide
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
+from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationResult
 from src.master.models import BotState
 from src.notification import NotificationManager
 
@@ -91,6 +92,7 @@ class RSIGridBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
         heartbeat_callback: Optional[callable] = None,
+        signal_coordinator: Optional[SignalCoordinator] = None,
     ):
         super().__init__(
             bot_id=bot_id,
@@ -104,6 +106,9 @@ class RSIGridBot(BaseBot):
         self._exchange = exchange
         self._data_manager = data_manager
         self._notifier = notifier
+
+        # Signal Coordinator for multi-bot conflict prevention
+        self._signal_coordinator = signal_coordinator or SignalCoordinator.get_instance()
 
         # Indicators
         self._rsi_calc: Optional[RSICalculator] = None
@@ -150,6 +155,10 @@ class RSIGridBot(BaseBot):
         # Slippage tracking
         self._slippage_records: List[Dict] = []
         self._max_slippage_records: int = 100
+
+        # Hysteresis: track last triggered level to prevent oscillation
+        self._last_triggered_level: Optional[int] = None
+        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
 
     # =========================================================================
     # BaseBot Abstract Properties
@@ -618,6 +627,24 @@ class RSIGridBot(BaseBot):
                     logger.debug("Max position reached")
                     return False
 
+            # Check signal coordinator for multi-bot conflicts
+            if self._signal_coordinator:
+                signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
+                result = await self._signal_coordinator.request_signal(
+                    bot_id=self._bot_id,
+                    symbol=self._config.symbol,
+                    direction=signal_dir,
+                    quantity=quantity,
+                    price=price,
+                    reason=f"RSI Grid level {grid_level}, RSI={rsi:.1f}",
+                )
+                if not result.approved:
+                    logger.warning(
+                        f"Signal blocked by coordinator: {result.message} "
+                        f"(conflict with {result.conflicting_bot})"
+                    )
+                    return False
+
             # Place market order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
                 order = await self._exchange.market_buy(
@@ -1010,6 +1037,48 @@ class RSIGridBot(BaseBot):
 
         self._prev_rsi = current_rsi
 
+    def _check_hysteresis(self, level_index: int, direction: str, grid_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if price has moved enough from last triggered level (hysteresis).
+
+        Prevents oscillation around grid levels by requiring price to move
+        away by a minimum percentage before retriggering the same level.
+
+        Args:
+            level_index: Grid level index
+            direction: "long" or "short"
+            grid_price: Grid level price
+            current_price: Current market price
+
+        Returns:
+            True if entry is allowed (passed hysteresis check)
+        """
+        # First trigger is always allowed
+        if self._last_triggered_level is None:
+            return True
+
+        # Different level is always allowed
+        if self._last_triggered_level != level_index:
+            return True
+
+        # Same level - check if price moved enough (hysteresis buffer)
+        hysteresis_buffer = grid_price * self._hysteresis_pct
+
+        if direction == "long":
+            # For long, price should have moved up before coming back down
+            if current_price < grid_price - hysteresis_buffer:
+                return True
+        else:  # short
+            # For short, price should have moved down before coming back up
+            if current_price > grid_price + hysteresis_buffer:
+                return True
+
+        logger.debug(
+            f"Hysteresis active: level {level_index} recently triggered, "
+            f"price {current_price} too close to {grid_price}"
+        )
+        return False
+
     async def _check_entry(
         self,
         kline: Kline,
@@ -1017,7 +1086,7 @@ class RSIGridBot(BaseBot):
         rsi: Decimal,
         rsi_zone: RSIZone,
     ) -> None:
-        """Check for entry signals."""
+        """Check for entry signals with hysteresis protection."""
         if not self._grid:
             return
 
@@ -1041,6 +1110,10 @@ class RSIGridBot(BaseBot):
         if allowed_dir in ["long_only", "both"]:
             for level in self._grid.levels:
                 if level.state == GridLevelState.EMPTY and curr_low <= level.price:
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level.index, "long", level.price, current_price):
+                        continue
+
                     level.state = GridLevelState.LONG_FILLED
                     level.filled_at = datetime.now(timezone.utc)
 
@@ -1053,12 +1126,17 @@ class RSIGridBot(BaseBot):
                     )
                     if success:
                         self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        self._last_triggered_level = level.index  # Track for hysteresis
                         return
 
         # Short entry: price rises to touch grid level
         if allowed_dir in ["short_only", "both"]:
             for level in reversed(self._grid.levels):
                 if level.state == GridLevelState.EMPTY and curr_high >= level.price:
+                    # Check hysteresis to prevent oscillation
+                    if not self._check_hysteresis(level.index, "short", level.price, current_price):
+                        continue
+
                     level.state = GridLevelState.SHORT_FILLED
                     level.filled_at = datetime.now(timezone.utc)
 
@@ -1071,6 +1149,7 @@ class RSIGridBot(BaseBot):
                     )
                     if success:
                         self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        self._last_triggered_level = level.index  # Track for hysteresis
                         return
 
     async def _check_exit(

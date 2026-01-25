@@ -38,6 +38,7 @@ from src.core.models import Kline, MarketType, OrderSide
 from typing import Callable
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
+from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationResult
 from src.master.models import BotState
 from src.notification import NotificationManager
 
@@ -76,6 +77,7 @@ class GridFuturesBot(BaseBot):
         data_manager: MarketDataManager,
         notifier: Optional[NotificationManager] = None,
         heartbeat_callback: Optional[callable] = None,
+        signal_coordinator: Optional[SignalCoordinator] = None,
     ):
         super().__init__(
             bot_id=bot_id,
@@ -89,6 +91,9 @@ class GridFuturesBot(BaseBot):
         self._exchange = exchange
         self._data_manager = data_manager
         self._notifier = notifier
+
+        # Signal Coordinator for multi-bot conflict prevention
+        self._signal_coordinator = signal_coordinator or SignalCoordinator.get_instance()
 
         # State
         self._grid: Optional[GridSetup] = None
@@ -111,6 +116,10 @@ class GridFuturesBot(BaseBot):
         # Slippage tracking
         self._slippage_records: List[Dict] = []
         self._max_slippage_records: int = 100
+
+        # Hysteresis: track last triggered level to prevent oscillation
+        self._last_triggered_level: Optional[int] = None
+        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
 
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
@@ -673,6 +682,24 @@ class GridFuturesBot(BaseBot):
                     logger.debug("Max position reached, skipping")
                     return False
 
+            # Check signal coordinator for multi-bot conflicts
+            if self._signal_coordinator:
+                signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
+                result = await self._signal_coordinator.request_signal(
+                    bot_id=self._bot_id,
+                    symbol=self._config.symbol,
+                    direction=signal_dir,
+                    quantity=quantity,
+                    price=price,
+                    reason=f"Grid level entry",
+                )
+                if not result.approved:
+                    logger.warning(
+                        f"Signal blocked by coordinator: {result.message} "
+                        f"(conflict with {result.conflicting_bot})"
+                    )
+                    return False
+
             # Place market order (through order queue for cross-bot coordination)
             if side == PositionSide.LONG:
                 order = await self._exchange.market_buy(
@@ -901,6 +928,48 @@ class GridFuturesBot(BaseBot):
     # Grid Trading Logic (與回測一致)
     # =========================================================================
 
+    def _check_hysteresis(self, level_index: int, direction: str, grid_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if price has moved enough from last triggered level (hysteresis).
+
+        Prevents oscillation around grid levels by requiring price to move
+        away by a minimum percentage before retriggering the same level.
+
+        Args:
+            level_index: Grid level index
+            direction: "long" or "short"
+            grid_price: Grid level price
+            current_price: Current market price
+
+        Returns:
+            True if entry is allowed (passed hysteresis check)
+        """
+        # First trigger is always allowed
+        if self._last_triggered_level is None:
+            return True
+
+        # Different level is always allowed
+        if self._last_triggered_level != level_index:
+            return True
+
+        # Same level - check if price moved enough (hysteresis buffer)
+        hysteresis_buffer = grid_price * self._hysteresis_pct
+
+        if direction == "long":
+            # For long, price should have moved up before coming back down
+            if current_price < grid_price - hysteresis_buffer:
+                return True
+        else:  # short
+            # For short, price should have moved down before coming back up
+            if current_price > grid_price + hysteresis_buffer:
+                return True
+
+        logger.debug(
+            f"Hysteresis active: level {level_index} recently triggered, "
+            f"price {current_price} too close to {grid_price}"
+        )
+        return False
+
     async def _process_grid_kline(
         self,
         kline_low: Decimal,
@@ -914,6 +983,8 @@ class GridFuturesBot(BaseBot):
         - Long entry: K 線低點觸及 grid level (買跌)
         - Short entry: K 線高點觸及 grid level (賣漲)
         - 使用 grid level 價格進場
+
+        Includes hysteresis to prevent oscillation around grid levels.
 
         Args:
             kline_low: K 線最低價
@@ -933,6 +1004,10 @@ class GridFuturesBot(BaseBot):
                     logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping long entry")
                     continue
 
+                # Check hysteresis to prevent oscillation
+                if not self._check_hysteresis(i, "long", grid_price, current_price):
+                    continue
+
                 if self._should_trade_direction("long"):
                     # 使用 grid level 價格進場（與回測一致）
                     success = await self._open_position(PositionSide.LONG, grid_price)
@@ -940,6 +1015,7 @@ class GridFuturesBot(BaseBot):
                         level.state = GridLevelState.LONG_FILLED
                         level.filled_at = datetime.now(timezone.utc)
                         self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        self._last_triggered_level = i  # Track for hysteresis
                         logger.info(f"Long entry at grid level {i}: {grid_price}")
 
             # Long exit: K 線高點觸及 grid level
@@ -952,12 +1028,19 @@ class GridFuturesBot(BaseBot):
                         partial_qty = self._position.quantity
                     await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
+                # Clear hysteresis on exit to allow fresh entry
+                if self._last_triggered_level == i:
+                    self._last_triggered_level = None
 
             # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
                 # Check signal cooldown to prevent signal stacking
                 if self._signal_cooldown > 0:
                     logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
+                    continue
+
+                # Check hysteresis to prevent oscillation
+                if not self._check_hysteresis(i, "short", grid_price, current_price):
                     continue
 
                 if self._should_trade_direction("short"):
@@ -967,6 +1050,7 @@ class GridFuturesBot(BaseBot):
                         level.state = GridLevelState.SHORT_FILLED
                         level.filled_at = datetime.now(timezone.utc)
                         self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        self._last_triggered_level = i  # Track for hysteresis
                         logger.info(f"Short entry at grid level {i}: {grid_price}")
 
             # Short exit: K 線低點觸及 grid level
@@ -979,6 +1063,9 @@ class GridFuturesBot(BaseBot):
                         partial_qty = self._position.quantity
                     await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
                 level.state = GridLevelState.EMPTY
+                # Clear hysteresis on exit to allow fresh entry
+                if self._last_triggered_level == i:
+                    self._last_triggered_level = None
 
     # =========================================================================
     # Stop Loss Check
