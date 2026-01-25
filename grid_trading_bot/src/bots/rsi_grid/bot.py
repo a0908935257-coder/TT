@@ -906,8 +906,10 @@ class RSIGridBot(BaseBot):
         Process kline update from WebSocket subscription.
 
         This is the main trading logic handler, called on each kline update.
+        Only processes closed klines to match backtest behavior.
         """
-        if self._state != BotState.RUNNING:
+        # Validate kline before processing (matches backtest behavior)
+        if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
         try:

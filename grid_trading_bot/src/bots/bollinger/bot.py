@@ -435,8 +435,13 @@ class BollingerBot(BaseBot):
         logger.info(f"Subscribed to {self._config.symbol} {self._config.timeframe} klines")
 
     async def _on_kline(self, kline: Kline) -> None:
-        """Process kline update from WebSocket."""
-        if self._state != BotState.RUNNING:
+        """
+        Process kline update from WebSocket.
+
+        Only processes closed klines to match backtest behavior.
+        """
+        # Validate kline before processing (matches backtest behavior)
+        if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
         try:

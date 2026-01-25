@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Optional
 
 from src.core import get_logger
+from src.core.models import Kline
 from src.master.models import BotState
 
 logger = get_logger(__name__)
@@ -195,6 +196,78 @@ class BaseBot(ABC):
         Examples: "BTCUSDT", "ETHUSDT"
         """
         pass
+
+    # =========================================================================
+    # Kline Validation (Prevents Backtest vs Live Data Inconsistency)
+    # =========================================================================
+
+    def _validate_kline_closed(
+        self,
+        kline: Kline,
+        require_closed: bool = True,
+    ) -> bool:
+        """
+        Validate that a kline is closed before processing.
+
+        This prevents the common issue where:
+        - Backtest uses completed (closed) klines
+        - Live trading receives incomplete klines from WebSocket
+        - Strategy makes decisions on incomplete data
+
+        Args:
+            kline: The kline to validate
+            require_closed: If True, reject unclosed klines
+
+        Returns:
+            True if kline is valid for processing
+        """
+        if require_closed and not kline.is_closed:
+            logger.debug(
+                f"[{self._bot_id}] Skipping unclosed kline: "
+                f"{kline.symbol} {kline.open_time}"
+            )
+            return False
+        return True
+
+    def _should_process_kline(
+        self,
+        kline: Kline,
+        require_closed: bool = True,
+        check_symbol: bool = True,
+    ) -> bool:
+        """
+        Comprehensive kline validation before processing.
+
+        Checks:
+        1. Kline is closed (if required)
+        2. Symbol matches bot's trading symbol
+        3. Bot is in running state
+
+        Args:
+            kline: The kline to validate
+            require_closed: If True, reject unclosed klines
+            check_symbol: If True, verify symbol matches
+
+        Returns:
+            True if kline should be processed
+        """
+        # Check bot state
+        if not self.is_running:
+            return False
+
+        # Check kline closed status
+        if not self._validate_kline_closed(kline, require_closed):
+            return False
+
+        # Check symbol match
+        if check_symbol and kline.symbol != self.symbol:
+            logger.warning(
+                f"[{self._bot_id}] Kline symbol mismatch: "
+                f"expected {self.symbol}, got {kline.symbol}"
+            )
+            return False
+
+        return True
 
     # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)

@@ -782,8 +782,11 @@ class GridFuturesBot(BaseBot):
         - Long entry: kline.low 觸及 grid level
         - Short entry: kline.high 觸及 grid level
         - 使用 grid level 價格進場（非市場價格）
+
+        Note: Only processes closed klines to match backtest behavior.
         """
-        if self._state != BotState.RUNNING:
+        # Validate kline before processing (matches backtest behavior)
+        if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
         try:

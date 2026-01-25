@@ -541,8 +541,11 @@ class SupertrendBot(BaseBot):
         - Bearish trend: Sell rallies at grid levels (SHORT only)
         - RSI filter to avoid entries in extreme conditions
         - Exit on trend flip
+
+        Note: Only processes closed klines to match backtest behavior.
         """
-        if self._state != BotState.RUNNING:
+        # Validate kline before processing (matches backtest behavior)
+        if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
         try:
