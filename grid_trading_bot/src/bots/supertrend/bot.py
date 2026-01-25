@@ -147,6 +147,9 @@ class SupertrendBot(BaseBot):
         # Kline callback reference for unsubscribe
         self._kline_callback = None
 
+        # Background monitor task
+        self._monitor_task: Optional[asyncio.Task] = None
+
         # Slippage tracking (from BaseBot)
         self._init_slippage_tracking()
 
@@ -263,6 +266,9 @@ class SupertrendBot(BaseBot):
                         f"Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}",
             )
 
+        # Start background monitor (capital updates, risk checks)
+        self._monitor_task = asyncio.create_task(self._background_monitor())
+
         # Start periodic state saving
         self._start_save_task()
 
@@ -294,6 +300,14 @@ class SupertrendBot(BaseBot):
         elif self._position and self._position.stop_loss_order_id:
             # Cancel stop loss order but keep position
             await self._cancel_stop_loss_order()
+
+        # Stop background monitor
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
 
         # Stop position reconciliation
         self._stop_position_reconciliation()
@@ -349,6 +363,73 @@ class SupertrendBot(BaseBot):
         )
 
         logger.info("Supertrend Bot resumed")
+
+    # =========================================================================
+    # Background Monitor (資金更新、風控檢查)
+    # =========================================================================
+
+    async def _background_monitor(self) -> None:
+        """
+        Background monitoring loop for capital updates and risk checks.
+
+        Runs independently of kline processing to ensure:
+        - Capital data freshness for risk bypass prevention
+        - Strategy-level risk monitoring
+        - Position reconciliation with exchange
+        """
+        logger.info("Starting Supertrend background monitor")
+
+        from src.master.models import BotState
+
+        while self._state == BotState.RUNNING:
+            try:
+                # Get account balance to track capital
+                account = await self._exchange.futures.get_account()
+                # Mark capital as updated for risk bypass prevention
+                self.mark_capital_updated()
+
+                # Apply consecutive loss decay (prevents permanent lockout)
+                self.apply_consecutive_loss_decay()
+
+                # Update virtual position unrealized P&L
+                if self._position:
+                    ticker = await self._exchange.futures.get_ticker(self._config.symbol)
+                    current_price = Decimal(str(ticker.last_price))
+                    self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+
+                # Check per-strategy risk (風控隔離 - only affects this bot)
+                risk_result = await self.check_strategy_risk()
+                if risk_result["risk_level"] in ["DANGER", "CRITICAL"]:
+                    logger.warning(
+                        f"Strategy risk triggered: {risk_result['risk_level']} - "
+                        f"{risk_result.get('action', 'none')}"
+                    )
+
+                # Reconcile virtual position with exchange (drift detection)
+                if self._position:
+                    exchange_qty = self._position.quantity
+                    exchange_side = self._position.side.value.upper() if self._position.side else None
+                    recon_result = await self.reconcile_virtual_position(
+                        symbol=self._config.symbol,
+                        exchange_quantity=exchange_qty,
+                        exchange_side=exchange_side,
+                    )
+                    if recon_result.get("drift_detected"):
+                        logger.warning(
+                            f"Position drift detected: {recon_result.get('action_needed')}"
+                        )
+                    self.mark_position_synced()
+
+                # Wait 30 seconds between updates
+                await asyncio.sleep(30)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in background monitor: {e}")
+                await asyncio.sleep(30)
+
+        logger.info("Supertrend background monitor stopped")
 
     def _get_extra_status(self) -> Dict[str, Any]:
         """Return extra status fields specific to Supertrend bot."""
