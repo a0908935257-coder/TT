@@ -23,6 +23,12 @@ from src.master.models import BotState
 logger = get_logger(__name__)
 
 
+# Data protection constants
+DEFAULT_STALE_THRESHOLD_SECONDS = 120  # 2 minutes for data freshness
+DEFAULT_MAX_PRICE_CHANGE_PCT = Decimal("0.10")  # 10% max single-candle change
+DEFAULT_MAX_GAP_MULTIPLIER = 3  # Allow up to 3x expected interval gap
+
+
 class InvalidStateError(Exception):
     """Raised when an operation is invalid for the current bot state."""
 
@@ -266,6 +272,272 @@ class BaseBot(ABC):
                 f"expected {self.symbol}, got {kline.symbol}"
             )
             return False
+
+        return True
+
+    # =========================================================================
+    # Data Protection (Freshness, Integrity, Anomaly Detection)
+    # =========================================================================
+
+    def _validate_kline_freshness(
+        self,
+        kline: Kline,
+        max_stale_seconds: int = DEFAULT_STALE_THRESHOLD_SECONDS,
+    ) -> bool:
+        """
+        Validate that kline data is not stale.
+
+        Protects against:
+        - Network delays causing outdated data
+        - WebSocket reconnection gaps
+        - Exchange API delays
+
+        Args:
+            kline: The kline to validate
+            max_stale_seconds: Maximum allowed data age in seconds
+
+        Returns:
+            True if data is fresh enough to use
+        """
+        now = datetime.now(timezone.utc)
+        kline_age = (now - kline.close_time).total_seconds()
+
+        if kline_age > max_stale_seconds:
+            logger.warning(
+                f"[{self._bot_id}] Stale kline detected: "
+                f"age={kline_age:.1f}s > threshold={max_stale_seconds}s, "
+                f"close_time={kline.close_time}"
+            )
+            return False
+
+        return True
+
+    def _validate_kline_integrity(
+        self,
+        kline: Kline,
+        prev_kline: Optional[Kline] = None,
+        max_price_change_pct: Decimal = DEFAULT_MAX_PRICE_CHANGE_PCT,
+    ) -> bool:
+        """
+        Validate kline data integrity.
+
+        Checks:
+        1. OHLC relationships (high >= low, high >= open/close, low <= open/close)
+        2. Price sanity (not zero or negative)
+        3. Volume sanity (not negative)
+        4. Price change limits (detect erroneous spikes)
+
+        Args:
+            kline: The kline to validate
+            prev_kline: Previous kline for change comparison
+            max_price_change_pct: Maximum allowed price change (default 10%)
+
+        Returns:
+            True if data integrity is valid
+        """
+        # Check OHLC relationships
+        if kline.high < kline.low:
+            logger.error(
+                f"[{self._bot_id}] Invalid OHLC: high ({kline.high}) < low ({kline.low})"
+            )
+            return False
+
+        if kline.high < kline.open or kline.high < kline.close:
+            logger.error(
+                f"[{self._bot_id}] Invalid OHLC: high ({kline.high}) < open/close"
+            )
+            return False
+
+        if kline.low > kline.open or kline.low > kline.close:
+            logger.error(
+                f"[{self._bot_id}] Invalid OHLC: low ({kline.low}) > open/close"
+            )
+            return False
+
+        # Check price sanity
+        if kline.close <= 0 or kline.open <= 0:
+            logger.error(
+                f"[{self._bot_id}] Invalid price: close={kline.close}, open={kline.open}"
+            )
+            return False
+
+        # Check volume sanity
+        if kline.volume < 0:
+            logger.error(f"[{self._bot_id}] Invalid volume: {kline.volume}")
+            return False
+
+        # Check price change limits (if previous kline available)
+        if prev_kline and prev_kline.close > 0:
+            price_change = abs(kline.close - prev_kline.close) / prev_kline.close
+            if price_change > max_price_change_pct:
+                logger.warning(
+                    f"[{self._bot_id}] Extreme price change detected: "
+                    f"{float(price_change)*100:.2f}% > {float(max_price_change_pct)*100:.0f}%, "
+                    f"prev={prev_kline.close}, curr={kline.close}"
+                )
+                # Note: We warn but still return True - trading decision is up to the bot
+                # This is informational; flash crash detection is separate
+
+        return True
+
+    def _check_data_gap(
+        self,
+        kline: Kline,
+        prev_kline: Optional[Kline],
+        expected_interval_seconds: int,
+        max_gap_multiplier: int = DEFAULT_MAX_GAP_MULTIPLIER,
+    ) -> bool:
+        """
+        Check for data gaps between klines.
+
+        Protects against:
+        - Missing data during WebSocket disconnection
+        - Data gaps causing indicator miscalculation
+
+        Args:
+            kline: Current kline
+            prev_kline: Previous kline
+            expected_interval_seconds: Expected time between klines (e.g., 900 for 15m)
+            max_gap_multiplier: Maximum allowed gap (multiplier of expected interval)
+
+        Returns:
+            True if no significant gap, False if gap detected
+        """
+        if prev_kline is None:
+            return True
+
+        actual_interval = (kline.close_time - prev_kline.close_time).total_seconds()
+        max_allowed_gap = expected_interval_seconds * max_gap_multiplier
+
+        if actual_interval > max_allowed_gap:
+            missing_candles = int(actual_interval / expected_interval_seconds) - 1
+            logger.warning(
+                f"[{self._bot_id}] Data gap detected: {missing_candles} missing candles, "
+                f"gap={actual_interval:.0f}s, expected={expected_interval_seconds}s"
+            )
+            return False
+
+        return True
+
+    def _parse_interval_to_seconds(self, interval: str) -> int:
+        """
+        Parse timeframe string to seconds.
+
+        Args:
+            interval: Timeframe string (e.g., "1m", "5m", "15m", "1h", "4h")
+
+        Returns:
+            Interval in seconds
+        """
+        multipliers = {
+            "m": 60,
+            "h": 3600,
+            "d": 86400,
+        }
+        unit = interval[-1].lower()
+        value = int(interval[:-1])
+        return value * multipliers.get(unit, 60)
+
+    # =========================================================================
+    # Data Connection Health
+    # =========================================================================
+
+    def _init_data_health_tracking(self) -> None:
+        """Initialize data health tracking attributes."""
+        self._last_kline_time: Optional[datetime] = None
+        self._consecutive_stale_count: int = 0
+        self._data_healthy: bool = True
+        self._data_gap_detected: bool = False
+
+    def _update_data_health(
+        self,
+        kline: Kline,
+        stale_threshold: int = DEFAULT_STALE_THRESHOLD_SECONDS,
+    ) -> None:
+        """
+        Update data health status based on received kline.
+
+        Args:
+            kline: The received kline
+            stale_threshold: Threshold for stale data in seconds
+        """
+        now = datetime.now(timezone.utc)
+        self._last_kline_time = now
+
+        # Check if data was stale
+        kline_age = (now - kline.close_time).total_seconds()
+        if kline_age > stale_threshold:
+            self._consecutive_stale_count += 1
+            if self._consecutive_stale_count >= 3:
+                self._data_healthy = False
+                logger.warning(
+                    f"[{self._bot_id}] Data health degraded: "
+                    f"{self._consecutive_stale_count} consecutive stale klines"
+                )
+        else:
+            self._consecutive_stale_count = 0
+            self._data_healthy = True
+
+    def _is_data_connection_healthy(
+        self,
+        max_silence_seconds: int = 180,
+    ) -> bool:
+        """
+        Check if data connection is healthy.
+
+        Args:
+            max_silence_seconds: Maximum time without data before unhealthy
+
+        Returns:
+            True if connection is healthy
+        """
+        if not hasattr(self, "_last_kline_time") or self._last_kline_time is None:
+            return True  # No data yet, assume healthy
+
+        silence = (datetime.now(timezone.utc) - self._last_kline_time).total_seconds()
+        if silence > max_silence_seconds:
+            logger.warning(
+                f"[{self._bot_id}] No data for {silence:.0f}s - connection may be unhealthy"
+            )
+            return False
+
+        return getattr(self, "_data_healthy", True)
+
+    async def _handle_data_anomaly(
+        self,
+        anomaly_type: str,
+        severity: str,
+        message: str,
+    ) -> bool:
+        """
+        Handle detected data anomaly.
+
+        Args:
+            anomaly_type: Type of anomaly (e.g., "stale", "gap", "spike")
+            severity: Severity level ("low", "medium", "high", "critical")
+            message: Description of the anomaly
+
+        Returns:
+            True if trading should continue, False if should pause
+        """
+        logger.warning(f"[{self._bot_id}] Data anomaly: {anomaly_type} ({severity}) - {message}")
+
+        # Critical anomalies should block trading
+        if severity == "critical":
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title=f"{self.bot_type}: Data Anomaly",
+                    message=f"Type: {anomaly_type}\n{message}\nTrading paused.",
+                )
+            return False
+
+        # High severity anomalies should warn but may continue
+        if severity == "high":
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title=f"{self.bot_type}: Data Warning",
+                    message=f"Type: {anomaly_type}\n{message}",
+                )
 
         return True
 

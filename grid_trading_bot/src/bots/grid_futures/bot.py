@@ -131,6 +131,11 @@ class GridFuturesBot(BaseBot):
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
 
+        # Data health tracking (for stale/gap detection)
+        self._init_data_health_tracking()
+        self._prev_kline: Optional[Kline] = None
+        self._interval_seconds: int = self._parse_interval_to_seconds(config.timeframe)
+
     # =========================================================================
     # BaseBot Abstract Properties
     # =========================================================================
@@ -881,6 +886,37 @@ class GridFuturesBot(BaseBot):
         # Validate kline before processing (matches backtest behavior)
         if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
+
+        # === Data Protection: Validate data quality ===
+        # Check data freshness
+        if not self._validate_kline_freshness(kline):
+            await self._handle_data_anomaly(
+                "stale_data", "high",
+                f"Kline data is stale: age > 120s"
+            )
+            # Continue processing but log the warning
+
+        # Check data integrity (OHLC relationships)
+        if not self._validate_kline_integrity(kline, self._prev_kline):
+            await self._handle_data_anomaly(
+                "invalid_data", "critical",
+                f"Invalid OHLC data detected"
+            )
+            return  # Don't process invalid data
+
+        # Check for data gaps
+        if self._prev_kline and not self._check_data_gap(
+            kline, self._prev_kline, self._interval_seconds
+        ):
+            await self._handle_data_anomaly(
+                "data_gap", "high",
+                f"Data gap detected - indicators may be inaccurate"
+            )
+            # Continue but indicators may be affected
+
+        # Update data health tracking
+        self._update_data_health(kline)
+        self._prev_kline = kline
 
         try:
             current_price = kline.close
