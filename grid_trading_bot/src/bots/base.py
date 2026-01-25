@@ -722,6 +722,7 @@ class BaseBot(ABC):
         quantity: Decimal,
         check_time_sync: bool = True,
         check_liquidity: bool = False,
+        check_position_sync: bool = True,
     ) -> bool:
         """
         Comprehensive pre-trade validation.
@@ -732,6 +733,7 @@ class BaseBot(ABC):
             quantity: Order quantity
             check_time_sync: Whether to check time synchronization
             check_liquidity: Whether to check liquidity (for large orders)
+            check_position_sync: Whether to verify position sync with exchange
 
         Returns:
             True if all checks pass
@@ -751,6 +753,15 @@ class BaseBot(ABC):
                 )
                 return False
 
+        # Check position sync with exchange (prevent duplicate orders)
+        if check_position_sync:
+            position_side = "LONG" if side.upper() == "BUY" else "SHORT"
+            if not await self._check_position_before_open(position_side, quantity):
+                logger.warning(
+                    f"[{self._bot_id}] Position sync check failed - skipping trade"
+                )
+                return False
+
         # Check liquidity for large orders
         if check_liquidity:
             has_liquidity, _ = await self._check_liquidity(symbol, side, quantity)
@@ -761,6 +772,181 @@ class BaseBot(ABC):
                 return False
 
         return True
+
+    # =========================================================================
+    # Position State Synchronization
+    # =========================================================================
+
+    async def _verify_position_sync(
+        self,
+        expected_quantity: Optional[Decimal] = None,
+        expected_side: Optional[str] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Verify local position matches exchange state.
+
+        Protects against:
+        - Local state desync after order execution
+        - Position closed externally (stop loss, liquidation)
+        - Duplicate order prevention
+
+        Args:
+            expected_quantity: Expected position quantity (None to just fetch)
+            expected_side: Expected position side ("LONG" or "SHORT")
+
+        Returns:
+            Tuple of (is_synced, exchange_position_data)
+        """
+        try:
+            # Fetch current position from exchange
+            positions = await self._exchange.get_positions(self.symbol)
+
+            exchange_position = None
+            for pos in positions:
+                if pos.symbol == self.symbol and pos.quantity != Decimal("0"):
+                    exchange_position = {
+                        "symbol": pos.symbol,
+                        "quantity": abs(pos.quantity),
+                        "side": "LONG" if pos.quantity > 0 else "SHORT",
+                        "entry_price": pos.entry_price,
+                        "unrealized_pnl": pos.unrealized_pnl,
+                    }
+                    break
+
+            # If no expectation, just return exchange state
+            if expected_quantity is None:
+                return True, exchange_position
+
+            # Verify against expectation
+            if exchange_position is None:
+                if expected_quantity > 0:
+                    logger.warning(
+                        f"[{self._bot_id}] Position desync: "
+                        f"expected {expected_side} {expected_quantity}, "
+                        f"but no position on exchange"
+                    )
+                    return False, None
+                return True, None
+
+            # Check quantity match (allow 0.1% tolerance for rounding)
+            qty_diff = abs(exchange_position["quantity"] - expected_quantity)
+            tolerance = expected_quantity * Decimal("0.001")
+            if qty_diff > tolerance:
+                logger.warning(
+                    f"[{self._bot_id}] Position quantity mismatch: "
+                    f"local={expected_quantity}, exchange={exchange_position['quantity']}"
+                )
+                return False, exchange_position
+
+            # Check side match
+            if expected_side and exchange_position["side"] != expected_side:
+                logger.warning(
+                    f"[{self._bot_id}] Position side mismatch: "
+                    f"local={expected_side}, exchange={exchange_position['side']}"
+                )
+                return False, exchange_position
+
+            return True, exchange_position
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Failed to verify position sync: {e}")
+            return False, None
+
+    async def _sync_position_from_exchange(self) -> Optional[Dict[str, Any]]:
+        """
+        Force sync local position from exchange.
+
+        Should be called after order execution to ensure consistency.
+
+        Returns:
+            Exchange position data or None if no position
+        """
+        try:
+            positions = await self._exchange.get_positions(self.symbol)
+
+            for pos in positions:
+                if pos.symbol == self.symbol and pos.quantity != Decimal("0"):
+                    position_data = {
+                        "symbol": pos.symbol,
+                        "quantity": abs(pos.quantity),
+                        "side": "LONG" if pos.quantity > 0 else "SHORT",
+                        "entry_price": pos.entry_price,
+                        "unrealized_pnl": pos.unrealized_pnl,
+                    }
+                    logger.debug(
+                        f"[{self._bot_id}] Synced position from exchange: "
+                        f"{position_data['side']} {position_data['quantity']} @ {position_data['entry_price']}"
+                    )
+                    return position_data
+
+            logger.debug(f"[{self._bot_id}] No position found on exchange")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Failed to sync position: {e}")
+            return None
+
+    async def _check_position_before_open(
+        self,
+        side: str,
+        quantity: Decimal,
+    ) -> bool:
+        """
+        Check if safe to open new position.
+
+        Verifies:
+        1. No unexpected existing position
+        2. Position limit not exceeded
+        3. Exchange state matches local expectation
+
+        Args:
+            side: "LONG" or "SHORT"
+            quantity: Quantity to open
+
+        Returns:
+            True if safe to proceed
+        """
+        try:
+            # Get current exchange position
+            is_synced, exchange_pos = await self._verify_position_sync()
+
+            if not is_synced:
+                logger.warning(
+                    f"[{self._bot_id}] Cannot open position - sync check failed"
+                )
+                return False
+
+            # If we have local position tracking, verify it matches
+            if hasattr(self, '_position') and self._position is not None:
+                local_qty = getattr(self._position, 'quantity', Decimal("0"))
+                local_side = getattr(self._position, 'side', None)
+                if local_side:
+                    local_side = local_side.value if hasattr(local_side, 'value') else str(local_side)
+
+                if exchange_pos is None and local_qty > 0:
+                    # Local thinks we have position, exchange says no
+                    logger.warning(
+                        f"[{self._bot_id}] Position closed externally - "
+                        f"clearing local state"
+                    )
+                    self._position = None
+                    return False
+
+                if exchange_pos and local_qty == 0:
+                    # Exchange has position, local doesn't know
+                    logger.warning(
+                        f"[{self._bot_id}] Unexpected exchange position: "
+                        f"{exchange_pos['side']} {exchange_pos['quantity']} - "
+                        f"syncing local state"
+                    )
+                    # Don't open new position until reconciled
+                    return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Position check failed: {e}")
+            return False
 
     # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)

@@ -837,6 +837,18 @@ class BollingerBot(BaseBot):
                         f"Entry: ${fill_price:.2f}\nQty: {fill_qty}\nTP: ${tp_price:.2f}\nSL: ${sl_price:.2f}",
                     )
 
+                # Verify position sync with exchange after order execution
+                is_synced, exchange_pos = await self._verify_position_sync(
+                    expected_quantity=self._position.quantity,
+                    expected_side=side.value,
+                )
+                if not is_synced:
+                    logger.warning(
+                        f"Position sync verification failed after order - "
+                        f"forcing resync"
+                    )
+                    await self._sync_position()
+
                 return True
 
         except Exception as e:

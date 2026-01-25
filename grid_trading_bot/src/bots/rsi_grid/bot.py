@@ -725,6 +725,19 @@ class RSIGridBot(BaseBot):
                         await self._place_stop_loss_order()
 
                 logger.info(f"Opened {side.value} position: {fill_qty} @ {fill_price}, RSI={rsi:.1f}, zone={rsi_zone.value}")
+
+                # Verify position sync with exchange after order execution
+                is_synced, exchange_pos = await self._verify_position_sync(
+                    expected_quantity=self._position.quantity,
+                    expected_side=side.value,
+                )
+                if not is_synced:
+                    logger.warning(
+                        f"Position sync verification failed after order - "
+                        f"forcing resync"
+                    )
+                    await self._sync_position()
+
                 return True
 
         except Exception as e:

@@ -913,6 +913,18 @@ class SupertrendBot(BaseBot):
                         message=f"Entry: {price}\nSize: {quantity}\nLeverage: {self._config.leverage}x\nStop Loss: {stop_loss_price}{tp_msg}",
                     )
 
+                # Verify position sync with exchange after order execution
+                is_synced, exchange_pos = await self._verify_position_sync(
+                    expected_quantity=self._position.quantity,
+                    expected_side=side.value,
+                )
+                if not is_synced:
+                    logger.warning(
+                        f"Position sync verification failed after order - "
+                        f"forcing resync"
+                    )
+                    await self._sync_position()
+
                 return True
 
         except Exception as e:
