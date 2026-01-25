@@ -151,6 +151,9 @@ class SupertrendBot(BaseBot):
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
 
+        # Initialize state lock for concurrent protection
+        self._init_state_lock()
+
         # Data health tracking (for stale/gap detection)
         self._init_data_health_tracking()
         self._prev_kline: Optional[Kline] = None
@@ -1198,12 +1201,68 @@ class SupertrendBot(BaseBot):
         # as existing positions continue with their original sizing.
 
     # =========================================================================
-    # State Persistence
+    # State Persistence (with validation, checksum, and concurrent protection)
     # =========================================================================
 
+    def _get_state_data(self) -> Dict[str, Any]:
+        """
+        Override BaseBot method to provide Supertrend specific state.
+
+        Returns:
+            Dictionary of state data for persistence
+        """
+        state_data = {
+            "total_pnl": str(self._total_pnl),
+            "current_bar": self._current_bar,
+            "entry_bar": self._entry_bar,
+            "prev_trend": self._prev_trend,
+            "current_trend": self._current_trend,
+            "trend_bars": self._trend_bars,
+            "trades_count": len(self._trades),
+            "signal_cooldown": self._signal_cooldown,
+            "last_triggered_level": self._last_triggered_level,
+            # Risk control state
+            "daily_pnl": str(self._daily_pnl),
+            "daily_start_time": self._daily_start_time.isoformat(),
+            "consecutive_losses": self._consecutive_losses,
+            "risk_paused": self._risk_paused,
+            # RSI filter state
+            "current_rsi": str(self._current_rsi) if self._current_rsi else None,
+            "rsi_closes": [str(c) for c in self._rsi_closes[-50:]],
+        }
+
+        # Save grid state for TREND_GRID mode
+        if self._grid_levels:
+            grid_level_states = [
+                {"index": gl.index, "price": str(gl.price), "is_filled": gl.is_filled}
+                for gl in self._grid_levels
+            ]
+            state_data["grid"] = {
+                "upper_price": str(self._upper_price) if self._upper_price else None,
+                "lower_price": str(self._lower_price) if self._lower_price else None,
+                "grid_spacing": str(self._grid_spacing) if self._grid_spacing else None,
+                "grid_levels": grid_level_states,
+                "current_atr": str(self._current_atr) if self._current_atr else None,
+            }
+
+        if self._position:
+            state_data["position"] = {
+                "side": self._position.side.value,
+                "entry_price": str(self._position.entry_price),
+                "quantity": str(self._position.quantity),
+                "entry_time": self._position.entry_time.isoformat(),
+                "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "stop_loss_order_id": self._position.stop_loss_order_id,
+                "max_price": str(self._position.max_price) if self._position.max_price else None,
+                "min_price": str(self._position.min_price) if self._position.min_price else None,
+            }
+
+        return state_data
+
     async def _save_state(self) -> None:
-        """Save bot state to database."""
-        try:
+        """Save bot state to database with concurrent protection."""
+
+        async def do_save():
             config = {
                 "symbol": self._config.symbol,
                 "timeframe": self._config.timeframe,
@@ -1213,45 +1272,22 @@ class SupertrendBot(BaseBot):
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 
-            state_data = {
-                "total_pnl": str(self._total_pnl),
-                "current_bar": self._current_bar,
-                "entry_bar": self._entry_bar,
-                "prev_trend": self._prev_trend,
-                "trades_count": len(self._trades),
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-                # Risk control state
-                "daily_pnl": str(self._daily_pnl),
-                "daily_start_time": self._daily_start_time.isoformat(),
-                "consecutive_losses": self._consecutive_losses,
-                "risk_paused": self._risk_paused,
-                # RSI filter state
-                "current_rsi": str(self._current_rsi) if self._current_rsi else None,
-                "rsi_closes": [str(c) for c in self._rsi_closes[-50:]],  # Save last 50 closes
-            }
+            # Create validated snapshot with metadata
+            snapshot = self._create_state_snapshot()
 
-            if self._position:
-                state_data["position"] = {
-                    "side": self._position.side.value,
-                    "entry_price": str(self._position.entry_price),
-                    "quantity": str(self._position.quantity),
-                    "entry_time": self._position.entry_time.isoformat(),
-                    "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
-                    "stop_loss_order_id": self._position.stop_loss_order_id,
-                }
+            async def persist_to_db(snapshot_data: Dict[str, Any]):
+                await self._data_manager.save_bot_state(
+                    bot_id=self._bot_id,
+                    bot_type="supertrend",
+                    status=self._state.value,
+                    config=config,
+                    state_data=snapshot_data,
+                )
 
-            await self._data_manager.save_bot_state(
-                bot_id=self._bot_id,
-                bot_type="supertrend",
-                status=self._state.value,
-                config=config,
-                state_data=state_data,
-            )
+            await self._save_state_atomic(snapshot["state"], persist_to_db)
 
-            logger.debug(f"Bot state saved: {self._bot_id}")
-
-        except Exception as e:
-            logger.warning(f"Failed to save bot state: {e}")
+        # Use lock to prevent concurrent state modifications during save
+        await self._modify_state_safely(do_save, "save_state")
 
     def _start_save_task(self) -> None:
         """Start periodic save task."""
@@ -1281,7 +1317,12 @@ class SupertrendBot(BaseBot):
         notifier: Optional[NotificationManager] = None,
     ) -> Optional["SupertrendBot"]:
         """
-        Restore a SupertrendBot from saved state.
+        Restore a SupertrendBot from saved state with validation.
+
+        Includes:
+        - Schema version validation
+        - Timestamp staleness check
+        - Position sync with exchange
 
         Args:
             bot_id: Bot ID to restore
@@ -1290,13 +1331,33 @@ class SupertrendBot(BaseBot):
             notifier: NotificationManager instance
 
         Returns:
-            Restored SupertrendBot or None if not found
+            Restored SupertrendBot or None if not found/invalid
         """
         try:
             state_data = await data_manager.get_bot_state(bot_id)
             if not state_data:
                 logger.warning(f"No saved state for bot: {bot_id}")
                 return None
+
+            # Extract and validate state_data section
+            saved_state = state_data.get("state_data", {})
+
+            # Validate state freshness
+            timestamp_str = saved_state.get("timestamp")
+            if timestamp_str:
+                try:
+                    saved_time = datetime.fromisoformat(timestamp_str)
+                    age_hours = (datetime.now(timezone.utc) - saved_time).total_seconds() / 3600
+                    max_age = 24
+
+                    if age_hours > max_age:
+                        logger.warning(
+                            f"State too old for {bot_id}: {age_hours:.1f}h > {max_age}h - "
+                            f"starting fresh"
+                        )
+                        return None
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp in saved state: {e}")
 
             config_data = state_data.get("config", {})
             config = SupertrendConfig(
@@ -1316,28 +1377,52 @@ class SupertrendBot(BaseBot):
                 notifier=notifier,
             )
 
-            # Restore state
-            saved_state = state_data.get("state_data", {})
-            bot._total_pnl = Decimal(saved_state.get("total_pnl", "0"))
-            bot._current_bar = saved_state.get("current_bar", 0)
-            bot._entry_bar = saved_state.get("entry_bar", 0)
-            bot._prev_trend = saved_state.get("prev_trend", 0)
+            # Get state (could be nested in "state" key from new format)
+            inner_state = saved_state.get("state", saved_state)
+
+            # Restore core state
+            bot._total_pnl = Decimal(inner_state.get("total_pnl", "0"))
+            bot._current_bar = inner_state.get("current_bar", 0)
+            bot._entry_bar = inner_state.get("entry_bar", 0)
+            bot._prev_trend = inner_state.get("prev_trend", 0)
+            bot._current_trend = inner_state.get("current_trend", 0)
+            bot._trend_bars = inner_state.get("trend_bars", 0)
+            bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
+            bot._last_triggered_level = inner_state.get("last_triggered_level")
 
             # Restore risk control state
-            bot._daily_pnl = Decimal(saved_state.get("daily_pnl", "0"))
-            if saved_state.get("daily_start_time"):
-                bot._daily_start_time = datetime.fromisoformat(saved_state["daily_start_time"])
-            bot._consecutive_losses = saved_state.get("consecutive_losses", 0)
-            bot._risk_paused = saved_state.get("risk_paused", False)
+            bot._daily_pnl = Decimal(inner_state.get("daily_pnl", "0"))
+            if inner_state.get("daily_start_time"):
+                bot._daily_start_time = datetime.fromisoformat(inner_state["daily_start_time"])
+            bot._consecutive_losses = inner_state.get("consecutive_losses", 0)
+            bot._risk_paused = inner_state.get("risk_paused", False)
 
             # Restore RSI filter state
-            if saved_state.get("current_rsi"):
-                bot._current_rsi = Decimal(saved_state["current_rsi"])
-            if saved_state.get("rsi_closes"):
-                bot._rsi_closes = [Decimal(c) for c in saved_state["rsi_closes"]]
+            if inner_state.get("current_rsi"):
+                bot._current_rsi = Decimal(inner_state["current_rsi"])
+            if inner_state.get("rsi_closes"):
+                bot._rsi_closes = [Decimal(c) for c in inner_state["rsi_closes"]]
 
-            # Restore position if exists
-            position_data = saved_state.get("position")
+            # Restore grid state (TREND_GRID mode)
+            grid_data = inner_state.get("grid")
+            if grid_data:
+                bot._upper_price = Decimal(grid_data["upper_price"]) if grid_data.get("upper_price") else None
+                bot._lower_price = Decimal(grid_data["lower_price"]) if grid_data.get("lower_price") else None
+                bot._grid_spacing = Decimal(grid_data["grid_spacing"]) if grid_data.get("grid_spacing") else None
+                bot._current_atr = Decimal(grid_data["current_atr"]) if grid_data.get("current_atr") else None
+
+                grid_levels = grid_data.get("grid_levels", [])
+                bot._grid_levels = []
+                for gl_data in grid_levels:
+                    bot._grid_levels.append(GridLevel(
+                        index=gl_data["index"],
+                        price=Decimal(gl_data["price"]),
+                        is_filled=gl_data.get("is_filled", False),
+                    ))
+                bot._grid_initialized = len(bot._grid_levels) > 0
+
+            # Restore position from saved state
+            position_data = inner_state.get("position")
             if position_data:
                 bot._position = Position(
                     side=PositionSide(position_data["side"]),
@@ -1347,11 +1432,50 @@ class SupertrendBot(BaseBot):
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
                     stop_loss_order_id=position_data.get("stop_loss_order_id"),
                 )
+                # Restore max/min price for trailing stop
+                if position_data.get("max_price"):
+                    bot._position.max_price = Decimal(position_data["max_price"])
+                if position_data.get("min_price"):
+                    bot._position.min_price = Decimal(position_data["min_price"])
 
-            logger.info(f"Restored SupertrendBot: {bot_id}, PnL={bot._total_pnl}")
+            # Verify position sync with exchange
+            try:
+                exchange_positions = await exchange.get_positions(config.symbol)
+                exchange_pos = None
+                for pos in exchange_positions:
+                    if pos.symbol == config.symbol and pos.quantity != Decimal("0"):
+                        exchange_pos = pos
+                        break
+
+                if bot._position and not exchange_pos:
+                    logger.warning(
+                        f"Restored position not found on exchange for {bot_id} - "
+                        f"clearing local state"
+                    )
+                    bot._position = None
+                elif exchange_pos and not bot._position:
+                    logger.warning(
+                        f"Exchange has position but saved state doesn't for {bot_id} - "
+                        f"syncing from exchange"
+                    )
+                    side = PositionSide.LONG if exchange_pos.quantity > 0 else PositionSide.SHORT
+                    bot._position = Position(
+                        side=side,
+                        entry_price=exchange_pos.entry_price,
+                        quantity=abs(exchange_pos.quantity),
+                        entry_time=datetime.now(timezone.utc),
+                        unrealized_pnl=exchange_pos.unrealized_pnl,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to verify position sync on restore: {e}")
+
+            logger.info(
+                f"Restored SupertrendBot: {bot_id}, PnL={bot._total_pnl}, "
+                f"position={'yes' if bot._position else 'no'}"
+            )
             return bot
 
         except Exception as e:
-            logger.error(f"Failed to restore bot: {e}")
+            logger.error(f"Failed to restore bot {bot_id}: {e}")
             return None
 

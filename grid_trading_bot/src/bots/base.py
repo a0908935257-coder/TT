@@ -1127,6 +1127,284 @@ class BaseBot(ABC):
             return False
 
     # =========================================================================
+    # State Persistence and Recovery
+    # =========================================================================
+
+    # State schema version for compatibility checking
+    STATE_SCHEMA_VERSION = 2
+
+    # Maximum age for state to be considered valid (24 hours)
+    MAX_STATE_AGE_HOURS = 24
+
+    def _create_state_snapshot(self) -> Dict[str, Any]:
+        """
+        Create a serializable snapshot of current bot state.
+
+        Includes metadata for validation on restore:
+        - Schema version for compatibility
+        - Timestamp for staleness detection
+        - Checksum for integrity
+
+        Returns:
+            State snapshot dictionary
+        """
+        import hashlib
+        import json
+
+        now = datetime.now(timezone.utc)
+
+        # Collect state data (subclasses should override _get_state_data)
+        state_data = self._get_state_data()
+
+        # Create snapshot with metadata
+        snapshot = {
+            "schema_version": self.STATE_SCHEMA_VERSION,
+            "bot_id": self._bot_id,
+            "bot_type": self.bot_type,
+            "symbol": self.symbol,
+            "timestamp": now.isoformat(),
+            "state": state_data,
+        }
+
+        # Add checksum for integrity verification
+        state_json = json.dumps(snapshot, sort_keys=True, default=str)
+        snapshot["checksum"] = hashlib.md5(state_json.encode()).hexdigest()
+
+        return snapshot
+
+    def _get_state_data(self) -> Dict[str, Any]:
+        """
+        Get bot-specific state data for persistence.
+
+        Subclasses should override to include their specific state.
+
+        Returns:
+            Dictionary of state data
+        """
+        return {
+            "bot_state": self._state.value if self._state else "unknown",
+        }
+
+    def _validate_state_snapshot(
+        self,
+        snapshot: Dict[str, Any],
+        max_age_hours: Optional[int] = None,
+    ) -> tuple[bool, str]:
+        """
+        Validate a state snapshot before restoration.
+
+        Checks:
+        1. Schema version compatibility
+        2. Timestamp staleness
+        3. Bot ID match
+        4. Checksum integrity
+
+        Args:
+            snapshot: The state snapshot to validate
+            max_age_hours: Maximum age in hours (default: MAX_STATE_AGE_HOURS)
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        import hashlib
+        import json
+
+        if max_age_hours is None:
+            max_age_hours = self.MAX_STATE_AGE_HOURS
+
+        # Check schema version
+        schema_version = snapshot.get("schema_version", 0)
+        if schema_version != self.STATE_SCHEMA_VERSION:
+            return False, (
+                f"Schema version mismatch: saved={schema_version}, "
+                f"current={self.STATE_SCHEMA_VERSION}"
+            )
+
+        # Check bot ID match
+        saved_bot_id = snapshot.get("bot_id")
+        if saved_bot_id != self._bot_id:
+            return False, f"Bot ID mismatch: saved={saved_bot_id}, current={self._bot_id}"
+
+        # Check timestamp staleness
+        timestamp_str = snapshot.get("timestamp")
+        if timestamp_str:
+            try:
+                saved_time = datetime.fromisoformat(timestamp_str)
+                age = datetime.now(timezone.utc) - saved_time
+                age_hours = age.total_seconds() / 3600
+
+                if age_hours > max_age_hours:
+                    return False, (
+                        f"State too old: {age_hours:.1f} hours > {max_age_hours} hours max"
+                    )
+            except Exception as e:
+                return False, f"Invalid timestamp: {e}"
+        else:
+            return False, "Missing timestamp in snapshot"
+
+        # Verify checksum
+        saved_checksum = snapshot.get("checksum")
+        if saved_checksum:
+            # Recalculate checksum without the checksum field
+            snapshot_copy = {k: v for k, v in snapshot.items() if k != "checksum"}
+            state_json = json.dumps(snapshot_copy, sort_keys=True, default=str)
+            calculated_checksum = hashlib.md5(state_json.encode()).hexdigest()
+
+            if calculated_checksum != saved_checksum:
+                return False, "Checksum mismatch - state may be corrupted"
+
+        return True, "State snapshot is valid"
+
+    async def _save_state_atomic(
+        self,
+        state_data: Dict[str, Any],
+        save_func: Callable,
+    ) -> bool:
+        """
+        Save state atomically with error handling.
+
+        Ensures all-or-nothing state persistence.
+
+        Args:
+            state_data: State data to save
+            save_func: Async function to perform the save
+
+        Returns:
+            True if save succeeded
+        """
+        try:
+            # Create snapshot with metadata
+            snapshot = self._create_state_snapshot()
+            snapshot["state"].update(state_data)
+
+            # Perform save
+            await save_func(snapshot)
+
+            logger.debug(f"[{self._bot_id}] State saved successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] State save failed: {e}")
+            # Notify if possible
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title=f"{self.bot_type}: State Save Failed",
+                    message=f"Error: {e}\nState may not be recoverable on restart.",
+                )
+            return False
+
+    async def _restore_state_with_validation(
+        self,
+        load_func: Callable,
+        apply_func: Callable,
+    ) -> bool:
+        """
+        Restore state with validation and error handling.
+
+        Args:
+            load_func: Async function to load state snapshot
+            apply_func: Async function to apply state to bot
+
+        Returns:
+            True if restore succeeded
+        """
+        try:
+            # Load state snapshot
+            snapshot = await load_func()
+
+            if snapshot is None:
+                logger.info(f"[{self._bot_id}] No saved state found - starting fresh")
+                return False
+
+            # Validate snapshot
+            is_valid, message = self._validate_state_snapshot(snapshot)
+            if not is_valid:
+                logger.warning(
+                    f"[{self._bot_id}] State validation failed: {message} - starting fresh"
+                )
+                return False
+
+            # Apply state
+            await apply_func(snapshot["state"])
+
+            logger.info(
+                f"[{self._bot_id}] State restored successfully from "
+                f"{snapshot.get('timestamp', 'unknown time')}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] State restore failed: {e}")
+            return False
+
+    # =========================================================================
+    # Concurrency Protection
+    # =========================================================================
+
+    async def _acquire_lock_with_timeout(
+        self,
+        lock: asyncio.Lock,
+        timeout_seconds: float = 30.0,
+        context: str = "operation",
+    ) -> bool:
+        """
+        Acquire a lock with timeout to prevent deadlocks.
+
+        Args:
+            lock: The asyncio.Lock to acquire
+            timeout_seconds: Maximum wait time
+            context: Description of the operation (for logging)
+
+        Returns:
+            True if lock acquired, False if timeout
+        """
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=timeout_seconds)
+            return True
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[{self._bot_id}] Lock timeout after {timeout_seconds}s for {context}"
+            )
+            return False
+
+    def _init_state_lock(self) -> None:
+        """Initialize state modification lock."""
+        if not hasattr(self, "_state_lock"):
+            self._state_lock = asyncio.Lock()
+
+    async def _modify_state_safely(
+        self,
+        modify_func: Callable,
+        context: str = "state modification",
+    ) -> bool:
+        """
+        Modify bot state with lock protection.
+
+        Prevents concurrent state modifications that could cause corruption.
+
+        Args:
+            modify_func: Async function that modifies state
+            context: Description of the modification
+
+        Returns:
+            True if modification succeeded
+        """
+        self._init_state_lock()
+
+        if not await self._acquire_lock_with_timeout(self._state_lock, context=context):
+            logger.error(f"[{self._bot_id}] Failed to acquire lock for {context}")
+            return False
+
+        try:
+            await modify_func()
+            return True
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Error during {context}: {e}")
+            return False
+        finally:
+            self._state_lock.release()
+
+    # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)
     # =========================================================================
 

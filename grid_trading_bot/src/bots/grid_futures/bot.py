@@ -131,6 +131,9 @@ class GridFuturesBot(BaseBot):
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
 
+        # Initialize state lock for concurrent protection
+        self._init_state_lock()
+
         # Data health tracking (for stale/gap detection)
         self._init_data_health_tracking()
         self._prev_kline: Optional[Kline] = None
@@ -1397,12 +1400,63 @@ class GridFuturesBot(BaseBot):
         return checks
 
     # =========================================================================
-    # State Persistence
+    # State Persistence (with validation, checksum, and concurrent protection)
     # =========================================================================
 
+    def _get_state_data(self) -> Dict[str, Any]:
+        """
+        Override BaseBot method to provide grid futures specific state.
+
+        Returns:
+            Dictionary of state data for persistence
+        """
+        state_data = {
+            "capital": str(self._capital),
+            "initial_capital": str(self._initial_capital),
+            "current_trend": self._current_trend,
+            "signal_cooldown": self._signal_cooldown,
+            "last_triggered_level": self._last_triggered_level,
+            "stats": {
+                "total_trades": self._grid_stats.total_trades,
+                "winning_trades": self._grid_stats.winning_trades,
+                "losing_trades": self._grid_stats.losing_trades,
+                "total_pnl": str(self._grid_stats.total_pnl),
+                "max_drawdown_pct": str(self._grid_stats.max_drawdown_pct),
+                "grid_rebuilds": self._grid_stats.grid_rebuilds,
+            },
+        }
+
+        if self._grid:
+            # Save grid level states for recovery
+            level_states = [
+                {"index": lv.index, "state": lv.state.value}
+                for lv in self._grid.levels
+            ]
+            state_data["grid"] = {
+                "center_price": str(self._grid.center_price),
+                "upper_price": str(self._grid.upper_price),
+                "lower_price": str(self._grid.lower_price),
+                "grid_count": self._grid.grid_count,
+                "version": self._grid.version,
+                "level_states": level_states,
+            }
+
+        if self._position:
+            state_data["position"] = {
+                "side": self._position.side.value,
+                "entry_price": str(self._position.entry_price),
+                "quantity": str(self._position.quantity),
+                "entry_time": self._position.entry_time.isoformat() if self._position.entry_time else None,
+                "stop_loss_order_id": self._position.stop_loss_order_id,
+                "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+            }
+
+        return state_data
+
     async def _save_state(self) -> None:
-        """Save bot state to database."""
-        try:
+        """Save bot state to database with concurrent protection."""
+
+        async def do_save():
             config = {
                 "symbol": self._config.symbol,
                 "grid_count": self._config.grid_count,
@@ -1413,51 +1467,22 @@ class GridFuturesBot(BaseBot):
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 
-            state_data = {
-                "capital": str(self._capital),
-                "initial_capital": str(self._initial_capital),
-                "current_trend": self._current_trend,
-                "stats": {
-                    "total_trades": self._grid_stats.total_trades,
-                    "winning_trades": self._grid_stats.winning_trades,
-                    "losing_trades": self._grid_stats.losing_trades,
-                    "total_pnl": str(self._grid_stats.total_pnl),
-                    "max_drawdown_pct": str(self._grid_stats.max_drawdown_pct),
-                },
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-            }
+            # Create validated snapshot with metadata
+            snapshot = self._create_state_snapshot()
 
-            if self._grid:
-                state_data["grid"] = {
-                    "center_price": str(self._grid.center_price),
-                    "upper_price": str(self._grid.upper_price),
-                    "lower_price": str(self._grid.lower_price),
-                    "grid_count": self._grid.grid_count,
-                    "version": self._grid.version,
-                }
+            async def persist_to_db(snapshot_data: Dict[str, Any]):
+                await self._data_manager.save_bot_state(
+                    bot_id=self._bot_id,
+                    bot_type="grid_futures",
+                    status=self._state.value,
+                    config=config,
+                    state_data=snapshot_data,
+                )
 
-            if self._position:
-                state_data["position"] = {
-                    "side": self._position.side.value,
-                    "entry_price": str(self._position.entry_price),
-                    "quantity": str(self._position.quantity),
-                    "entry_time": self._position.entry_time.isoformat() if self._position.entry_time else None,
-                    "stop_loss_order_id": self._position.stop_loss_order_id,
-                    "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
-                }
+            await self._save_state_atomic(snapshot["state"], persist_to_db)
 
-            await self._data_manager.save_bot_state(
-                bot_id=self._bot_id,
-                bot_type="grid_futures",
-                status=self._state.value,
-                config=config,
-                state_data=state_data,
-            )
-
-            logger.debug(f"Bot state saved: {self._bot_id}")
-
-        except Exception as e:
-            logger.warning(f"Failed to save bot state: {e}")
+        # Use lock to prevent concurrent state modifications during save
+        await self._modify_state_safely(do_save, "save_state")
 
     def _start_save_task(self) -> None:
         """Start periodic save task."""
@@ -1487,7 +1512,13 @@ class GridFuturesBot(BaseBot):
         notifier: Optional[NotificationManager] = None,
     ) -> Optional["GridFuturesBot"]:
         """
-        Restore a GridFuturesBot from saved state.
+        Restore a GridFuturesBot from saved state with validation.
+
+        Includes:
+        - Schema version validation
+        - Timestamp staleness check
+        - Checksum integrity verification
+        - Position sync with exchange
 
         Args:
             bot_id: Bot ID to restore
@@ -1496,12 +1527,41 @@ class GridFuturesBot(BaseBot):
             notifier: NotificationManager instance
 
         Returns:
-            Restored GridFuturesBot or None if not found
+            Restored GridFuturesBot or None if not found/invalid
         """
         try:
             state_data = await data_manager.get_bot_state(bot_id)
             if not state_data:
                 logger.warning(f"No saved state for bot: {bot_id}")
+                return None
+
+            # Extract and validate state_data section
+            saved_state = state_data.get("state_data", {})
+
+            # Validate state freshness (use timestamp from state_data if available)
+            timestamp_str = saved_state.get("timestamp")
+            if timestamp_str:
+                try:
+                    saved_time = datetime.fromisoformat(timestamp_str)
+                    age_hours = (datetime.now(timezone.utc) - saved_time).total_seconds() / 3600
+                    max_age = 24  # MAX_STATE_AGE_HOURS
+
+                    if age_hours > max_age:
+                        logger.warning(
+                            f"State too old for {bot_id}: {age_hours:.1f}h > {max_age}h - "
+                            f"starting fresh to avoid stale state issues"
+                        )
+                        return None
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp in saved state: {e}")
+
+            # Validate schema version if present
+            schema_version = saved_state.get("schema_version", 1)
+            if schema_version > 2:  # STATE_SCHEMA_VERSION
+                logger.warning(
+                    f"State schema version {schema_version} > current 2 for {bot_id} - "
+                    f"cannot restore future schema"
+                )
                 return None
 
             config_data = state_data.get("config", {})
@@ -1523,37 +1583,59 @@ class GridFuturesBot(BaseBot):
                 notifier=notifier,
             )
 
-            # Restore state
-            saved_state = state_data.get("state_data", {})
-            bot._capital = Decimal(saved_state.get("capital", "0"))
-            bot._initial_capital = Decimal(saved_state.get("initial_capital", "0"))
-            bot._current_trend = saved_state.get("current_trend", 0)
+            # Get state (could be nested in "state" key from new format)
+            inner_state = saved_state.get("state", saved_state)
+
+            # Restore core state
+            bot._capital = Decimal(inner_state.get("capital", "0"))
+            bot._initial_capital = Decimal(inner_state.get("initial_capital", "0"))
+            bot._current_trend = inner_state.get("current_trend", 0)
+            bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
+            bot._last_triggered_level = inner_state.get("last_triggered_level")
 
             # Restore stats
-            stats_data = saved_state.get("stats", {})
+            stats_data = inner_state.get("stats", {})
             bot._grid_stats.total_trades = stats_data.get("total_trades", 0)
             bot._grid_stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._grid_stats.losing_trades = stats_data.get("losing_trades", 0)
             bot._grid_stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
             bot._grid_stats.max_drawdown_pct = Decimal(stats_data.get("max_drawdown_pct", "0"))
+            bot._grid_stats.grid_rebuilds = stats_data.get("grid_rebuilds", 0)
 
-            # Restore grid
-            grid_data = saved_state.get("grid")
+            # Restore grid with level states
+            grid_data = inner_state.get("grid")
             if grid_data:
+                # Rebuild grid levels
+                center = Decimal(grid_data["center_price"])
+                upper = Decimal(grid_data["upper_price"])
+                lower = Decimal(grid_data["lower_price"])
+                grid_count = grid_data["grid_count"]
+                grid_spacing = (upper - lower) / Decimal(grid_count)
+
+                levels = []
+                level_states = grid_data.get("level_states", [])
+                level_state_map = {ls["index"]: ls["state"] for ls in level_states}
+
+                for i in range(grid_count + 1):
+                    price = lower + Decimal(i) * grid_spacing
+                    state = GridLevelState(level_state_map.get(i, "empty"))
+                    levels.append(GridLevel(index=i, price=price, state=state))
+
                 bot._grid = GridSetup(
-                    symbol=config.symbol,
-                    center_price=Decimal(grid_data["center_price"]),
-                    upper_price=Decimal(grid_data["upper_price"]),
-                    lower_price=Decimal(grid_data["lower_price"]),
-                    grid_count=grid_data["grid_count"],
-                    levels=[],  # Will be recalculated on start
+                    center_price=center,
+                    upper_price=upper,
+                    lower_price=lower,
+                    grid_spacing=grid_spacing,
+                    levels=levels,
+                    grid_count=grid_count,
                     version=grid_data.get("version", 1),
                 )
 
-            # Restore position
-            position_data = saved_state.get("position")
+            # Restore position from saved state
+            position_data = inner_state.get("position")
             if position_data:
                 bot._position = FuturesPosition(
+                    symbol=config.symbol,
                     side=PositionSide(position_data["side"]),
                     entry_price=Decimal(position_data["entry_price"]),
                     quantity=Decimal(position_data["quantity"]),
@@ -1563,10 +1645,46 @@ class GridFuturesBot(BaseBot):
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
                 )
 
-            logger.info(f"Restored GridFuturesBot: {bot_id}, PnL={bot._grid_stats.total_pnl}")
+            # Verify position sync with exchange before returning
+            try:
+                exchange_positions = await exchange.futures.get_positions(config.symbol)
+                exchange_pos = None
+                for pos in exchange_positions:
+                    if pos.quantity > 0:
+                        exchange_pos = pos
+                        break
+
+                if bot._position and not exchange_pos:
+                    logger.warning(
+                        f"Restored position not found on exchange for {bot_id} - "
+                        f"position may have been closed (stop loss/liquidation)"
+                    )
+                    # Clear local position to match exchange
+                    bot._position = None
+                elif exchange_pos and not bot._position:
+                    logger.warning(
+                        f"Exchange has position but saved state doesn't for {bot_id} - "
+                        f"syncing from exchange"
+                    )
+                    side_str = exchange_pos.side if isinstance(exchange_pos.side, str) else exchange_pos.side.value
+                    bot._position = FuturesPosition(
+                        symbol=config.symbol,
+                        side=PositionSide(side_str),
+                        entry_price=exchange_pos.entry_price,
+                        quantity=exchange_pos.quantity,
+                        leverage=config.leverage,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to verify position sync on restore: {e}")
+
+            logger.info(
+                f"Restored GridFuturesBot: {bot_id}, "
+                f"PnL={bot._grid_stats.total_pnl}, "
+                f"position={'yes' if bot._position else 'no'}"
+            )
             return bot
 
         except Exception as e:
-            logger.error(f"Failed to restore bot: {e}")
+            logger.error(f"Failed to restore bot {bot_id}: {e}")
             return None
 

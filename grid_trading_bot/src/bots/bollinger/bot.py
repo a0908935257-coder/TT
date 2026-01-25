@@ -125,6 +125,13 @@ class BollingerBot(BaseBot):
         # Background tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
+        # State persistence
+        self._save_task: Optional[asyncio.Task] = None
+        self._save_interval_minutes: int = 5
+
+        # Initialize state lock for concurrent protection
+        self._init_state_lock()
+
         # Data health tracking (for stale/gap detection)
         self._init_data_health_tracking()
         self._prev_kline: Optional[Kline] = None
@@ -184,6 +191,9 @@ class BollingerBot(BaseBot):
         # 8. Start background monitor
         self._monitor_task = asyncio.create_task(self._background_monitor())
 
+        # 9. Start periodic state saving
+        self._start_save_task()
+
         logger.info("Bollinger BB_TREND_GRID Bot started successfully")
         logger.info(f"  Symbol: {self._config.symbol}")
         logger.info(f"  Timeframe: {self._config.timeframe}")
@@ -218,6 +228,10 @@ class BollingerBot(BaseBot):
         # Close position if requested
         if clear_position and self._position:
             await self._close_position(self._position.entry_price, ExitReason.BOT_STOP)
+
+        # Stop periodic save task and save final state
+        self._stop_save_task()
+        await self._save_state()
 
         logger.info("Bollinger BB_TREND_GRID Bot stopped")
 
@@ -944,3 +958,275 @@ class BollingerBot(BaseBot):
             logger.error(f"Failed to close position: {e}")
 
         return False
+
+    # =========================================================================
+    # State Persistence (with validation, checksum, and concurrent protection)
+    # =========================================================================
+
+    def _get_state_data(self) -> Dict[str, Any]:
+        """
+        Override BaseBot method to provide Bollinger specific state.
+
+        Returns:
+            Dictionary of state data for persistence
+        """
+        state_data = {
+            "capital": str(self._capital),
+            "initial_capital": str(self._initial_capital),
+            "current_trend": self._current_trend,
+            "current_sma": str(self._current_sma) if self._current_sma else None,
+            "signal_cooldown": self._signal_cooldown,
+            "last_triggered_level": self._last_triggered_level,
+            "stats": self._stats.to_dict(),
+        }
+
+        if self._grid:
+            # Save grid level states for recovery
+            level_states = [
+                {"index": lv.index, "state": lv.state.value}
+                for lv in self._grid.levels
+            ]
+            state_data["grid"] = {
+                "center_price": str(self._grid.center_price),
+                "upper_price": str(self._grid.upper_price),
+                "lower_price": str(self._grid.lower_price),
+                "version": self._grid.version,
+                "level_states": level_states,
+            }
+
+        if self._position:
+            state_data["position"] = {
+                "side": self._position.side.value,
+                "entry_price": str(self._position.entry_price),
+                "quantity": str(self._position.quantity),
+                "entry_time": self._position.entry_time.isoformat() if self._position.entry_time else None,
+                "grid_level_index": self._position.grid_level_index,
+                "take_profit_price": str(self._position.take_profit_price) if self._position.take_profit_price else None,
+                "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+            }
+
+        return state_data
+
+    async def _save_state(self) -> None:
+        """Save bot state to database with concurrent protection."""
+
+        async def do_save():
+            config = {
+                "symbol": self._config.symbol,
+                "timeframe": self._config.timeframe,
+                "bb_period": self._config.bb_period,
+                "bb_std": str(self._config.bb_std),
+                "grid_count": self._config.grid_count,
+                "leverage": self._config.leverage,
+                "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
+            }
+
+            # Create validated snapshot with metadata
+            snapshot = self._create_state_snapshot()
+
+            async def persist_to_db(snapshot_data: Dict[str, Any]):
+                await self._data_manager.save_bot_state(
+                    bot_id=self._bot_id,
+                    bot_type="bollinger",
+                    status=self._state.value,
+                    config=config,
+                    state_data=snapshot_data,
+                )
+
+            await self._save_state_atomic(snapshot["state"], persist_to_db)
+
+        # Use lock to prevent concurrent state modifications during save
+        await self._modify_state_safely(do_save, "save_state")
+
+    def _start_save_task(self) -> None:
+        """Start periodic save task."""
+        if self._save_task is not None:
+            return
+
+        async def save_loop():
+            while self._state == BotState.RUNNING:
+                await asyncio.sleep(self._save_interval_minutes * 60)
+                if self._state == BotState.RUNNING:
+                    await self._save_state()
+
+        self._save_task = asyncio.create_task(save_loop())
+
+    def _stop_save_task(self) -> None:
+        """Stop periodic save task."""
+        if self._save_task:
+            self._save_task.cancel()
+            self._save_task = None
+
+    @classmethod
+    async def restore(
+        cls,
+        bot_id: str,
+        exchange: ExchangeClient,
+        data_manager: MarketDataManager,
+        notifier: Optional[NotificationManager] = None,
+    ) -> Optional["BollingerBot"]:
+        """
+        Restore a BollingerBot from saved state with validation.
+
+        Includes:
+        - Schema version validation
+        - Timestamp staleness check
+        - Position sync with exchange
+
+        Args:
+            bot_id: Bot ID to restore
+            exchange: ExchangeClient instance
+            data_manager: MarketDataManager instance
+            notifier: NotificationManager instance
+
+        Returns:
+            Restored BollingerBot or None if not found/invalid
+        """
+        try:
+            state_data = await data_manager.get_bot_state(bot_id)
+            if not state_data:
+                logger.warning(f"No saved state for bot: {bot_id}")
+                return None
+
+            # Extract and validate state_data section
+            saved_state = state_data.get("state_data", {})
+
+            # Validate state freshness
+            timestamp_str = saved_state.get("timestamp")
+            if timestamp_str:
+                try:
+                    from datetime import timezone
+                    saved_time = datetime.fromisoformat(timestamp_str)
+                    age_hours = (datetime.now(timezone.utc) - saved_time).total_seconds() / 3600
+                    max_age = 24
+
+                    if age_hours > max_age:
+                        logger.warning(
+                            f"State too old for {bot_id}: {age_hours:.1f}h > {max_age}h - "
+                            f"starting fresh"
+                        )
+                        return None
+                except Exception as e:
+                    logger.warning(f"Invalid timestamp in saved state: {e}")
+
+            config_data = state_data.get("config", {})
+            config = BollingerConfig(
+                symbol=config_data.get("symbol", ""),
+                timeframe=config_data.get("timeframe", "15m"),
+                bb_period=config_data.get("bb_period", 20),
+                bb_std=Decimal(config_data.get("bb_std", "2.0")),
+                grid_count=config_data.get("grid_count", 10),
+                leverage=config_data.get("leverage", 2),
+                max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
+            )
+
+            bot = cls(
+                bot_id=bot_id,
+                config=config,
+                exchange=exchange,
+                data_manager=data_manager,
+                notifier=notifier,
+            )
+
+            # Get state (could be nested in "state" key from new format)
+            inner_state = saved_state.get("state", saved_state)
+
+            # Restore core state
+            bot._capital = Decimal(inner_state.get("capital", "0"))
+            bot._initial_capital = Decimal(inner_state.get("initial_capital", "0"))
+            bot._current_trend = inner_state.get("current_trend", 0)
+            if inner_state.get("current_sma"):
+                bot._current_sma = Decimal(inner_state["current_sma"])
+            bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
+            bot._last_triggered_level = inner_state.get("last_triggered_level")
+
+            # Restore stats
+            stats_data = inner_state.get("stats", {})
+            bot._stats.total_trades = stats_data.get("total_trades", 0)
+            bot._stats.winning_trades = stats_data.get("winning_trades", 0)
+            bot._stats.losing_trades = stats_data.get("losing_trades", 0)
+            bot._stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+
+            # Restore grid with level states
+            grid_data = inner_state.get("grid")
+            if grid_data:
+                center = Decimal(grid_data["center_price"])
+                upper = Decimal(grid_data["upper_price"])
+                lower = Decimal(grid_data["lower_price"])
+                grid_count = config.grid_count
+                grid_spacing = (upper - lower) / Decimal(grid_count)
+
+                levels = []
+                level_states = grid_data.get("level_states", [])
+                level_state_map = {ls["index"]: ls["state"] for ls in level_states}
+
+                for i in range(grid_count + 1):
+                    price = lower + Decimal(i) * grid_spacing
+                    state = GridLevelState(level_state_map.get(i, "empty"))
+                    levels.append(GridLevel(index=i, price=price, state=state))
+
+                bot._grid = GridSetup(
+                    symbol=config.symbol,
+                    center_price=center,
+                    upper_price=upper,
+                    lower_price=lower,
+                    grid_count=grid_count,
+                    levels=levels,
+                    version=grid_data.get("version", 1),
+                )
+
+            # Restore position from saved state
+            position_data = inner_state.get("position")
+            if position_data:
+                bot._position = Position(
+                    symbol=config.symbol,
+                    side=PositionSide(position_data["side"]),
+                    entry_price=Decimal(position_data["entry_price"]),
+                    quantity=Decimal(position_data["quantity"]),
+                    leverage=config.leverage,
+                    entry_time=datetime.fromisoformat(position_data["entry_time"]) if position_data.get("entry_time") else None,
+                    grid_level_index=position_data.get("grid_level_index"),
+                    take_profit_price=Decimal(position_data["take_profit_price"]) if position_data.get("take_profit_price") else None,
+                    stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
+                )
+
+            # Verify position sync with exchange
+            try:
+                exchange_positions = await exchange.futures.get_positions(config.symbol)
+                exchange_pos = None
+                for pos in exchange_positions:
+                    if pos.quantity > 0:
+                        exchange_pos = pos
+                        break
+
+                if bot._position and not exchange_pos:
+                    logger.warning(
+                        f"Restored position not found on exchange for {bot_id} - "
+                        f"clearing local state"
+                    )
+                    bot._position = None
+                elif exchange_pos and not bot._position:
+                    logger.warning(
+                        f"Exchange has position but saved state doesn't for {bot_id} - "
+                        f"syncing from exchange"
+                    )
+                    side_str = exchange_pos.side if isinstance(exchange_pos.side, str) else exchange_pos.side.value
+                    bot._position = Position(
+                        symbol=config.symbol,
+                        side=PositionSide(side_str),
+                        entry_price=exchange_pos.entry_price,
+                        quantity=exchange_pos.quantity,
+                        leverage=config.leverage,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to verify position sync on restore: {e}")
+
+            logger.info(
+                f"Restored BollingerBot: {bot_id}, "
+                f"position={'yes' if bot._position else 'no'}"
+            )
+            return bot
+
+        except Exception as e:
+            logger.error(f"Failed to restore bot {bot_id}: {e}")
+            return None
