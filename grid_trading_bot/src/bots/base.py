@@ -2800,6 +2800,740 @@ class BaseBot(ABC):
         return True, "All pre-order checks passed"
 
     # =========================================================================
+    # Fill Confirmation with Polling Fallback
+    # =========================================================================
+
+    # Constants for fill confirmation
+    FILL_CONFIRMATION_WAIT_SECONDS = 5  # Wait for WebSocket notification
+    FILL_POLLING_INTERVAL_SECONDS = 2  # Poll interval if no WebSocket
+    FILL_CONFIRMATION_TIMEOUT_SECONDS = 60  # Total timeout
+
+    def _init_fill_tracking(self) -> None:
+        """Initialize fill tracking for WebSocket + polling confirmation."""
+        if not hasattr(self, "_pending_fill_callbacks"):
+            self._pending_fill_callbacks: Dict[str, Callable] = {}
+        if not hasattr(self, "_confirmed_fills"):
+            self._confirmed_fills: Dict[str, Dict] = {}
+        if not hasattr(self, "_fill_confirmation_events"):
+            self._fill_confirmation_events: Dict[str, asyncio.Event] = {}
+
+    def _register_fill_callback(self, order_id: str, callback: Callable) -> None:
+        """Register a callback to be triggered when fill is confirmed."""
+        self._init_fill_tracking()
+        self._pending_fill_callbacks[order_id] = callback
+        self._fill_confirmation_events[order_id] = asyncio.Event()
+
+    def _unregister_fill_callback(self, order_id: str) -> None:
+        """Unregister fill callback."""
+        self._init_fill_tracking()
+        self._pending_fill_callbacks.pop(order_id, None)
+        self._fill_confirmation_events.pop(order_id, None)
+
+    def _on_fill_notification(self, order_id: str, fill_data: Dict) -> None:
+        """
+        Called when WebSocket fill notification is received.
+
+        This should be called from the user data stream handler when
+        an executionReport event is received with status=FILLED.
+        """
+        self._init_fill_tracking()
+
+        # Record the fill
+        self._confirmed_fills[order_id] = {
+            "timestamp": time.time(),
+            "data": fill_data,
+            "source": "websocket",
+        }
+
+        # Trigger callback if registered
+        if order_id in self._pending_fill_callbacks:
+            try:
+                self._pending_fill_callbacks[order_id](fill_data)
+            except Exception as e:
+                logger.error(f"[{self._bot_id}] Error in fill callback: {e}")
+
+        # Signal event for anyone waiting
+        if order_id in self._fill_confirmation_events:
+            self._fill_confirmation_events[order_id].set()
+
+        logger.debug(f"[{self._bot_id}] Fill notification received for {order_id}")
+
+    async def _confirm_fill_with_polling(
+        self,
+        order_id: str,
+        symbol: str,
+        expected_quantity: Optional[Decimal] = None,
+        initial_wait_seconds: Optional[float] = None,
+        poll_interval_seconds: Optional[float] = None,
+        max_wait_seconds: Optional[float] = None,
+    ) -> tuple[bool, Optional[Dict]]:
+        """
+        Confirm order fill using WebSocket + polling fallback.
+
+        Strategy:
+        1. Wait for WebSocket notification (5s default)
+        2. If no notification, poll every 2s
+        3. Timeout after 60s total
+
+        Args:
+            order_id: Order ID to confirm
+            symbol: Trading symbol
+            expected_quantity: Expected fill quantity (for partial fill detection)
+            initial_wait_seconds: Time to wait for WebSocket notification
+            poll_interval_seconds: Polling interval
+            max_wait_seconds: Total timeout
+
+        Returns:
+            Tuple of (is_confirmed, order_data)
+        """
+        self._init_fill_tracking()
+
+        if initial_wait_seconds is None:
+            initial_wait_seconds = self.FILL_CONFIRMATION_WAIT_SECONDS
+        if poll_interval_seconds is None:
+            poll_interval_seconds = self.FILL_POLLING_INTERVAL_SECONDS
+        if max_wait_seconds is None:
+            max_wait_seconds = self.FILL_CONFIRMATION_TIMEOUT_SECONDS
+
+        start_time = time.time()
+
+        # Create event for this order
+        self._fill_confirmation_events[order_id] = asyncio.Event()
+
+        try:
+            # Step 1: Wait for WebSocket notification
+            try:
+                await asyncio.wait_for(
+                    self._fill_confirmation_events[order_id].wait(),
+                    timeout=initial_wait_seconds,
+                )
+
+                # WebSocket notification received!
+                if order_id in self._confirmed_fills:
+                    fill_data = self._confirmed_fills[order_id]["data"]
+                    logger.info(
+                        f"[{self._bot_id}] Order {order_id} fill confirmed via WebSocket"
+                    )
+                    return True, fill_data
+
+            except asyncio.TimeoutError:
+                # No WebSocket notification - fall back to polling
+                logger.warning(
+                    f"[{self._bot_id}] No WebSocket fill notification for {order_id} "
+                    f"after {initial_wait_seconds}s - starting polling"
+                )
+
+            # Step 2: Poll order status
+            while True:
+                elapsed = time.time() - start_time
+
+                if elapsed > max_wait_seconds:
+                    logger.error(
+                        f"[{self._bot_id}] Order {order_id} fill confirmation timeout "
+                        f"after {max_wait_seconds}s"
+                    )
+                    return False, None
+
+                try:
+                    order = await self._exchange.futures.get_order(
+                        symbol=symbol,
+                        order_id=order_id,
+                    )
+
+                    if order:
+                        status = getattr(order, "status", "").upper()
+                        filled_qty = getattr(order, "filled_qty", Decimal("0"))
+
+                        if status == "FILLED":
+                            order_data = {
+                                "order_id": order_id,
+                                "status": status,
+                                "filled_qty": str(filled_qty),
+                                "avg_price": str(getattr(order, "avg_price", None)),
+                                "source": "polling",
+                                "elapsed_seconds": elapsed,
+                            }
+
+                            # Record for future reference
+                            self._confirmed_fills[order_id] = {
+                                "timestamp": time.time(),
+                                "data": order_data,
+                                "source": "polling",
+                            }
+
+                            logger.info(
+                                f"[{self._bot_id}] Order {order_id} fill confirmed via polling "
+                                f"(elapsed: {elapsed:.1f}s)"
+                            )
+                            return True, order_data
+
+                        elif status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                            logger.warning(
+                                f"[{self._bot_id}] Order {order_id} ended with status: {status}"
+                            )
+
+                            # Check for partial fill
+                            if filled_qty > 0:
+                                order_data = {
+                                    "order_id": order_id,
+                                    "status": status,
+                                    "filled_qty": str(filled_qty),
+                                    "avg_price": str(getattr(order, "avg_price", None)),
+                                    "partial_fill": True,
+                                    "source": "polling",
+                                }
+                                return True, order_data
+
+                            return False, {
+                                "order_id": order_id,
+                                "status": status,
+                                "message": f"Order {status}",
+                            }
+
+                        # Still pending - continue polling
+                        logger.debug(
+                            f"[{self._bot_id}] Order {order_id} still pending "
+                            f"(status={status}, filled={filled_qty})"
+                        )
+
+                except Exception as e:
+                    logger.warning(f"[{self._bot_id}] Error polling order {order_id}: {e}")
+
+                await asyncio.sleep(poll_interval_seconds)
+
+        finally:
+            # Cleanup
+            self._unregister_fill_callback(order_id)
+
+    # =========================================================================
+    # Order Expiration Monitoring
+    # =========================================================================
+
+    # Constants for order expiration
+    DEFAULT_ORDER_MAX_AGE_SECONDS = 300  # 5 minutes for limit orders
+    ORDER_EXPIRATION_CHECK_INTERVAL = 10  # Check every 10 seconds
+
+    def _init_order_monitoring(self) -> None:
+        """Initialize order monitoring structures."""
+        if not hasattr(self, "_monitored_orders"):
+            self._monitored_orders: Dict[str, Dict] = {}
+        if not hasattr(self, "_order_monitor_task"):
+            self._order_monitor_task: Optional[asyncio.Task] = None
+
+    async def _monitor_order_expiration(
+        self,
+        order_id: str,
+        symbol: str,
+        max_age_seconds: Optional[int] = None,
+        cancel_if_expired: bool = True,
+        on_expired_callback: Optional[Callable] = None,
+    ) -> None:
+        """
+        Monitor an order for expiration and auto-cancel if stuck.
+
+        Args:
+            order_id: Order ID to monitor
+            symbol: Trading symbol
+            max_age_seconds: Maximum order age before considering it expired
+            cancel_if_expired: Whether to cancel expired orders
+            on_expired_callback: Callback when order expires
+        """
+        self._init_order_monitoring()
+
+        if max_age_seconds is None:
+            max_age_seconds = self.DEFAULT_ORDER_MAX_AGE_SECONDS
+
+        created_at = time.time()
+
+        self._monitored_orders[order_id] = {
+            "symbol": symbol,
+            "created_at": created_at,
+            "max_age_seconds": max_age_seconds,
+            "cancel_if_expired": cancel_if_expired,
+            "on_expired_callback": on_expired_callback,
+        }
+
+        logger.debug(
+            f"[{self._bot_id}] Started monitoring order {order_id} "
+            f"(max age: {max_age_seconds}s)"
+        )
+
+        while True:
+            try:
+                # Check if still monitoring this order
+                if order_id not in self._monitored_orders:
+                    break
+
+                order = await self._exchange.futures.get_order(
+                    symbol=symbol,
+                    order_id=order_id,
+                )
+
+                if order:
+                    status = getattr(order, "status", "").upper()
+
+                    # Order reached terminal state
+                    if status in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
+                        logger.info(
+                            f"[{self._bot_id}] Order {order_id} reached terminal state: {status}"
+                        )
+                        self._monitored_orders.pop(order_id, None)
+                        break
+
+                    # Check age
+                    age = time.time() - created_at
+
+                    if age > max_age_seconds:
+                        filled_qty = getattr(order, "filled_qty", Decimal("0"))
+
+                        logger.warning(
+                            f"[{self._bot_id}] Order {order_id} exceeded max age "
+                            f"({max_age_seconds}s), filled={filled_qty}"
+                        )
+
+                        if cancel_if_expired:
+                            try:
+                                await self._cancel_order_with_timeout(order_id, symbol)
+                                logger.info(
+                                    f"[{self._bot_id}] Expired order {order_id} cancelled"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"[{self._bot_id}] Failed to cancel expired order "
+                                    f"{order_id}: {e}"
+                                )
+
+                        if on_expired_callback:
+                            try:
+                                on_expired_callback(order_id, filled_qty)
+                            except Exception as e:
+                                logger.error(
+                                    f"[{self._bot_id}] Error in expiration callback: {e}"
+                                )
+
+                        self._monitored_orders.pop(order_id, None)
+                        break
+
+            except Exception as e:
+                logger.warning(
+                    f"[{self._bot_id}] Error monitoring order {order_id}: {e}"
+                )
+
+            await asyncio.sleep(self.ORDER_EXPIRATION_CHECK_INTERVAL)
+
+    def _stop_monitoring_order(self, order_id: str) -> None:
+        """Stop monitoring an order."""
+        self._init_order_monitoring()
+        self._monitored_orders.pop(order_id, None)
+
+    async def _get_stale_orders(
+        self,
+        symbol: str,
+        max_age_seconds: Optional[int] = None,
+    ) -> list[Dict]:
+        """
+        Get list of orders that have been open too long.
+
+        Args:
+            symbol: Trading symbol
+            max_age_seconds: Maximum acceptable order age
+
+        Returns:
+            List of stale order details
+        """
+        if max_age_seconds is None:
+            max_age_seconds = self.DEFAULT_ORDER_MAX_AGE_SECONDS
+
+        stale_orders = []
+        current_time = time.time()
+
+        try:
+            open_orders = await self._exchange.futures.get_open_orders(symbol=symbol)
+
+            for order in open_orders:
+                # Get order timestamp
+                order_time = getattr(order, "timestamp", None)
+                if order_time:
+                    # Convert to seconds if milliseconds
+                    if order_time > 1e12:
+                        order_time = order_time / 1000
+
+                    age = current_time - order_time
+
+                    if age > max_age_seconds:
+                        stale_orders.append({
+                            "order_id": getattr(order, "order_id", ""),
+                            "symbol": symbol,
+                            "side": getattr(order, "side", ""),
+                            "price": str(getattr(order, "price", "")),
+                            "quantity": str(getattr(order, "quantity", "")),
+                            "filled_qty": str(getattr(order, "filled_qty", "0")),
+                            "age_seconds": age,
+                            "status": getattr(order, "status", ""),
+                        })
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Error getting stale orders: {e}")
+
+        return stale_orders
+
+    # =========================================================================
+    # Order Execution with Retry and Fallback
+    # =========================================================================
+
+    # Constants for order retry
+    MAX_ORDER_RETRIES = 3
+    ORDER_RETRY_DELAY_SECONDS = 1
+    LIMIT_ORDER_TIMEOUT_SECONDS = 10  # Wait for limit order fill
+
+    async def _execute_order_with_retry(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        limit_price: Optional[Decimal] = None,
+        order_type: str = "LIMIT",
+        max_retries: Optional[int] = None,
+        fallback_to_market: bool = True,
+        reduce_only: bool = False,
+    ) -> tuple[bool, Optional[Any], Dict]:
+        """
+        Execute order with retry and fallback strategies.
+
+        Strategy:
+        1. Try preferred order type (LIMIT or MARKET)
+        2. If LIMIT fails/times out, try more aggressive price
+        3. If still fails, fall back to MARKET order
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            limit_price: Limit price (required for LIMIT orders)
+            order_type: Order type (LIMIT/MARKET)
+            max_retries: Maximum retry attempts
+            fallback_to_market: Fall back to MARKET if LIMIT fails
+            reduce_only: Whether this is a reduce-only order
+
+        Returns:
+            Tuple of (success, order, execution_details)
+        """
+        if max_retries is None:
+            max_retries = self.MAX_ORDER_RETRIES
+
+        execution_details = {
+            "attempts": [],
+            "final_order_type": order_type,
+            "total_attempts": 0,
+            "fell_back_to_market": False,
+        }
+
+        # Try LIMIT order with progressive price adjustments
+        if order_type.upper() == "LIMIT" and limit_price:
+            for attempt in range(max_retries):
+                try:
+                    # Adjust price for each attempt (more aggressive)
+                    adjustment_pct = Decimal(str(0.1 * (attempt + 1))) / 100
+
+                    if side.upper() == "BUY":
+                        # For BUY: increase price (more aggressive)
+                        adjusted_price = limit_price * (1 + adjustment_pct)
+                    else:
+                        # For SELL: decrease price (more aggressive)
+                        adjusted_price = limit_price * (1 - adjustment_pct)
+
+                    # Normalize price
+                    symbol_info = await self._get_symbol_info(symbol)
+                    adjusted_price = self._normalize_price(adjusted_price, symbol_info)
+
+                    logger.info(
+                        f"[{self._bot_id}] LIMIT order attempt {attempt + 1}: "
+                        f"{side} {quantity} @ {adjusted_price}"
+                    )
+
+                    order = await self._exchange.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        order_type="LIMIT",
+                        quantity=quantity,
+                        price=adjusted_price,
+                        time_in_force="GTC",
+                        reduce_only=reduce_only,
+                        bot_id=self._bot_id,
+                    )
+
+                    if order:
+                        order_id = getattr(order, "order_id", "")
+
+                        # Wait for fill with timeout
+                        is_filled, fill_data = await self._confirm_fill_with_polling(
+                            order_id=str(order_id),
+                            symbol=symbol,
+                            expected_quantity=quantity,
+                            max_wait_seconds=self.LIMIT_ORDER_TIMEOUT_SECONDS,
+                        )
+
+                        execution_details["attempts"].append({
+                            "attempt": attempt + 1,
+                            "order_type": "LIMIT",
+                            "price": str(adjusted_price),
+                            "success": is_filled,
+                            "order_id": str(order_id),
+                        })
+                        execution_details["total_attempts"] = attempt + 1
+
+                        if is_filled:
+                            logger.info(
+                                f"[{self._bot_id}] LIMIT order filled on attempt {attempt + 1}"
+                            )
+                            return True, order, execution_details
+                        else:
+                            # Cancel unfilled order
+                            logger.warning(
+                                f"[{self._bot_id}] LIMIT order {order_id} not filled - cancelling"
+                            )
+                            await self._cancel_order_with_timeout(str(order_id), symbol)
+
+                except Exception as e:
+                    error_code, error_cat = await self._classify_order_error(e)
+                    logger.warning(
+                        f"[{self._bot_id}] LIMIT order attempt {attempt + 1} failed: "
+                        f"{error_code} ({error_cat})"
+                    )
+
+                    execution_details["attempts"].append({
+                        "attempt": attempt + 1,
+                        "order_type": "LIMIT",
+                        "price": str(limit_price),
+                        "success": False,
+                        "error": str(error_code),
+                    })
+
+                    # Some errors shouldn't be retried
+                    if error_cat in ["INSUFFICIENT_BALANCE", "POSITION_LIMIT", "SYMBOL_NOT_FOUND"]:
+                        logger.error(
+                            f"[{self._bot_id}] Non-retryable error: {error_cat}"
+                        )
+                        return False, None, execution_details
+
+                # Wait before retry
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(self.ORDER_RETRY_DELAY_SECONDS)
+
+        # Fall back to MARKET order
+        if fallback_to_market or order_type.upper() == "MARKET":
+            logger.warning(
+                f"[{self._bot_id}] Falling back to MARKET order"
+            )
+            execution_details["fell_back_to_market"] = True
+
+            try:
+                order = await self._exchange.futures_create_order(
+                    symbol=symbol,
+                    side=side,
+                    order_type="MARKET",
+                    quantity=quantity,
+                    reduce_only=reduce_only,
+                    bot_id=self._bot_id,
+                )
+
+                if order:
+                    execution_details["attempts"].append({
+                        "attempt": execution_details["total_attempts"] + 1,
+                        "order_type": "MARKET",
+                        "success": True,
+                        "order_id": str(getattr(order, "order_id", "")),
+                    })
+                    execution_details["total_attempts"] += 1
+                    execution_details["final_order_type"] = "MARKET"
+
+                    logger.info(
+                        f"[{self._bot_id}] MARKET order executed successfully"
+                    )
+                    return True, order, execution_details
+
+            except Exception as e:
+                error_code, error_cat = await self._classify_order_error(e)
+                logger.error(
+                    f"[{self._bot_id}] MARKET order also failed: {error_code}"
+                )
+
+                execution_details["attempts"].append({
+                    "attempt": execution_details["total_attempts"] + 1,
+                    "order_type": "MARKET",
+                    "success": False,
+                    "error": str(error_code),
+                })
+
+        return False, None, execution_details
+
+    async def _classify_order_error(self, error: Exception) -> tuple[str, str]:
+        """
+        Classify order error for retry decision.
+
+        Returns:
+            Tuple of (error_code, error_category)
+
+        Categories:
+        - RETRYABLE: Temporary issues (network, rate limit)
+        - INSUFFICIENT_BALANCE: Not enough funds
+        - POSITION_LIMIT: Max position reached
+        - SYMBOL_NOT_FOUND: Invalid symbol
+        - UNKNOWN: Unclassified error
+        """
+        error_str = str(error).lower()
+
+        # Insufficient balance
+        if "insufficient" in error_str or "balance" in error_str or "margin" in error_str:
+            return str(error), "INSUFFICIENT_BALANCE"
+
+        # Position limit
+        if "position" in error_str and ("limit" in error_str or "max" in error_str):
+            return str(error), "POSITION_LIMIT"
+
+        # Symbol not found
+        if "symbol" in error_str and "not found" in error_str:
+            return str(error), "SYMBOL_NOT_FOUND"
+
+        # Rate limit
+        if "rate" in error_str or "too many" in error_str:
+            return str(error), "RETRYABLE"
+
+        # Network/timeout
+        if "timeout" in error_str or "connection" in error_str or "network" in error_str:
+            return str(error), "RETRYABLE"
+
+        return str(error), "UNKNOWN"
+
+    # =========================================================================
+    # Liquidity Monitoring
+    # =========================================================================
+
+    async def _check_orderbook_liquidity(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        depth_levels: int = 5,
+        min_liquidity_ratio: Decimal = Decimal("2.0"),
+    ) -> tuple[bool, Dict]:
+        """
+        Check if orderbook has sufficient liquidity for an order.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            depth_levels: Number of orderbook levels to check
+            min_liquidity_ratio: Minimum ratio of available liquidity to order size
+
+        Returns:
+            Tuple of (has_liquidity, liquidity_details)
+        """
+        try:
+            orderbook = await self._exchange.futures.get_orderbook(symbol, limit=20)
+
+            if not orderbook:
+                return False, {"error": "Failed to get orderbook"}
+
+            # Get relevant side
+            levels = orderbook.asks if side.upper() == "BUY" else orderbook.bids
+
+            if not levels or len(levels) < depth_levels:
+                return False, {
+                    "error": "Insufficient orderbook depth",
+                    "available_levels": len(levels) if levels else 0,
+                }
+
+            # Calculate available liquidity in top N levels
+            available_qty = Decimal("0")
+            total_value = Decimal("0")
+
+            for i, (price, qty) in enumerate(levels[:depth_levels]):
+                available_qty += qty
+                total_value += price * qty
+
+            liquidity_ratio = available_qty / quantity if quantity > 0 else Decimal("0")
+            avg_price = total_value / available_qty if available_qty > 0 else Decimal("0")
+
+            has_liquidity = liquidity_ratio >= min_liquidity_ratio
+
+            details = {
+                "available_qty": str(available_qty),
+                "required_qty": str(quantity),
+                "liquidity_ratio": str(liquidity_ratio),
+                "avg_price_in_depth": str(avg_price),
+                "best_price": str(levels[0][0]) if levels else "0",
+                "depth_levels_checked": depth_levels,
+                "has_sufficient_liquidity": has_liquidity,
+            }
+
+            if not has_liquidity:
+                logger.warning(
+                    f"[{self._bot_id}] Insufficient liquidity for {side} {quantity} {symbol}: "
+                    f"ratio={liquidity_ratio:.2f} < {min_liquidity_ratio}"
+                )
+
+            return has_liquidity, details
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Error checking liquidity: {e}")
+            return False, {"error": str(e)}
+
+    async def _wait_for_liquidity(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        timeout_seconds: float = 30.0,
+        check_interval: float = 2.0,
+    ) -> tuple[bool, Dict]:
+        """
+        Wait for sufficient liquidity in orderbook.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            timeout_seconds: Maximum wait time
+            check_interval: Check interval
+
+        Returns:
+            Tuple of (has_liquidity, final_liquidity_details)
+        """
+        start_time = time.time()
+        last_details = {}
+
+        while True:
+            elapsed = time.time() - start_time
+
+            if elapsed > timeout_seconds:
+                logger.warning(
+                    f"[{self._bot_id}] Liquidity wait timeout after {timeout_seconds}s"
+                )
+                return False, {
+                    "timeout": True,
+                    "elapsed_seconds": elapsed,
+                    **last_details,
+                }
+
+            has_liquidity, details = await self._check_orderbook_liquidity(
+                symbol, side, quantity
+            )
+            last_details = details
+
+            if has_liquidity:
+                logger.info(
+                    f"[{self._bot_id}] Sufficient liquidity found after {elapsed:.1f}s"
+                )
+                return True, {
+                    "elapsed_seconds": elapsed,
+                    **details,
+                }
+
+            await asyncio.sleep(check_interval)
+
+    # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)
     # =========================================================================
 

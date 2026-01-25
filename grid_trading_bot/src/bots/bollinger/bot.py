@@ -868,8 +868,29 @@ class BollingerBot(BaseBot):
             self._clear_pending_order(order_key)
 
             if order:
-                fill_price = order.avg_price if order.avg_price else price
-                fill_qty = order.filled_qty
+                order_id = str(getattr(order, "order_id", ""))
+
+                # Confirm fill with polling fallback (handles lost notifications)
+                if order_id:
+                    is_confirmed, fill_data = await self._confirm_fill_with_polling(
+                        order_id=order_id,
+                        symbol=self._config.symbol,
+                        expected_quantity=quantity,
+                        max_wait_seconds=30,
+                    )
+
+                    if is_confirmed and fill_data:
+                        fill_price = Decimal(fill_data.get("avg_price", str(price)))
+                        fill_qty = Decimal(fill_data.get("filled_qty", str(order.filled_qty or quantity)))
+                    else:
+                        fill_price = order.avg_price if order.avg_price else price
+                        fill_qty = order.filled_qty if order.filled_qty else quantity
+                        logger.warning(
+                            f"Fill confirmation failed for {order_id}, using order response data"
+                        )
+                else:
+                    fill_price = order.avg_price if order.avg_price else price
+                    fill_qty = order.filled_qty if order.filled_qty else quantity
 
                 # Check for partial fill
                 if fill_qty < quantity:
