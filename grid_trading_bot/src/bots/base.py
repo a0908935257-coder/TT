@@ -773,6 +773,94 @@ class BaseBot(ABC):
             logger.warning(f"[{self._bot_id}] Failed to check time sync: {e}")
             return True  # Don't block trading on check failure
 
+    async def _ensure_time_sync(
+        self,
+        max_offset_ms: int = 3000,
+        retry_count: int = 3,
+    ) -> None:
+        """
+        Ensure time is synchronized with exchange before starting.
+
+        This is called at bot startup to:
+        1. Force an immediate time sync with the exchange
+        2. Verify the time offset is within acceptable limits
+        3. Log warnings if drift is detected
+
+        Args:
+            max_offset_ms: Maximum acceptable time offset in milliseconds
+            retry_count: Number of sync retry attempts
+
+        Note:
+            This method does not block bot startup on failure, but logs
+            warnings to alert operators of potential API signature issues.
+        """
+        try:
+            logger.info(f"[{self._bot_id}] Ensuring time synchronization...")
+
+            for attempt in range(retry_count):
+                # Force time sync
+                if hasattr(self._exchange, 'force_time_sync'):
+                    offsets = await self._exchange.force_time_sync()
+
+                    spot_offset = offsets.get('spot', 0)
+                    futures_offset = offsets.get('futures', 0)
+
+                    logger.info(
+                        f"[{self._bot_id}] Time sync result: "
+                        f"spot={spot_offset}ms, futures={futures_offset}ms"
+                    )
+
+                    # Check if offset is acceptable
+                    max_offset = max(abs(spot_offset), abs(futures_offset))
+                    if max_offset <= max_offset_ms:
+                        logger.info(
+                            f"[{self._bot_id}] Time synchronization OK "
+                            f"(offset={max_offset}ms <= {max_offset_ms}ms)"
+                        )
+                        return
+
+                    # Offset too large - retry
+                    if attempt < retry_count - 1:
+                        logger.warning(
+                            f"[{self._bot_id}] Time offset {max_offset}ms exceeds "
+                            f"threshold {max_offset_ms}ms, retry {attempt + 1}/{retry_count}"
+                        )
+                        await asyncio.sleep(1)  # Wait before retry
+                    else:
+                        logger.warning(
+                            f"[{self._bot_id}] Time offset {max_offset}ms exceeds "
+                            f"threshold after {retry_count} attempts. "
+                            f"API requests may be rejected due to timestamp issues."
+                        )
+
+                        # Send alert notification
+                        if self._notifier:
+                            try:
+                                await self._notifier.send_alert(
+                                    title="Time Sync Warning",
+                                    message=(
+                                        f"Bot {self._bot_id} detected large time offset:\n"
+                                        f"• Spot: {spot_offset}ms\n"
+                                        f"• Futures: {futures_offset}ms\n"
+                                        f"• Threshold: {max_offset_ms}ms\n\n"
+                                        f"Orders may be rejected. Please check system time."
+                                    ),
+                                    level="warning",
+                                )
+                            except Exception:
+                                pass  # Don't fail startup on notification error
+                else:
+                    logger.debug(
+                        f"[{self._bot_id}] Exchange client does not support force_time_sync"
+                    )
+                    return
+
+        except Exception as e:
+            logger.warning(
+                f"[{self._bot_id}] Failed to ensure time sync: {e}. "
+                f"Continuing with startup..."
+            )
+
     # =========================================================================
     # Liquidity and Order Book Validation
     # =========================================================================
@@ -5106,6 +5194,9 @@ class BaseBot(ABC):
             self._state = BotState.INITIALIZING
             self._stats.start_time = datetime.now(timezone.utc)
             self._error_message = None
+
+            # Force time synchronization before starting
+            await self._ensure_time_sync()
 
             # Call subclass implementation
             await self._do_start()

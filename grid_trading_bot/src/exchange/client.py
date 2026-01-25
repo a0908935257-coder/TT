@@ -161,9 +161,9 @@ class ExchangeClient:
         # Time Synchronization
         # =======================================================================
         self._time_sync_task: Optional[asyncio.Task] = None
-        self._time_sync_interval = 300  # Sync every 5 minutes
+        self._time_sync_interval = 60  # Sync every 1 minute (was 5 minutes)
         self._time_offset_warning_ms = 1000  # Warn if offset > 1 second
-        self._time_offset_critical_ms = 5000  # Critical if offset > 5 seconds
+        self._time_offset_critical_ms = 3000  # Critical if offset > 3 seconds (was 5 seconds)
 
     # =========================================================================
     # Properties
@@ -210,9 +210,8 @@ class ExchangeClient:
             await self._spot.connect()
             await self._futures.connect()
 
-            # Sync time with server (both spot and futures)
-            await self._spot.sync_time()
-            await self._futures.sync_time()
+            # Sync time with server (both spot and futures) with validation
+            await self._initial_time_sync()
 
             # Initialize WebSocket clients
             self._spot_ws = BinanceWebSocket(
@@ -242,6 +241,44 @@ class ExchangeClient:
             logger.error(f"Connection failed: {e}")
             await self.close()
             return False
+
+    async def _initial_time_sync(self) -> None:
+        """
+        Perform initial time synchronization with validation.
+
+        Syncs with both Spot and Futures servers and logs the result.
+        Issues warnings if time offset exceeds thresholds.
+        """
+        # Sync spot
+        await self._spot.sync_time()
+        spot_offset = self._spot._auth.time_offset if self._spot._auth else 0
+
+        # Sync futures
+        await self._futures.sync_time()
+        futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
+
+        # Log sync result
+        logger.info(
+            f"Initial time sync: spot_offset={spot_offset}ms, "
+            f"futures_offset={futures_offset}ms"
+        )
+
+        # Check for excessive drift
+        max_offset = max(abs(spot_offset), abs(futures_offset))
+
+        if max_offset > self._time_offset_critical_ms:
+            logger.error(
+                f"CRITICAL: System time offset is {max_offset}ms "
+                f"(threshold: {self._time_offset_critical_ms}ms). "
+                f"API requests may fail due to timestamp issues. "
+                f"Please sync your system clock with NTP."
+            )
+        elif max_offset > self._time_offset_warning_ms:
+            logger.warning(
+                f"System time offset is {max_offset}ms "
+                f"(threshold: {self._time_offset_warning_ms}ms). "
+                f"Consider syncing your system clock."
+            )
 
     async def close(self) -> None:
         """Close all connections gracefully."""
