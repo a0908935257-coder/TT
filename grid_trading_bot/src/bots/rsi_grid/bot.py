@@ -1011,22 +1011,45 @@ class RSIGridBot(BaseBot):
         await self._cancel_stop_loss_order()
         await self._place_stop_loss_order()
 
-    async def _cancel_stop_loss_order(self) -> None:
-        """Cancel stop loss order."""
-        if not self._position or not self._position.stop_loss_order_id:
-            return
+    async def _cancel_stop_loss_order(self) -> bool:
+        """
+        Cancel stop loss order with verification.
 
-        try:
-            await self._exchange.futures.cancel_algo_order(
-                symbol=self._config.symbol,
-                algo_id=self._position.stop_loss_order_id,
-            )
+        Returns:
+            True if cancelled successfully or was triggered
+        """
+        if not self._position or not self._position.stop_loss_order_id:
+            return True
+
+        # Use BaseBot's robust algo cancel with verification
+        result = await self._cancel_algo_order_with_verification(
+            algo_id=self._position.stop_loss_order_id,
+            symbol=self._config.symbol,
+        )
+
+        if result["is_cancelled"]:
             logger.info(f"Stop loss cancelled: {self._position.stop_loss_order_id}")
             self._position.stop_loss_order_id = None
             self._position.stop_loss_price = None
+            return True
 
-        except Exception as e:
-            logger.debug(f"Failed to cancel stop loss: {e}")
+        elif result["was_triggered"]:
+            # Stop loss was executed - position may have changed
+            logger.warning(
+                f"Stop loss {self._position.stop_loss_order_id} was triggered - "
+                f"forcing position sync"
+            )
+            self._position.stop_loss_order_id = None
+            self._position.stop_loss_price = None
+            await self._sync_position()
+            return True
+
+        else:
+            logger.error(
+                f"Failed to cancel stop loss after {result['attempts']} attempts: "
+                f"{result['error_message']}"
+            )
+            return False
 
     # =========================================================================
     # Risk Control

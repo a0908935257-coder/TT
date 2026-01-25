@@ -2185,6 +2185,109 @@ class BaseBot(ABC):
 
             await asyncio.sleep(poll_interval)
 
+    # =========================================================================
+    # Order Cancellation with Verification
+    # =========================================================================
+
+    # Cancel retry configuration
+    CANCEL_MAX_RETRIES = 3
+    CANCEL_BASE_DELAY_SECONDS = 0.5  # Exponential backoff base
+    CANCEL_TIMEOUT_SECONDS = 10.0
+
+    # Cancel error categories
+    CANCEL_ERROR_ALREADY_FILLED = "ALREADY_FILLED"
+    CANCEL_ERROR_ALREADY_CANCELLED = "ALREADY_CANCELLED"
+    CANCEL_ERROR_NOT_FOUND = "NOT_FOUND"
+    CANCEL_ERROR_INVALID_STATE = "INVALID_STATE"
+    CANCEL_ERROR_TIMEOUT = "TIMEOUT"
+    CANCEL_ERROR_NETWORK = "NETWORK"
+    CANCEL_ERROR_UNKNOWN = "UNKNOWN"
+
+    def _classify_cancel_error(self, error: Exception) -> tuple[str, bool]:
+        """
+        Classify cancellation error for handling decision.
+
+        Args:
+            error: The exception raised
+
+        Returns:
+            Tuple of (error_category, should_retry)
+        """
+        error_str = str(error).lower()
+        error_code = ""
+
+        # Extract error code if available (Binance format: "APIError(code=-2011)")
+        if "code=" in error_str:
+            try:
+                import re
+                match = re.search(r"code=(-?\d+)", error_str)
+                if match:
+                    error_code = match.group(1)
+            except Exception:
+                pass
+
+        # Order not found / unknown order
+        if "unknown order" in error_str or "not found" in error_str or error_code in ["-2011", "-2013"]:
+            # Need to check if it was filled or cancelled
+            return self.CANCEL_ERROR_NOT_FOUND, False
+
+        # Order already cancelled
+        if "already canceled" in error_str or "already cancelled" in error_str:
+            return self.CANCEL_ERROR_ALREADY_CANCELLED, False
+
+        # Invalid order state
+        if "invalid" in error_str and "state" in error_str:
+            return self.CANCEL_ERROR_INVALID_STATE, False
+
+        # Timeout
+        if "timeout" in error_str:
+            return self.CANCEL_ERROR_TIMEOUT, True
+
+        # Network errors
+        if "connection" in error_str or "network" in error_str or "refused" in error_str:
+            return self.CANCEL_ERROR_NETWORK, True
+
+        # Rate limit
+        if "rate" in error_str or "too many" in error_str:
+            return self.CANCEL_ERROR_NETWORK, True
+
+        return self.CANCEL_ERROR_UNKNOWN, True
+
+    async def _get_order_final_state(
+        self,
+        order_id: str,
+        symbol: str,
+    ) -> Optional[Dict]:
+        """
+        Get final state of an order after cancellation attempt.
+
+        Args:
+            order_id: Order ID
+            symbol: Trading symbol
+
+        Returns:
+            Order state dict or None if unable to fetch
+        """
+        try:
+            order = await self._exchange.futures.get_order(
+                symbol=symbol,
+                order_id=order_id,
+            )
+
+            if order:
+                return {
+                    "order_id": order_id,
+                    "status": getattr(order, "status", "").upper(),
+                    "filled_qty": getattr(order, "filled_qty", Decimal("0")),
+                    "quantity": getattr(order, "quantity", Decimal("0")),
+                    "avg_price": getattr(order, "avg_price", None),
+                    "side": getattr(order, "side", ""),
+                }
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Error getting order state: {e}")
+
+        return None
+
     async def _cancel_order_with_timeout(
         self,
         order_id: str,
@@ -2192,7 +2295,7 @@ class BaseBot(ABC):
         timeout_seconds: float = 10.0,
     ) -> bool:
         """
-        Cancel order with timeout protection.
+        Cancel order with timeout protection (simple version for backward compatibility).
 
         Args:
             order_id: Order ID to cancel
@@ -2200,33 +2303,427 @@ class BaseBot(ABC):
             timeout_seconds: Timeout in seconds
 
         Returns:
-            True if cancelled successfully
+            True if cancelled successfully or order already gone
         """
-        try:
-            cancel_result = await asyncio.wait_for(
-                self._exchange.futures.cancel_order(
-                    symbol=symbol,
-                    order_id=order_id,
-                ),
-                timeout=timeout_seconds,
-            )
-            logger.info(f"[{self._bot_id}] Order {order_id} cancelled")
-            return True
+        result = await self._cancel_order_with_verification(
+            order_id=order_id,
+            symbol=symbol,
+            timeout_seconds=timeout_seconds,
+            max_retries=1,  # Single attempt for simple version
+            verify_state=False,  # Skip verification for simple version
+        )
+        return result["is_cancelled"] or result["is_filled"]
 
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"[{self._bot_id}] Cancel order timed out for {order_id}"
+    async def _cancel_order_with_verification(
+        self,
+        order_id: str,
+        symbol: str,
+        timeout_seconds: Optional[float] = None,
+        max_retries: Optional[int] = None,
+        verify_state: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Cancel order with retry, verification, and detailed result.
+
+        This method provides robust cancellation with:
+        1. Retry logic with exponential backoff
+        2. Post-cancel state verification
+        3. Partial fill detection
+        4. Detailed error classification
+
+        Args:
+            order_id: Order ID to cancel
+            symbol: Trading symbol
+            timeout_seconds: Timeout per attempt
+            max_retries: Maximum retry attempts
+            verify_state: Whether to verify final state after cancel
+
+        Returns:
+            Dict with:
+            - is_cancelled: True if order was successfully cancelled
+            - is_filled: True if order was already fully filled
+            - partial_fill: True if order had partial fill
+            - filled_qty: Quantity that was filled
+            - unfilled_qty: Quantity that was not filled
+            - final_status: Final order status
+            - error_category: Error category if failed
+            - attempts: Number of attempts made
+        """
+        if timeout_seconds is None:
+            timeout_seconds = self.CANCEL_TIMEOUT_SECONDS
+        if max_retries is None:
+            max_retries = self.CANCEL_MAX_RETRIES
+
+        result = {
+            "order_id": order_id,
+            "is_cancelled": False,
+            "is_filled": False,
+            "partial_fill": False,
+            "filled_qty": Decimal("0"),
+            "unfilled_qty": Decimal("0"),
+            "final_status": "",
+            "error_category": None,
+            "error_message": None,
+            "attempts": 0,
+        }
+
+        for attempt in range(max_retries):
+            result["attempts"] = attempt + 1
+
+            try:
+                # Attempt cancellation
+                await asyncio.wait_for(
+                    self._exchange.futures.cancel_order(
+                        symbol=symbol,
+                        order_id=order_id,
+                    ),
+                    timeout=timeout_seconds,
+                )
+
+                logger.info(f"[{self._bot_id}] Order {order_id} cancel request sent")
+                result["is_cancelled"] = True
+                break
+
+            except asyncio.TimeoutError:
+                error_category = self.CANCEL_ERROR_TIMEOUT
+                should_retry = True
+                result["error_category"] = error_category
+                result["error_message"] = f"Cancel timed out after {timeout_seconds}s"
+
+                logger.warning(
+                    f"[{self._bot_id}] Cancel order timeout for {order_id} "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+
+            except Exception as e:
+                error_category, should_retry = self._classify_cancel_error(e)
+                result["error_category"] = error_category
+                result["error_message"] = str(e)
+
+                # Handle specific error categories
+                if error_category == self.CANCEL_ERROR_NOT_FOUND:
+                    # Order not found - need to verify if filled or already cancelled
+                    logger.debug(
+                        f"[{self._bot_id}] Order {order_id} not found - checking state"
+                    )
+                    verify_state = True  # Force verification
+                    break
+
+                elif error_category == self.CANCEL_ERROR_ALREADY_CANCELLED:
+                    result["is_cancelled"] = True
+                    logger.info(
+                        f"[{self._bot_id}] Order {order_id} was already cancelled"
+                    )
+                    break
+
+                elif error_category == self.CANCEL_ERROR_INVALID_STATE:
+                    # Could be filled during cancel - need to verify
+                    logger.warning(
+                        f"[{self._bot_id}] Order {order_id} invalid state for cancel"
+                    )
+                    verify_state = True
+                    break
+
+                else:
+                    logger.warning(
+                        f"[{self._bot_id}] Cancel error for {order_id}: {e} "
+                        f"(category={error_category}, attempt {attempt + 1}/{max_retries})"
+                    )
+
+            # Retry with exponential backoff if applicable
+            if should_retry and attempt < max_retries - 1:
+                delay = self.CANCEL_BASE_DELAY_SECONDS * (2 ** attempt)
+                await asyncio.sleep(delay)
+            elif not should_retry:
+                break
+
+        # Verify final state if requested or needed
+        if verify_state:
+            final_state = await self._get_order_final_state(order_id, symbol)
+
+            if final_state:
+                result["final_status"] = final_state["status"]
+                result["filled_qty"] = final_state["filled_qty"]
+
+                total_qty = final_state["quantity"]
+                if total_qty:
+                    result["unfilled_qty"] = total_qty - final_state["filled_qty"]
+
+                # Determine actual outcome
+                if final_state["status"] == "FILLED":
+                    result["is_filled"] = True
+                    result["is_cancelled"] = False
+                    logger.info(
+                        f"[{self._bot_id}] Order {order_id} was filled "
+                        f"(qty={final_state['filled_qty']})"
+                    )
+
+                elif final_state["status"] in ["CANCELED", "CANCELLED"]:
+                    result["is_cancelled"] = True
+                    if final_state["filled_qty"] > 0:
+                        result["partial_fill"] = True
+                        logger.info(
+                            f"[{self._bot_id}] Order {order_id} cancelled with partial fill "
+                            f"(filled={final_state['filled_qty']})"
+                        )
+                    else:
+                        logger.info(
+                            f"[{self._bot_id}] Order {order_id} cancelled (no fill)"
+                        )
+
+                elif final_state["status"] == "EXPIRED":
+                    result["is_cancelled"] = True  # Treat as cancelled
+                    if final_state["filled_qty"] > 0:
+                        result["partial_fill"] = True
+                    logger.info(f"[{self._bot_id}] Order {order_id} expired")
+
+                elif final_state["status"] in ["NEW", "PARTIALLY_FILLED"]:
+                    # Cancel didn't take effect yet - may need another attempt
+                    if result["attempts"] >= max_retries:
+                        logger.error(
+                            f"[{self._bot_id}] Order {order_id} still active after "
+                            f"{max_retries} cancel attempts"
+                        )
+                    else:
+                        result["error_category"] = self.CANCEL_ERROR_INVALID_STATE
+
+        return result
+
+    async def _cancel_all_open_orders(
+        self,
+        symbol: str,
+        verify_each: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Cancel all open orders for a symbol with verification.
+
+        Args:
+            symbol: Trading symbol
+            verify_each: Whether to verify each cancellation
+
+        Returns:
+            Dict with cancellation results
+        """
+        results = {
+            "total_orders": 0,
+            "cancelled": 0,
+            "already_filled": 0,
+            "failed": 0,
+            "partial_fills": [],
+            "errors": [],
+        }
+
+        try:
+            # Get all open orders
+            open_orders = await self._exchange.futures.get_open_orders(symbol=symbol)
+            results["total_orders"] = len(open_orders)
+
+            if not open_orders:
+                logger.debug(f"[{self._bot_id}] No open orders to cancel for {symbol}")
+                return results
+
+            # Cancel each order
+            for order in open_orders:
+                order_id = str(getattr(order, "order_id", ""))
+                if not order_id:
+                    continue
+
+                cancel_result = await self._cancel_order_with_verification(
+                    order_id=order_id,
+                    symbol=symbol,
+                    verify_state=verify_each,
+                )
+
+                if cancel_result["is_cancelled"]:
+                    results["cancelled"] += 1
+                    if cancel_result["partial_fill"]:
+                        results["partial_fills"].append({
+                            "order_id": order_id,
+                            "filled_qty": str(cancel_result["filled_qty"]),
+                        })
+                elif cancel_result["is_filled"]:
+                    results["already_filled"] += 1
+                else:
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "order_id": order_id,
+                        "error": cancel_result["error_message"],
+                    })
+
+            logger.info(
+                f"[{self._bot_id}] Cancelled {results['cancelled']}/{results['total_orders']} "
+                f"orders for {symbol}"
             )
-            return False
 
         except Exception as e:
-            # Order might already be filled/cancelled
-            error_str = str(e).lower()
-            if "unknown order" in error_str or "not found" in error_str:
-                logger.debug(f"[{self._bot_id}] Order {order_id} already gone")
-                return True
-            logger.error(f"[{self._bot_id}] Cancel order error: {e}")
-            return False
+            logger.error(f"[{self._bot_id}] Error cancelling all orders: {e}")
+            results["errors"].append({"error": str(e)})
+
+        return results
+
+    async def _safe_cancel_with_position_update(
+        self,
+        order_id: str,
+        symbol: str,
+        expected_side: str,
+    ) -> Dict[str, Any]:
+        """
+        Safely cancel order and update position based on any partial fills.
+
+        This is the recommended method for cancelling orders when you need
+        to properly account for any fills that occurred.
+
+        Args:
+            order_id: Order ID to cancel
+            symbol: Trading symbol
+            expected_side: Expected order side (BUY/SELL) for position update
+
+        Returns:
+            Dict with cancel result and position update info
+        """
+        result = {
+            "cancel_success": False,
+            "position_updated": False,
+            "filled_qty": Decimal("0"),
+            "avg_price": None,
+            "needs_position_sync": False,
+        }
+
+        # Cancel with full verification
+        cancel_result = await self._cancel_order_with_verification(
+            order_id=order_id,
+            symbol=symbol,
+            verify_state=True,
+        )
+
+        result["cancel_success"] = cancel_result["is_cancelled"] or cancel_result["is_filled"]
+        result["filled_qty"] = cancel_result["filled_qty"]
+
+        # If there was any fill, we need to update position
+        if cancel_result["filled_qty"] > 0:
+            # Get full order details for avg_price
+            order_state = await self._get_order_final_state(order_id, symbol)
+            if order_state:
+                result["avg_price"] = order_state.get("avg_price")
+
+            # Flag that position needs sync
+            result["needs_position_sync"] = True
+
+            logger.info(
+                f"[{self._bot_id}] Order {order_id} had fill during cancel: "
+                f"{cancel_result['filled_qty']} @ {result['avg_price']}"
+            )
+
+            # Notify about the unexpected fill
+            if self._notifier and cancel_result["partial_fill"]:
+                await self._notifier.send_warning(
+                    title="⚠️ Partial Fill During Cancel",
+                    message=(
+                        f"Bot: {self._bot_id}\n"
+                        f"Order: {order_id}\n"
+                        f"Filled: {cancel_result['filled_qty']}\n"
+                        f"Side: {expected_side}\n"
+                        f"Please verify position"
+                    ),
+                )
+
+        return result
+
+    async def _cancel_algo_order_with_verification(
+        self,
+        algo_id: str,
+        symbol: str,
+        max_retries: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Cancel algo order (stop loss/take profit) with retry and verification.
+
+        Args:
+            algo_id: Algo order ID to cancel
+            symbol: Trading symbol
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Dict with:
+            - is_cancelled: True if cancelled successfully
+            - was_triggered: True if order was triggered (executed)
+            - error_category: Error category if failed
+            - attempts: Number of attempts made
+        """
+        if max_retries is None:
+            max_retries = self.CANCEL_MAX_RETRIES
+
+        result = {
+            "algo_id": algo_id,
+            "is_cancelled": False,
+            "was_triggered": False,
+            "error_category": None,
+            "error_message": None,
+            "attempts": 0,
+        }
+
+        for attempt in range(max_retries):
+            result["attempts"] = attempt + 1
+
+            try:
+                await asyncio.wait_for(
+                    self._exchange.futures.cancel_algo_order(
+                        symbol=symbol,
+                        algo_id=algo_id,
+                    ),
+                    timeout=self.CANCEL_TIMEOUT_SECONDS,
+                )
+
+                logger.info(f"[{self._bot_id}] Algo order {algo_id} cancelled")
+                result["is_cancelled"] = True
+                return result
+
+            except asyncio.TimeoutError:
+                result["error_category"] = self.CANCEL_ERROR_TIMEOUT
+                result["error_message"] = "Cancel timed out"
+                logger.warning(
+                    f"[{self._bot_id}] Algo cancel timeout for {algo_id} "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+
+            except Exception as e:
+                error_str = str(e).lower()
+                result["error_message"] = str(e)
+
+                # Check if already triggered (executed)
+                if "triggered" in error_str or "executed" in error_str:
+                    result["was_triggered"] = True
+                    result["error_category"] = self.CANCEL_ERROR_ALREADY_FILLED
+                    logger.info(
+                        f"[{self._bot_id}] Algo order {algo_id} was already triggered"
+                    )
+                    return result
+
+                # Check if not found (already cancelled or expired)
+                elif "not found" in error_str or "unknown" in error_str:
+                    result["is_cancelled"] = True  # Treat as success
+                    result["error_category"] = self.CANCEL_ERROR_NOT_FOUND
+                    logger.debug(
+                        f"[{self._bot_id}] Algo order {algo_id} already gone"
+                    )
+                    return result
+
+                else:
+                    error_category, should_retry = self._classify_cancel_error(e)
+                    result["error_category"] = error_category
+                    logger.warning(
+                        f"[{self._bot_id}] Algo cancel error for {algo_id}: {e}"
+                    )
+
+                    if not should_retry:
+                        return result
+
+            # Retry with exponential backoff
+            if attempt < max_retries - 1:
+                delay = self.CANCEL_BASE_DELAY_SECONDS * (2 ** attempt)
+                await asyncio.sleep(delay)
+
+        return result
 
     # =========================================================================
     # Order Type Validation and Fallback

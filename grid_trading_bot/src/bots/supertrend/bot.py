@@ -1127,22 +1127,43 @@ class SupertrendBot(BaseBot):
         except Exception as e:
             logger.error(f"Failed to place stop loss order: {e}")
 
-    async def _cancel_stop_loss_order(self) -> None:
-        """Cancel stop loss order on exchange using Algo Order API."""
-        if not self._position or not self._position.stop_loss_order_id:
-            return
+    async def _cancel_stop_loss_order(self) -> bool:
+        """
+        Cancel stop loss order with verification.
 
-        try:
-            # Cancel using Algo Order API (required since 2025-12-09)
-            await self._exchange.futures.cancel_algo_order(
-                symbol=self._config.symbol,
-                algo_id=self._position.stop_loss_order_id,
-            )
+        Returns:
+            True if cancelled successfully or was triggered
+        """
+        if not self._position or not self._position.stop_loss_order_id:
+            return True
+
+        # Use BaseBot's robust algo cancel with verification
+        result = await self._cancel_algo_order_with_verification(
+            algo_id=self._position.stop_loss_order_id,
+            symbol=self._config.symbol,
+        )
+
+        if result["is_cancelled"]:
             logger.info(f"Stop loss order cancelled: {self._position.stop_loss_order_id}")
             self._position.stop_loss_order_id = None
+            return True
 
-        except Exception as e:
-            logger.debug(f"Failed to cancel stop loss order: {e}")
+        elif result["was_triggered"]:
+            # Stop loss was executed - position may have changed
+            logger.warning(
+                f"Stop loss {self._position.stop_loss_order_id} was triggered - "
+                f"forcing position sync"
+            )
+            self._position.stop_loss_order_id = None
+            await self._sync_position()
+            return True
+
+        else:
+            logger.error(
+                f"Failed to cancel stop loss after {result['attempts']} attempts: "
+                f"{result['error_message']}"
+            )
+            return False
 
     async def _close_position(self, reason: ExitReason) -> None:
         """Close current position."""
