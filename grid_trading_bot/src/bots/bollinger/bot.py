@@ -387,6 +387,10 @@ class BollingerBot(BaseBot):
         except Exception:
             checks["dns_ok"] = False
 
+        # SSL certificate health check (SSL 證書)
+        ssl_healthy, _ = self.is_ssl_healthy()
+        checks["ssl_healthy"] = ssl_healthy
+
         return checks
 
     # =========================================================================
@@ -674,6 +678,15 @@ class BollingerBot(BaseBot):
                     if error_result.get("action") == "reconnect":
                         await self.attempt_network_reconnect()
 
+                # SSL certificate monitoring (SSL 證書監控)
+                try:
+                    ssl_healthy, ssl_reason = self.is_ssl_healthy()
+                    if not ssl_healthy:
+                        logger.warning(f"SSL unhealthy: {ssl_reason}")
+                        await self.check_ssl_certificate()
+                except Exception as ssl_err:
+                    await self.handle_ssl_error(ssl_err, "background_monitor")
+
                 self._send_heartbeat()
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
@@ -946,6 +959,12 @@ class BollingerBot(BaseBot):
             network_ok, network_reason = await self.check_network_before_trade()
             if not network_ok:
                 logger.warning(f"Network check failed: {network_reason}")
+                return False
+
+            # SSL certificate check (SSL 證書檢查)
+            ssl_ok, ssl_reason = await self.check_ssl_before_trade()
+            if not ssl_ok:
+                logger.warning(f"SSL check failed: {ssl_reason}")
                 return False
 
             # Check entry allowed (circuit breaker, cooldown, oscillation prevention)

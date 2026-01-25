@@ -11453,3 +11453,560 @@ class BaseBot(ABC):
         )
 
         return result
+
+    # =========================================================================
+    # SSL Certificate Resilience Management (SSL 證書彈性管理)
+    # =========================================================================
+    #
+    # Handles:
+    # - SSL 證書問題證書過期或不匹配
+    # - Certificate validation and expiry monitoring
+    # - SSL error handling and recovery
+    #
+    # =========================================================================
+
+    # SSL Constants
+    SSL_CHECK_INTERVAL_HOURS = 24  # Check certificate every 24 hours
+    SSL_EXPIRY_WARNING_DAYS = 30  # Warn 30 days before expiry
+    SSL_EXPIRY_CRITICAL_DAYS = 7  # Critical alert 7 days before expiry
+    SSL_ERROR_RETRY_DELAY = 30  # Seconds to wait before retry on SSL error
+    SSL_MAX_CONSECUTIVE_ERRORS = 5  # Max errors before alerting
+
+    # Known exchange certificate info (for validation)
+    EXCHANGE_CERT_FINGERPRINTS: Dict[str, list] = {
+        # These should be updated with actual fingerprints
+        "api.binance.com": [],
+        "fapi.binance.com": [],
+        "stream.binance.com": [],
+        "fstream.binance.com": [],
+    }
+
+    def _init_ssl_health(self) -> None:
+        """Initialize SSL certificate health tracking state."""
+        if hasattr(self, "_ssl_health_initialized") and self._ssl_health_initialized:
+            return
+
+        self._ssl_health_state: Dict[str, Any] = {
+            # Certificate state
+            "last_check_time": None,
+            "certificate_valid": True,
+            "certificate_expiry": None,
+            "days_until_expiry": None,
+
+            # Error tracking
+            "consecutive_ssl_errors": 0,
+            "last_ssl_error": None,
+            "last_ssl_error_time": None,
+            "total_ssl_errors": 0,
+
+            # Certificate info cache
+            "cert_info": {},  # hostname -> cert info
+
+            # Hostname verification
+            "hostname_mismatch_detected": False,
+            "last_verified_hostname": None,
+        }
+
+        # SSL event history
+        self._ssl_events: list = []
+        self._max_ssl_events = 50
+
+        self._ssl_health_initialized = True
+        logger.debug(f"[{self._bot_id}] SSL health tracking initialized")
+
+    def _record_ssl_event(self, event_type: str, details: Dict[str, Any]) -> None:
+        """Record an SSL-related event for history."""
+        self._init_ssl_health()
+
+        event = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": event_type,
+            "details": details,
+        }
+
+        self._ssl_events.append(event)
+        if len(self._ssl_events) > self._max_ssl_events:
+            self._ssl_events.pop(0)
+
+    async def check_ssl_certificate(
+        self,
+        hostname: str = "api.binance.com",
+        port: int = 443,
+    ) -> Dict[str, Any]:
+        """
+        Check SSL certificate validity for a hostname.
+
+        Args:
+            hostname: Hostname to check
+            port: Port number (default 443)
+
+        Returns:
+            Dict with certificate status and details
+        """
+        import ssl
+        import socket
+
+        self._init_ssl_health()
+        state = self._ssl_health_state
+
+        result = {
+            "valid": False,
+            "hostname": hostname,
+            "error": None,
+            "expiry_date": None,
+            "days_until_expiry": None,
+            "issuer": None,
+            "subject": None,
+            "hostname_match": True,
+        }
+
+        try:
+            # Create SSL context
+            context = ssl.create_default_context()
+
+            # Connect and get certificate
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+
+                    if cert:
+                        # Parse certificate info
+                        result["valid"] = True
+
+                        # Get expiry date
+                        not_after = cert.get("notAfter")
+                        if not_after:
+                            # Parse the date string
+                            from datetime import datetime as dt
+                            try:
+                                # Format: 'Mar 15 12:00:00 2024 GMT'
+                                expiry = dt.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
+                                expiry = expiry.replace(tzinfo=timezone.utc)
+                                result["expiry_date"] = expiry.isoformat()
+
+                                days_left = (expiry - datetime.now(timezone.utc)).days
+                                result["days_until_expiry"] = days_left
+
+                                state["certificate_expiry"] = expiry
+                                state["days_until_expiry"] = days_left
+
+                                # Check expiry warnings
+                                if days_left <= 0:
+                                    result["valid"] = False
+                                    result["error"] = "Certificate expired"
+                                    self._record_ssl_event("certificate_expired", {
+                                        "hostname": hostname,
+                                        "expiry": expiry.isoformat(),
+                                    })
+                                elif days_left <= self.SSL_EXPIRY_CRITICAL_DAYS:
+                                    logger.error(
+                                        f"[{self._bot_id}] CRITICAL: SSL certificate for {hostname} "
+                                        f"expires in {days_left} days!"
+                                    )
+                                    self._record_ssl_event("certificate_expiry_critical", {
+                                        "hostname": hostname,
+                                        "days_left": days_left,
+                                    })
+                                elif days_left <= self.SSL_EXPIRY_WARNING_DAYS:
+                                    logger.warning(
+                                        f"[{self._bot_id}] SSL certificate for {hostname} "
+                                        f"expires in {days_left} days"
+                                    )
+                                    self._record_ssl_event("certificate_expiry_warning", {
+                                        "hostname": hostname,
+                                        "days_left": days_left,
+                                    })
+
+                            except ValueError as e:
+                                logger.warning(f"Could not parse cert date: {not_after}")
+
+                        # Get issuer
+                        issuer = cert.get("issuer")
+                        if issuer:
+                            issuer_dict = {k: v for ((k, v),) in issuer}
+                            result["issuer"] = issuer_dict.get("organizationName", "Unknown")
+
+                        # Get subject
+                        subject = cert.get("subject")
+                        if subject:
+                            subject_dict = {k: v for ((k, v),) in subject}
+                            result["subject"] = subject_dict.get("commonName", "Unknown")
+
+                        # Verify hostname match
+                        san = cert.get("subjectAltName", [])
+                        hostnames = [name for (typ, name) in san if typ == "DNS"]
+                        cn = subject_dict.get("commonName", "") if subject else ""
+
+                        hostname_match = (
+                            hostname in hostnames or
+                            hostname == cn or
+                            any(self._match_wildcard(hostname, h) for h in hostnames)
+                        )
+
+                        if not hostname_match:
+                            result["hostname_match"] = False
+                            result["error"] = f"Hostname mismatch: {hostname} not in {hostnames}"
+                            state["hostname_mismatch_detected"] = True
+                            self._record_ssl_event("hostname_mismatch", {
+                                "hostname": hostname,
+                                "cert_names": hostnames,
+                            })
+                        else:
+                            state["hostname_mismatch_detected"] = False
+
+                        # Cache cert info
+                        state["cert_info"][hostname] = {
+                            "checked_at": datetime.now(timezone.utc).isoformat(),
+                            "expiry": result["expiry_date"],
+                            "issuer": result["issuer"],
+                            "valid": result["valid"],
+                        }
+
+                        # Reset error count on success
+                        state["consecutive_ssl_errors"] = 0
+                        state["certificate_valid"] = result["valid"]
+                        state["last_check_time"] = datetime.now(timezone.utc)
+                        state["last_verified_hostname"] = hostname
+
+        except ssl.SSLCertVerificationError as e:
+            result["error"] = f"Certificate verification failed: {e}"
+            state["consecutive_ssl_errors"] += 1
+            state["last_ssl_error"] = str(e)
+            state["last_ssl_error_time"] = datetime.now(timezone.utc)
+            state["total_ssl_errors"] += 1
+            state["certificate_valid"] = False
+
+            self._record_ssl_event("ssl_verification_error", {
+                "hostname": hostname,
+                "error": str(e),
+            })
+
+            logger.error(f"[{self._bot_id}] SSL verification error for {hostname}: {e}")
+
+        except ssl.SSLError as e:
+            result["error"] = f"SSL error: {e}"
+            state["consecutive_ssl_errors"] += 1
+            state["last_ssl_error"] = str(e)
+            state["last_ssl_error_time"] = datetime.now(timezone.utc)
+            state["total_ssl_errors"] += 1
+
+            self._record_ssl_event("ssl_error", {
+                "hostname": hostname,
+                "error": str(e),
+            })
+
+            logger.error(f"[{self._bot_id}] SSL error for {hostname}: {e}")
+
+        except socket.timeout:
+            result["error"] = "Connection timeout"
+            self._record_ssl_event("ssl_check_timeout", {"hostname": hostname})
+
+        except Exception as e:
+            result["error"] = f"Check failed: {e}"
+            state["consecutive_ssl_errors"] += 1
+            state["last_ssl_error"] = str(e)
+            state["last_ssl_error_time"] = datetime.now(timezone.utc)
+            state["total_ssl_errors"] += 1
+
+            self._record_ssl_event("ssl_check_failed", {
+                "hostname": hostname,
+                "error": str(e),
+            })
+
+        return result
+
+    def _match_wildcard(self, hostname: str, pattern: str) -> bool:
+        """Match hostname against wildcard pattern (e.g., *.binance.com)."""
+        if not pattern.startswith("*."):
+            return False
+
+        pattern_suffix = pattern[2:]  # Remove "*."
+        hostname_parts = hostname.split(".")
+        pattern_parts = pattern_suffix.split(".")
+
+        if len(hostname_parts) != len(pattern_parts) + 1:
+            return False
+
+        return ".".join(hostname_parts[1:]) == pattern_suffix
+
+    async def verify_exchange_ssl(self) -> Dict[str, Any]:
+        """
+        Verify SSL certificates for all exchange endpoints.
+
+        Returns:
+            Dict with verification results for each endpoint
+        """
+        endpoints = [
+            "api.binance.com",
+            "fapi.binance.com",
+        ]
+
+        results = {
+            "all_valid": True,
+            "endpoints": {},
+            "errors": [],
+        }
+
+        for endpoint in endpoints:
+            check_result = await self.check_ssl_certificate(endpoint)
+            results["endpoints"][endpoint] = check_result
+
+            if not check_result["valid"]:
+                results["all_valid"] = False
+                results["errors"].append({
+                    "endpoint": endpoint,
+                    "error": check_result["error"],
+                })
+
+        return results
+
+    def is_ssl_healthy(self) -> tuple[bool, str]:
+        """
+        Check if SSL status is healthy for trading.
+
+        Returns:
+            Tuple of (is_healthy, reason)
+        """
+        self._init_ssl_health()
+        state = self._ssl_health_state
+
+        # Check for consecutive errors
+        if state["consecutive_ssl_errors"] >= self.SSL_MAX_CONSECUTIVE_ERRORS:
+            return False, f"Too many SSL errors: {state['consecutive_ssl_errors']}"
+
+        # Check certificate validity
+        if not state["certificate_valid"]:
+            return False, "SSL certificate invalid or verification failed"
+
+        # Check hostname mismatch
+        if state["hostname_mismatch_detected"]:
+            return False, "SSL hostname mismatch detected"
+
+        # Check expiry
+        if state["days_until_expiry"] is not None:
+            if state["days_until_expiry"] <= 0:
+                return False, "SSL certificate expired"
+            if state["days_until_expiry"] <= self.SSL_EXPIRY_CRITICAL_DAYS:
+                return False, f"SSL certificate expires in {state['days_until_expiry']} days (critical)"
+
+        return True, "SSL healthy"
+
+    async def handle_ssl_error(
+        self,
+        error: Exception,
+        operation: str = "unknown",
+    ) -> Dict[str, Any]:
+        """
+        Handle an SSL error with appropriate recovery actions.
+
+        Args:
+            error: The SSL exception that occurred
+            operation: Description of the operation that failed
+
+        Returns:
+            Dict with handling result and recommended action
+        """
+        import ssl
+
+        self._init_ssl_health()
+        state = self._ssl_health_state
+        error_str = str(error).lower()
+
+        result = {
+            "handled": False,
+            "error_type": "unknown",
+            "should_retry": False,
+            "retry_delay": self.SSL_ERROR_RETRY_DELAY,
+            "action": "none",
+            "needs_manual_intervention": False,
+        }
+
+        # Classify SSL error type
+        if "certificate verify failed" in error_str or "certificate_verify_failed" in error_str:
+            result["error_type"] = "cert_verification"
+            result["should_retry"] = False
+            result["action"] = "verify_certificate"
+            result["needs_manual_intervention"] = True
+
+        elif "certificate has expired" in error_str or "certificate_expired" in error_str:
+            result["error_type"] = "cert_expired"
+            result["should_retry"] = False
+            result["action"] = "check_system_time"
+            result["needs_manual_intervention"] = True
+
+        elif "hostname" in error_str and ("mismatch" in error_str or "doesn't match" in error_str):
+            result["error_type"] = "hostname_mismatch"
+            result["should_retry"] = False
+            result["action"] = "verify_hostname"
+            result["needs_manual_intervention"] = True
+
+        elif "handshake" in error_str or "handshake_failure" in error_str:
+            result["error_type"] = "handshake"
+            result["should_retry"] = True
+            result["retry_delay"] = 10
+            result["action"] = "retry_connection"
+
+        elif "protocol" in error_str or "version" in error_str:
+            result["error_type"] = "protocol"
+            result["should_retry"] = False
+            result["action"] = "check_tls_version"
+
+        elif "connection reset" in error_str or "connection refused" in error_str:
+            result["error_type"] = "connection"
+            result["should_retry"] = True
+            result["retry_delay"] = 5
+            result["action"] = "retry_connection"
+
+        else:
+            result["error_type"] = "other"
+            result["should_retry"] = True
+            result["retry_delay"] = 15
+
+        # Update state
+        state["consecutive_ssl_errors"] += 1
+        state["last_ssl_error"] = str(error)
+        state["last_ssl_error_time"] = datetime.now(timezone.utc)
+        state["total_ssl_errors"] += 1
+
+        # Record event
+        self._record_ssl_event("ssl_error_handled", {
+            "operation": operation,
+            "error_type": result["error_type"],
+            "error": str(error)[:200],
+            "action": result["action"],
+        })
+
+        # Alert if too many errors
+        if state["consecutive_ssl_errors"] >= self.SSL_MAX_CONSECUTIVE_ERRORS:
+            logger.error(
+                f"[{self._bot_id}] SSL error threshold reached "
+                f"({state['consecutive_ssl_errors']} errors)"
+            )
+            if self._notifier:
+                asyncio.create_task(
+                    self._notifier.send_error(
+                        title=f"{self.bot_type}: SSL Error Alert",
+                        message=(
+                            f"Multiple SSL errors detected.\n"
+                            f"Error type: {result['error_type']}\n"
+                            f"Action needed: {result['action']}"
+                        ),
+                    )
+                )
+
+        result["handled"] = True
+
+        logger.warning(
+            f"[{self._bot_id}] SSL error handled: type={result['error_type']}, "
+            f"action={result['action']}, retry={result['should_retry']}"
+        )
+
+        return result
+
+    async def check_ssl_before_trade(self) -> tuple[bool, str]:
+        """
+        Check SSL status before executing a trade.
+
+        Returns:
+            Tuple of (can_trade, reason)
+        """
+        self._init_ssl_health()
+        state = self._ssl_health_state
+
+        # Check basic SSL health
+        is_healthy, reason = self.is_ssl_healthy()
+        if not is_healthy:
+            return False, f"SSL unhealthy: {reason}"
+
+        # If haven't checked recently, do a quick check
+        if state["last_check_time"] is None:
+            # First check
+            result = await self.check_ssl_certificate()
+            if not result["valid"]:
+                return False, f"SSL certificate check failed: {result['error']}"
+        else:
+            # Check if need to re-verify
+            hours_since_check = (
+                datetime.now(timezone.utc) - state["last_check_time"]
+            ).total_seconds() / 3600
+
+            if hours_since_check > self.SSL_CHECK_INTERVAL_HOURS:
+                result = await self.check_ssl_certificate()
+                if not result["valid"]:
+                    return False, f"SSL certificate check failed: {result['error']}"
+
+        return True, "SSL OK"
+
+    def get_ssl_status(self) -> Dict[str, Any]:
+        """Get comprehensive SSL status."""
+        self._init_ssl_health()
+        state = self._ssl_health_state
+
+        is_healthy, health_reason = self.is_ssl_healthy()
+
+        return {
+            "is_healthy": is_healthy,
+            "health_reason": health_reason,
+            "certificate": {
+                "valid": state["certificate_valid"],
+                "expiry": state["certificate_expiry"].isoformat() if state["certificate_expiry"] else None,
+                "days_until_expiry": state["days_until_expiry"],
+                "hostname_mismatch": state["hostname_mismatch_detected"],
+            },
+            "errors": {
+                "consecutive": state["consecutive_ssl_errors"],
+                "total": state["total_ssl_errors"],
+                "last_error": state["last_ssl_error"],
+                "last_error_time": state["last_ssl_error_time"].isoformat() if state["last_ssl_error_time"] else None,
+            },
+            "last_check": state["last_check_time"].isoformat() if state["last_check_time"] else None,
+            "cert_cache": state["cert_info"],
+            "recent_events": self._ssl_events[-5:] if self._ssl_events else [],
+        }
+
+    async def monitor_ssl_expiry(self) -> Optional[Dict[str, Any]]:
+        """
+        Monitor SSL certificate expiry and send alerts.
+
+        Should be called periodically (e.g., daily).
+
+        Returns:
+            Dict with expiry status or None if no issues
+        """
+        result = await self.verify_exchange_ssl()
+
+        alerts = []
+        for endpoint, check in result["endpoints"].items():
+            days_left = check.get("days_until_expiry")
+
+            if days_left is not None:
+                if days_left <= 0:
+                    alerts.append({
+                        "endpoint": endpoint,
+                        "level": "EXPIRED",
+                        "days_left": days_left,
+                    })
+                elif days_left <= self.SSL_EXPIRY_CRITICAL_DAYS:
+                    alerts.append({
+                        "endpoint": endpoint,
+                        "level": "CRITICAL",
+                        "days_left": days_left,
+                    })
+                elif days_left <= self.SSL_EXPIRY_WARNING_DAYS:
+                    alerts.append({
+                        "endpoint": endpoint,
+                        "level": "WARNING",
+                        "days_left": days_left,
+                    })
+
+        if alerts and self._notifier:
+            alert_text = "\n".join([
+                f"{a['endpoint']}: {a['level']} - {a['days_left']} days"
+                for a in alerts
+            ])
+            await self._notifier.send_warning(
+                title="SSL Certificate Expiry Alert",
+                message=f"Certificate expiry detected:\n{alert_text}",
+            )
+
+        return {"alerts": alerts} if alerts else None
