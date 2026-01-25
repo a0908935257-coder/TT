@@ -2,8 +2,10 @@
 Fund Pool Manager.
 
 Monitors account balance, detects deposits, and tracks fund allocations.
+Thread-safe with asyncio.Lock for concurrent access protection.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Protocol
@@ -56,6 +58,12 @@ class FundPool:
         self._exchange = exchange
         self._config = config or FundManagerConfig()
         self._market_type = market_type
+
+        # =======================================================================
+        # Thread Safety: Allocation Lock
+        # =======================================================================
+        # Prevents race conditions when multiple bots request funds concurrently
+        self._allocation_lock = asyncio.Lock()
 
         # Balance tracking
         self._current_snapshot: Optional[BalanceSnapshot] = None
@@ -326,6 +334,137 @@ class FundPool:
         """Clear all allocations."""
         self._allocations.clear()
         logger.info("All allocations cleared")
+
+    # =========================================================================
+    # Atomic Allocation Methods (Thread-Safe)
+    # =========================================================================
+
+    async def atomic_allocate(
+        self,
+        bot_id: str,
+        amount: Decimal,
+        check_available: bool = True,
+    ) -> tuple[bool, str]:
+        """
+        Atomically allocate funds to a bot with lock protection.
+
+        This method ensures that:
+        1. Balance check and allocation happen atomically
+        2. No race condition between multiple bots
+        3. Funds cannot be over-allocated
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount to allocate
+            check_available: Whether to check available balance
+
+        Returns:
+            Tuple of (success, message)
+        """
+        async with self._allocation_lock:
+            # Check available funds
+            if check_available:
+                unallocated = self.get_unallocated()
+                if amount > unallocated:
+                    return False, (
+                        f"Insufficient funds: requested {amount}, "
+                        f"available {unallocated}"
+                    )
+
+            # Perform allocation
+            current = self._allocations.get(bot_id, Decimal("0"))
+            new_amount = current + amount
+            self._allocations[bot_id] = new_amount
+
+            logger.info(
+                f"Atomic allocation: {bot_id} += {amount} "
+                f"(total: {new_amount})"
+            )
+            return True, f"Allocated {amount} to {bot_id}"
+
+    async def atomic_deallocate(
+        self,
+        bot_id: str,
+        amount: Optional[Decimal] = None,
+    ) -> tuple[bool, Decimal]:
+        """
+        Atomically deallocate funds from a bot with lock protection.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount to deallocate (None = all)
+
+        Returns:
+            Tuple of (success, amount_deallocated)
+        """
+        async with self._allocation_lock:
+            current = self._allocations.get(bot_id, Decimal("0"))
+
+            if current <= 0:
+                return False, Decimal("0")
+
+            if amount is None:
+                dealloc_amount = current
+            else:
+                dealloc_amount = min(amount, current)
+
+            new_amount = current - dealloc_amount
+
+            if new_amount <= 0:
+                self._allocations.pop(bot_id, None)
+            else:
+                self._allocations[bot_id] = new_amount
+
+            logger.info(
+                f"Atomic deallocation: {bot_id} -= {dealloc_amount} "
+                f"(remaining: {new_amount})"
+            )
+            return True, dealloc_amount
+
+    async def atomic_transfer(
+        self,
+        from_bot_id: str,
+        to_bot_id: str,
+        amount: Decimal,
+    ) -> tuple[bool, str]:
+        """
+        Atomically transfer funds between bots with lock protection.
+
+        Args:
+            from_bot_id: Source bot identifier
+            to_bot_id: Destination bot identifier
+            amount: Amount to transfer
+
+        Returns:
+            Tuple of (success, message)
+        """
+        async with self._allocation_lock:
+            from_current = self._allocations.get(from_bot_id, Decimal("0"))
+
+            if amount > from_current:
+                return False, (
+                    f"Insufficient allocation: {from_bot_id} has {from_current}, "
+                    f"requested {amount}"
+                )
+
+            # Perform transfer
+            self._allocations[from_bot_id] = from_current - amount
+            to_current = self._allocations.get(to_bot_id, Decimal("0"))
+            self._allocations[to_bot_id] = to_current + amount
+
+            # Clean up zero allocations
+            if self._allocations[from_bot_id] <= 0:
+                self._allocations.pop(from_bot_id, None)
+
+            logger.info(
+                f"Atomic transfer: {from_bot_id} -> {to_bot_id}: {amount}"
+            )
+            return True, f"Transferred {amount} from {from_bot_id} to {to_bot_id}"
+
+    @property
+    def allocation_lock(self) -> asyncio.Lock:
+        """Get the allocation lock for external use."""
+        return self._allocation_lock
 
     # =========================================================================
     # Status Methods

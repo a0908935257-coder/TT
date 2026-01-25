@@ -280,6 +280,9 @@ class FundManager:
         """
         Execute fund allocation and dispatch to bots.
 
+        Thread-safe: Uses allocation lock to prevent race conditions
+        when multiple triggers occur simultaneously.
+
         Args:
             trigger: What triggered the dispatch (manual, deposit, rebalance)
 
@@ -288,55 +291,57 @@ class FundManager:
         """
         result = DispatchResult(trigger=trigger)
 
-        try:
-            # Get active bots
-            bot_ids = self._get_active_bot_ids()
-            if not bot_ids:
-                logger.warning("No active bots to dispatch funds to")
-                result.errors.append("No active bots found")
-                return result
+        # Use allocation lock to prevent concurrent dispatches
+        async with self._fund_pool.allocation_lock:
+            try:
+                # Get active bots
+                bot_ids = self._get_active_bot_ids()
+                if not bot_ids:
+                    logger.warning("No active bots to dispatch funds to")
+                    result.errors.append("No active bots found")
+                    return result
 
-            # Get available funds
-            available = self._fund_pool.get_unallocated()
-            if available <= 0:
-                logger.info("No unallocated funds available for dispatch")
-                return result
+                # Get available funds (inside lock to ensure consistency)
+                available = self._fund_pool.get_unallocated()
+                if available <= 0:
+                    logger.info("No unallocated funds available for dispatch")
+                    return result
 
-            # Calculate allocations
-            current_allocations = self._fund_pool.allocations
-            allocations = self._allocator.calculate(
-                available_funds=available,
-                bot_allocations=self._config.allocations,
-                current_allocations=current_allocations,
-                bot_ids=bot_ids,
-            )
+                # Calculate allocations
+                current_allocations = self._fund_pool.allocations
+                allocations = self._allocator.calculate(
+                    available_funds=available,
+                    bot_allocations=self._config.allocations,
+                    current_allocations=current_allocations,
+                    bot_ids=bot_ids,
+                )
 
-            if not allocations:
-                logger.info("No allocations calculated")
-                return result
+                if not allocations:
+                    logger.info("No allocations calculated")
+                    return result
 
-            # Execute allocations
-            for bot_id, amount in allocations.items():
-                record = await self._allocate_to_bot(bot_id, amount, trigger)
-                result.add_allocation(record)
+                # Execute allocations (still inside lock)
+                for bot_id, amount in allocations.items():
+                    record = await self._allocate_to_bot(bot_id, amount, trigger)
+                    result.add_allocation(record)
 
-            # Update overall success status
-            result.success = result.failed_count == 0
+                # Update overall success status
+                result.success = result.failed_count == 0
 
-            # Log summary
-            logger.info(
-                f"Dispatch complete: {result.successful_count} successful, "
-                f"{result.failed_count} failed, "
-                f"total dispatched: {result.total_dispatched}"
-            )
+                # Log summary
+                logger.info(
+                    f"Dispatch complete: {result.successful_count} successful, "
+                    f"{result.failed_count} failed, "
+                    f"total dispatched: {result.total_dispatched}"
+                )
 
-            # Notify dispatch
-            await self._notify_dispatch(result)
+            except Exception as e:
+                logger.error(f"Error during dispatch: {e}")
+                result.success = False
+                result.errors.append(str(e))
 
-        except Exception as e:
-            logger.error(f"Error during dispatch: {e}")
-            result.success = False
-            result.errors.append(str(e))
+        # Notify dispatch (outside lock to avoid blocking)
+        await self._notify_dispatch(result)
 
         return result
 
