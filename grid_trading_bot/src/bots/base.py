@@ -2040,6 +2040,560 @@ class BaseBot(ABC):
 
         return True, "All pre-order checks passed", details
 
+    # =========================================================================
+    # Computational Resource Management
+    # =========================================================================
+
+    # Resource thresholds
+    CPU_WARNING_THRESHOLD = 70.0  # Warn at 70% CPU
+    CPU_CRITICAL_THRESHOLD = 90.0  # Block new orders at 90% CPU
+    MEMORY_WARNING_THRESHOLD = 75.0  # Warn at 75% memory
+    MEMORY_CRITICAL_THRESHOLD = 90.0  # Block at 90% memory
+
+    # Throttling configuration
+    RESOURCE_CHECK_INTERVAL = 5.0  # Check every 5 seconds
+    THROTTLE_DELAY_SECONDS = 1.0  # Delay when throttling
+    MAX_THROTTLE_WAIT = 30.0  # Max wait for resources
+
+    def _init_resource_monitoring(self) -> None:
+        """Initialize resource monitoring state."""
+        if not hasattr(self, "_last_resource_check"):
+            self._last_resource_check: float = 0
+        if not hasattr(self, "_resource_status"):
+            self._resource_status: Dict[str, Any] = {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
+                "is_throttled": False,
+                "throttle_reason": None,
+            }
+        if not hasattr(self, "_throttle_count"):
+            self._throttle_count: int = 0
+
+    async def _check_system_resources(self) -> Dict[str, Any]:
+        """
+        Check current system resource usage.
+
+        Returns:
+            Dict with cpu_percent, memory_percent, is_healthy
+        """
+        self._init_resource_monitoring()
+
+        try:
+            import psutil
+
+            # Get CPU usage (non-blocking average over 0.1 second)
+            cpu_percent = psutil.cpu_percent(interval=None)
+
+            # Get memory usage
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+
+            # Determine health status
+            is_healthy = (
+                cpu_percent < self.CPU_CRITICAL_THRESHOLD and
+                memory_percent < self.MEMORY_CRITICAL_THRESHOLD
+            )
+
+            # Update cached status
+            self._resource_status = {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "is_healthy": is_healthy,
+                "is_warning": (
+                    cpu_percent >= self.CPU_WARNING_THRESHOLD or
+                    memory_percent >= self.MEMORY_WARNING_THRESHOLD
+                ),
+                "timestamp": time.time(),
+            }
+            self._last_resource_check = time.time()
+
+            return self._resource_status
+
+        except ImportError:
+            # psutil not available
+            return {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
+                "is_healthy": True,
+                "is_warning": False,
+                "error": "psutil not available",
+            }
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Resource check failed: {e}")
+            return {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
+                "is_healthy": True,
+                "error": str(e),
+            }
+
+    async def _should_throttle_for_resources(self) -> tuple[bool, str]:
+        """
+        Check if operations should be throttled due to resource constraints.
+
+        Returns:
+            Tuple of (should_throttle, reason)
+        """
+        self._init_resource_monitoring()
+
+        # Use cached status if recent
+        if time.time() - self._last_resource_check < self.RESOURCE_CHECK_INTERVAL:
+            status = self._resource_status
+        else:
+            status = await self._check_system_resources()
+
+        # Check CPU
+        if status.get("cpu_percent", 0) >= self.CPU_CRITICAL_THRESHOLD:
+            return True, f"CPU critical: {status['cpu_percent']:.1f}%"
+
+        # Check memory
+        if status.get("memory_percent", 0) >= self.MEMORY_CRITICAL_THRESHOLD:
+            return True, f"Memory critical: {status['memory_percent']:.1f}%"
+
+        return False, ""
+
+    async def _wait_for_resources(
+        self,
+        max_wait_seconds: Optional[float] = None,
+    ) -> tuple[bool, str]:
+        """
+        Wait for system resources to become available.
+
+        Args:
+            max_wait_seconds: Maximum wait time (default: MAX_THROTTLE_WAIT)
+
+        Returns:
+            Tuple of (resources_ok, message)
+        """
+        if max_wait_seconds is None:
+            max_wait_seconds = self.MAX_THROTTLE_WAIT
+
+        start_time = time.time()
+        wait_count = 0
+
+        while True:
+            should_throttle, reason = await self._should_throttle_for_resources()
+
+            if not should_throttle:
+                if wait_count > 0:
+                    logger.info(
+                        f"[{self._bot_id}] Resources available after "
+                        f"{wait_count} throttle cycles"
+                    )
+                return True, "Resources OK"
+
+            elapsed = time.time() - start_time
+            if elapsed >= max_wait_seconds:
+                logger.warning(
+                    f"[{self._bot_id}] Resource wait timeout after {elapsed:.1f}s: {reason}"
+                )
+                self._throttle_count += 1
+                return False, f"Resource timeout: {reason}"
+
+            wait_count += 1
+            logger.debug(
+                f"[{self._bot_id}] Throttling for resources: {reason} "
+                f"(wait #{wait_count})"
+            )
+            await asyncio.sleep(self.THROTTLE_DELAY_SECONDS)
+
+    def get_resource_stats(self) -> Dict[str, Any]:
+        """Get resource monitoring statistics."""
+        self._init_resource_monitoring()
+        return {
+            **self._resource_status,
+            "throttle_count": self._throttle_count,
+            "last_check": self._last_resource_check,
+        }
+
+    # =========================================================================
+    # Signal Hedging Detection
+    # =========================================================================
+
+    async def _check_hedging_conflict(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+    ) -> tuple[bool, Optional[Dict]]:
+        """
+        Check if this order would create a hedging conflict with other bots.
+
+        A hedging conflict occurs when:
+        - Bot A is LONG on symbol
+        - Bot B wants to go SHORT on same symbol
+        - This results in paying double fees for zero net exposure
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            price: Order price
+
+        Returns:
+            Tuple of (has_conflict, conflict_details)
+        """
+        try:
+            # Check if SignalCoordinator is available
+            if not hasattr(self, "_signal_coordinator") or self._signal_coordinator is None:
+                return False, None
+
+            # Get active signals for this symbol from other bots
+            active_signals = await self._get_active_signals_for_symbol(symbol)
+
+            if not active_signals:
+                return False, None
+
+            # Determine our direction
+            our_direction = "LONG" if side.upper() == "BUY" else "SHORT"
+
+            # Check for opposite direction signals
+            for signal in active_signals:
+                if signal.get("bot_id") == self._bot_id:
+                    continue  # Skip our own signals
+
+                signal_direction = signal.get("direction", "")
+
+                # Check for opposite directions
+                if (our_direction == "LONG" and signal_direction == "SHORT") or \
+                   (our_direction == "SHORT" and signal_direction == "LONG"):
+
+                    # Calculate potential double fee waste
+                    fee_rate = Decimal("0.0004")  # 0.04% taker fee
+                    our_fee = quantity * price * fee_rate
+                    their_qty = Decimal(str(signal.get("quantity", 0)))
+                    their_price = Decimal(str(signal.get("price", price)))
+                    their_fee = their_qty * their_price * fee_rate
+
+                    # Net exposure calculation
+                    net_exposure = abs(quantity - their_qty) * price
+
+                    conflict_details = {
+                        "conflict_type": "HEDGING",
+                        "our_direction": our_direction,
+                        "our_quantity": str(quantity),
+                        "conflicting_bot": signal.get("bot_id"),
+                        "their_direction": signal_direction,
+                        "their_quantity": str(their_qty),
+                        "net_exposure": str(net_exposure),
+                        "wasted_fees": str(our_fee + their_fee),
+                        "symbol": symbol,
+                    }
+
+                    logger.warning(
+                        f"[{self._bot_id}] Hedging conflict detected on {symbol}: "
+                        f"We want {our_direction} {quantity}, "
+                        f"{signal.get('bot_id')} has {signal_direction} {their_qty}. "
+                        f"Net exposure: {net_exposure}, Wasted fees: {our_fee + their_fee}"
+                    )
+
+                    return True, conflict_details
+
+            return False, None
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Hedging check failed: {e}")
+            return False, None
+
+    async def _get_active_signals_for_symbol(self, symbol: str) -> list[Dict]:
+        """
+        Get active signals from all bots for a symbol.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            List of active signal details
+        """
+        try:
+            if hasattr(self, "_signal_coordinator") and self._signal_coordinator:
+                # Use SignalCoordinator if available
+                return await self._signal_coordinator.get_active_signals(symbol)
+
+            return []
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Get active signals failed: {e}")
+            return []
+
+    # =========================================================================
+    # Priority Management
+    # =========================================================================
+
+    # Bot priority levels
+    PRIORITY_CRITICAL = 100  # Stop loss, emergency
+    PRIORITY_HIGH = 75  # Trend following signals
+    PRIORITY_NORMAL = 50  # Regular grid orders
+    PRIORITY_LOW = 25  # Background rebalancing
+
+    def _init_priority_management(self) -> None:
+        """Initialize priority management state."""
+        if not hasattr(self, "_bot_priority"):
+            self._bot_priority: int = self.PRIORITY_NORMAL
+        if not hasattr(self, "_pending_requests"):
+            self._pending_requests: Dict[str, Dict] = {}
+        if not hasattr(self, "_priority_escalation_enabled"):
+            self._priority_escalation_enabled: bool = True
+
+    def set_bot_priority(self, priority: int) -> None:
+        """
+        Set this bot's priority level.
+
+        Higher priority bots get preferential order execution.
+
+        Args:
+            priority: Priority level (0-100, higher = more important)
+        """
+        self._init_priority_management()
+        self._bot_priority = max(0, min(100, priority))
+        logger.info(f"[{self._bot_id}] Priority set to {self._bot_priority}")
+
+    def get_bot_priority(self) -> int:
+        """Get this bot's current priority level."""
+        self._init_priority_management()
+        return self._bot_priority
+
+    def _calculate_order_priority(
+        self,
+        order_type: str,
+        is_reduce_only: bool = False,
+        is_stop_loss: bool = False,
+        signal_urgency: int = 0,
+    ) -> int:
+        """
+        Calculate priority for a specific order.
+
+        Args:
+            order_type: Order type (MARKET, LIMIT, etc.)
+            is_reduce_only: Whether order reduces position
+            is_stop_loss: Whether order is a stop loss
+            signal_urgency: Additional urgency factor (0-50)
+
+        Returns:
+            Order priority (higher = execute first)
+        """
+        self._init_priority_management()
+
+        base_priority = self._bot_priority
+
+        # Stop loss orders are always critical
+        if is_stop_loss:
+            return self.PRIORITY_CRITICAL
+
+        # Reduce-only orders get boost (closing positions is important)
+        if is_reduce_only:
+            base_priority += 20
+
+        # Market orders slightly higher priority than limit
+        if order_type.upper() == "MARKET":
+            base_priority += 10
+
+        # Add signal urgency
+        base_priority += min(50, max(0, signal_urgency))
+
+        return min(100, base_priority)
+
+    async def _track_pending_request(
+        self,
+        request_id: str,
+        request_type: str,
+        priority: int,
+    ) -> None:
+        """
+        Track a pending request for priority escalation.
+
+        Args:
+            request_id: Unique request identifier
+            request_type: Type of request (order, signal, etc.)
+            priority: Initial priority
+        """
+        self._init_priority_management()
+
+        self._pending_requests[request_id] = {
+            "type": request_type,
+            "priority": priority,
+            "original_priority": priority,
+            "submitted_at": time.time(),
+            "escalation_count": 0,
+        }
+
+    def _escalate_pending_requests(self) -> int:
+        """
+        Escalate priority of long-waiting requests.
+
+        Requests waiting more than 30 seconds get priority boost.
+
+        Returns:
+            Number of requests escalated
+        """
+        self._init_priority_management()
+
+        if not self._priority_escalation_enabled:
+            return 0
+
+        escalated = 0
+        current_time = time.time()
+        escalation_threshold = 30.0  # 30 seconds
+
+        for request_id, request in list(self._pending_requests.items()):
+            wait_time = current_time - request["submitted_at"]
+
+            # Escalate if waiting too long
+            if wait_time > escalation_threshold:
+                # Increase priority by 10 per escalation, max 3 times
+                if request["escalation_count"] < 3:
+                    request["priority"] = min(
+                        self.PRIORITY_CRITICAL,
+                        request["priority"] + 10
+                    )
+                    request["escalation_count"] += 1
+                    escalated += 1
+
+                    logger.info(
+                        f"[{self._bot_id}] Escalated {request_id} priority: "
+                        f"{request['original_priority']} -> {request['priority']} "
+                        f"(waited {wait_time:.1f}s)"
+                    )
+
+        return escalated
+
+    def _complete_pending_request(self, request_id: str) -> None:
+        """Mark a pending request as completed."""
+        self._init_priority_management()
+        self._pending_requests.pop(request_id, None)
+
+    def get_priority_stats(self) -> Dict[str, Any]:
+        """Get priority management statistics."""
+        self._init_priority_management()
+
+        pending_count = len(self._pending_requests)
+        avg_wait = 0.0
+
+        if pending_count > 0:
+            current_time = time.time()
+            total_wait = sum(
+                current_time - r["submitted_at"]
+                for r in self._pending_requests.values()
+            )
+            avg_wait = total_wait / pending_count
+
+        return {
+            "bot_priority": self._bot_priority,
+            "pending_requests": pending_count,
+            "average_wait_seconds": avg_wait,
+            "escalation_enabled": self._priority_escalation_enabled,
+        }
+
+    # =========================================================================
+    # Enhanced Pre-Order Validation
+    # =========================================================================
+
+    async def _full_pre_order_validation(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        leverage: int = 1,
+        order_type: str = "MARKET",
+        is_reduce_only: bool = False,
+        is_stop_loss: bool = False,
+        check_hedging: bool = True,
+        check_resources: bool = True,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Full pre-order validation including resource and hedging checks.
+
+        This method performs ALL checks:
+        1. System resource availability
+        2. Balance and capital allocation
+        3. Rate limit status
+        4. Position limits
+        5. Hedging conflict detection
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+            leverage: Position leverage
+            order_type: Order type
+            is_reduce_only: Whether reducing position
+            is_stop_loss: Whether stop loss order
+            check_hedging: Whether to check for hedging conflicts
+            check_resources: Whether to check system resources
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        details = {
+            "resources_ok": True,
+            "balance_ok": False,
+            "rate_limit_ok": False,
+            "position_ok": False,
+            "hedging_ok": True,
+            "order_priority": 0,
+            "reserved_amount": Decimal("0"),
+        }
+
+        # Calculate order priority
+        details["order_priority"] = self._calculate_order_priority(
+            order_type=order_type,
+            is_reduce_only=is_reduce_only,
+            is_stop_loss=is_stop_loss,
+        )
+
+        # 1. Check system resources (skip for stop loss)
+        if check_resources and not is_stop_loss:
+            should_throttle, throttle_reason = await self._should_throttle_for_resources()
+            if should_throttle:
+                # Wait for resources if not critical
+                if details["order_priority"] < self.PRIORITY_CRITICAL:
+                    resources_ok, resource_msg = await self._wait_for_resources()
+                    if not resources_ok:
+                        details["resources_ok"] = False
+                        return False, resource_msg, details
+
+        # 2. Run comprehensive pre-order check (balance, rate limit, position)
+        pre_check_ok, pre_check_msg, pre_check_details = await self._comprehensive_pre_order_check(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            leverage=leverage,
+            reserve_capital=True,
+        )
+
+        details.update(pre_check_details)
+
+        if not pre_check_ok:
+            return False, pre_check_msg, details
+
+        # 3. Check hedging conflict (skip for reduce-only)
+        if check_hedging and not is_reduce_only:
+            has_hedging, hedging_details = await self._check_hedging_conflict(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+            )
+
+            if has_hedging:
+                details["hedging_ok"] = False
+                details["hedging_conflict"] = hedging_details
+
+                # Release reserved capital
+                if details["reserved_amount"] > 0:
+                    await self._release_capital_reservation(details["reserved_amount"])
+
+                return False, (
+                    f"Hedging conflict with {hedging_details.get('conflicting_bot')}: "
+                    f"Would waste {hedging_details.get('wasted_fees')} in fees"
+                ), details
+
+        return True, "All validations passed", details
+
     def _classify_order_error(self, error: Exception) -> tuple[str, str]:
         """
         Classify order error for proper handling.
