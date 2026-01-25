@@ -723,6 +723,12 @@ class GridFuturesBot(BaseBot):
             ):
                 return False
 
+            # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
+            entry_allowed, entry_reason = self.check_entry_allowed()
+            if not entry_allowed:
+                logger.warning(f"Entry blocked: {entry_reason}")
+                return False
+
             # Check balance before order (prevent rejection)
             balance_ok, balance_msg = await self._check_balance_for_order(
                 symbol=self._config.symbol,
@@ -733,6 +739,14 @@ class GridFuturesBot(BaseBot):
             if not balance_ok:
                 logger.warning(f"Order blocked: {balance_msg}")
                 return False
+
+            # Apply position size reduction from oscillation prevention
+            size_mult = self.get_position_size_reduction()
+            if size_mult < Decimal("1.0"):
+                quantity = (quantity * size_mult).quantize(Decimal("0.001"))
+                logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
+                if quantity <= 0:
+                    return False
 
             # Check max position limit
             if self._position:
@@ -1319,6 +1333,9 @@ class GridFuturesBot(BaseBot):
                 f"Stop loss triggered: PnL {pnl_pct*100:.2f}% < -{self._config.stop_loss_pct*100:.1f}%"
             )
             await self._close_position(current_price, ExitReason.STOP_LOSS)
+            # Record stop loss trigger for oscillation prevention
+            self.record_stop_loss_trigger()
+            self.clear_stop_loss_sync()
             return True
 
         return False
@@ -1461,7 +1478,12 @@ class GridFuturesBot(BaseBot):
                         f"Strategy risk triggered: {risk_result['risk_level']} - "
                         f"{risk_result.get('action', 'none')}"
                     )
-                    # Action is handled within check_strategy_risk
+                    # Trigger circuit breaker on CRITICAL risk level
+                    if risk_result["risk_level"] == "CRITICAL":
+                        await self.trigger_circuit_breaker(
+                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}"
+                        )
+                        self._position = None  # Clear local position state
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
@@ -1478,6 +1500,19 @@ class GridFuturesBot(BaseBot):
                             f"Virtual={recon_result.get('virtual_quantity')}, "
                             f"Exchange={exchange_qty}"
                         )
+
+                # Stop loss sync check (止損同步管理)
+                if self._position and self._config.use_exchange_stop_loss:
+                    sync_result = await self.sync_stop_loss_order(
+                        symbol=self._config.symbol,
+                        position_side=self._position.side.value.upper(),
+                        current_entry_price=self._position.entry_price,
+                        current_quantity=self._position.quantity,
+                        current_stop_loss_pct=self._config.stop_loss_pct,
+                    )
+                    if sync_result["action_taken"] == "SYNCED":
+                        self._position.stop_loss_order_id = sync_result["new_order_id"]
+                        self._position.stop_loss_price = sync_result["new_stop_price"]
 
                 # Comprehensive stop loss check (三層止損保護)
                 if self._position:

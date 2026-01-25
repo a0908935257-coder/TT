@@ -670,6 +670,12 @@ class RSIGridBot(BaseBot):
             ):
                 return False
 
+            # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
+            entry_allowed, entry_reason = self.check_entry_allowed()
+            if not entry_allowed:
+                logger.warning(f"Entry blocked: {entry_reason}")
+                return False
+
             # Check balance before order (prevent rejection)
             balance_ok, balance_msg = await self._check_balance_for_order(
                 symbol=self._config.symbol,
@@ -680,6 +686,14 @@ class RSIGridBot(BaseBot):
             if not balance_ok:
                 logger.warning(f"Order blocked: {balance_msg}")
                 return False
+
+            # Apply position size reduction from oscillation prevention
+            size_mult = self.get_position_size_reduction()
+            if size_mult < Decimal("1.0"):
+                quantity = (quantity * size_mult).quantize(Decimal("0.001"))
+                logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
+                if quantity <= 0:
+                    return False
 
             # Check max position limit
             if self._position:
@@ -1238,6 +1252,12 @@ class RSIGridBot(BaseBot):
                         f"Strategy risk triggered: {risk_result['risk_level']} - "
                         f"{risk_result.get('action', 'none')}"
                     )
+                    # Trigger circuit breaker on CRITICAL risk level
+                    if risk_result["risk_level"] == "CRITICAL":
+                        await self.trigger_circuit_breaker(
+                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}"
+                        )
+                        self._position = None
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
@@ -1505,6 +1525,8 @@ class RSIGridBot(BaseBot):
         pnl_pct = self._position.calculate_pnl_pct(current_price)
         if pnl_pct < -self._config.max_stop_loss_pct:
             await self._close_position(current_price, ExitReason.STOP_LOSS)
+            self.record_stop_loss_trigger()
+            self.clear_stop_loss_sync()
 
     def _parse_timeframe_seconds(self, timeframe: str) -> int:
         """Parse timeframe string to seconds."""

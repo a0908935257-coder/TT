@@ -8854,3 +8854,932 @@ class BaseBot(ABC):
         self._sl_protection_state["last_known_sl_status"] = None
 
         logger.debug(f"[{self._bot_id}] Stop loss protection state reset")
+
+    # =========================================================================
+    # Stop Loss Oscillation Prevention (止損震盪防護)
+    # =========================================================================
+    #
+    # Prevents repeated stop loss triggers when price oscillates around
+    # the stop loss level, which can lead to accumulated losses.
+    # =========================================================================
+
+    # Oscillation Prevention Configuration
+    STOP_LOSS_COOLDOWN_SECONDS = 300  # 5 minutes cooldown after stop loss
+    STOP_LOSS_BUFFER_ZONE_PCT = Decimal("0.005")  # 0.5% buffer zone
+    MAX_STOP_LOSS_TRIGGERS_PER_HOUR = 3  # Max triggers allowed per hour
+    STOP_LOSS_TRIGGER_RESET_HOURS = 1  # Reset trigger count after this many hours
+
+    def _init_oscillation_prevention(self) -> None:
+        """Initialize oscillation prevention state."""
+        if not hasattr(self, "_oscillation_state"):
+            self._oscillation_state: Dict[str, Any] = {
+                "last_stop_loss_time": None,
+                "stop_loss_triggers": [],  # List of trigger timestamps
+                "cooldown_active": False,
+                "cooldown_until": None,
+                "buffer_zone_active": False,
+                "last_stop_price": None,
+                "progressive_reduction_level": 0,  # 0=full, 1=66%, 2=33%, 3=blocked
+            }
+
+    def check_stop_loss_cooldown(self) -> tuple[bool, str]:
+        """
+        Check if stop loss is in cooldown period.
+
+        Returns:
+            Tuple of (is_allowed, message)
+        """
+        self._init_oscillation_prevention()
+        state = self._oscillation_state
+
+        now = datetime.now(timezone.utc)
+
+        # Check if in cooldown period
+        if state["cooldown_until"] and now < state["cooldown_until"]:
+            remaining = (state["cooldown_until"] - now).total_seconds()
+            return False, f"Stop loss cooldown active ({remaining:.0f}s remaining)"
+
+        # Check trigger count per hour
+        recent_triggers = [
+            t for t in state["stop_loss_triggers"]
+            if (now - t).total_seconds() < self.STOP_LOSS_TRIGGER_RESET_HOURS * 3600
+        ]
+        state["stop_loss_triggers"] = recent_triggers  # Clean up old triggers
+
+        if len(recent_triggers) >= self.MAX_STOP_LOSS_TRIGGERS_PER_HOUR:
+            # Too many triggers - extend cooldown
+            extended_cooldown = self.STOP_LOSS_COOLDOWN_SECONDS * 2
+            state["cooldown_until"] = now + timedelta(seconds=extended_cooldown)
+            state["cooldown_active"] = True
+
+            logger.warning(
+                f"[{self._bot_id}] Stop loss trigger limit reached "
+                f"({len(recent_triggers)}/{self.MAX_STOP_LOSS_TRIGGERS_PER_HOUR}) - "
+                f"extended cooldown {extended_cooldown}s"
+            )
+            return False, f"Too many stop losses ({len(recent_triggers)} in past hour)"
+
+        state["cooldown_active"] = False
+        return True, "Stop loss allowed"
+
+    def record_stop_loss_trigger(self) -> None:
+        """Record a stop loss trigger event."""
+        self._init_oscillation_prevention()
+        state = self._oscillation_state
+
+        now = datetime.now(timezone.utc)
+        state["last_stop_loss_time"] = now
+        state["stop_loss_triggers"].append(now)
+
+        # Set cooldown
+        state["cooldown_until"] = now + timedelta(seconds=self.STOP_LOSS_COOLDOWN_SECONDS)
+        state["cooldown_active"] = True
+
+        # Update progressive reduction level
+        recent_count = len([
+            t for t in state["stop_loss_triggers"]
+            if (now - t).total_seconds() < self.STOP_LOSS_TRIGGER_RESET_HOURS * 3600
+        ])
+
+        if recent_count >= 3:
+            state["progressive_reduction_level"] = 3  # Block entries
+        elif recent_count >= 2:
+            state["progressive_reduction_level"] = 2  # 33% size
+        elif recent_count >= 1:
+            state["progressive_reduction_level"] = 1  # 66% size
+
+        logger.info(
+            f"[{self._bot_id}] Stop loss triggered - cooldown {self.STOP_LOSS_COOLDOWN_SECONDS}s, "
+            f"reduction level {state['progressive_reduction_level']}"
+        )
+
+    def get_position_size_reduction(self) -> Decimal:
+        """
+        Get position size reduction factor based on recent stop losses.
+
+        Returns:
+            Decimal multiplier (1.0 = full size, 0.66 = 66%, 0.33 = 33%, 0 = blocked)
+        """
+        self._init_oscillation_prevention()
+        level = self._oscillation_state["progressive_reduction_level"]
+
+        if level >= 3:
+            return Decimal("0")  # Blocked
+        elif level == 2:
+            return Decimal("0.33")
+        elif level == 1:
+            return Decimal("0.66")
+        else:
+            return Decimal("1.0")
+
+    def check_buffer_zone(
+        self,
+        current_price: Decimal,
+        stop_price: Decimal,
+        position_side: str,
+    ) -> bool:
+        """
+        Check if price is in buffer zone around stop loss.
+
+        When price is in buffer zone, avoid new entries that could
+        immediately hit stop loss.
+
+        Args:
+            current_price: Current market price
+            stop_price: Stop loss price
+            position_side: Position side (LONG/SHORT)
+
+        Returns:
+            True if price is in buffer zone (should avoid entry)
+        """
+        self._init_oscillation_prevention()
+
+        buffer = stop_price * self.STOP_LOSS_BUFFER_ZONE_PCT
+
+        if position_side.upper() == "LONG":
+            # For long, buffer zone is above stop price
+            buffer_upper = stop_price + buffer
+            in_buffer = current_price <= buffer_upper
+        else:
+            # For short, buffer zone is below stop price
+            buffer_lower = stop_price - buffer
+            in_buffer = current_price >= buffer_lower
+
+        if in_buffer:
+            self._oscillation_state["buffer_zone_active"] = True
+            logger.debug(
+                f"[{self._bot_id}] Price {current_price} in buffer zone "
+                f"around stop {stop_price}"
+            )
+
+        return in_buffer
+
+    def reset_oscillation_state(self) -> None:
+        """Reset oscillation prevention state (call after extended no-trade period)."""
+        self._init_oscillation_prevention()
+
+        # Only reset if enough time has passed since last trigger
+        if self._oscillation_state["last_stop_loss_time"]:
+            elapsed = (
+                datetime.now(timezone.utc) -
+                self._oscillation_state["last_stop_loss_time"]
+            ).total_seconds()
+
+            if elapsed > self.STOP_LOSS_TRIGGER_RESET_HOURS * 3600:
+                self._oscillation_state["progressive_reduction_level"] = 0
+                self._oscillation_state["stop_loss_triggers"] = []
+                logger.info(f"[{self._bot_id}] Oscillation state reset after {elapsed/3600:.1f}h")
+
+    def get_oscillation_stats(self) -> Dict[str, Any]:
+        """Get oscillation prevention statistics."""
+        self._init_oscillation_prevention()
+        state = self._oscillation_state
+
+        now = datetime.now(timezone.utc)
+        recent_triggers = len([
+            t for t in state["stop_loss_triggers"]
+            if (now - t).total_seconds() < 3600
+        ])
+
+        return {
+            "cooldown_active": state["cooldown_active"],
+            "cooldown_remaining_seconds": (
+                (state["cooldown_until"] - now).total_seconds()
+                if state["cooldown_until"] and now < state["cooldown_until"]
+                else 0
+            ),
+            "triggers_last_hour": recent_triggers,
+            "max_triggers_per_hour": self.MAX_STOP_LOSS_TRIGGERS_PER_HOUR,
+            "progressive_reduction_level": state["progressive_reduction_level"],
+            "position_size_multiplier": str(self.get_position_size_reduction()),
+        }
+
+    # =========================================================================
+    # Stop Loss Sync Management (止損同步管理)
+    # =========================================================================
+    #
+    # Ensures stop loss orders stay in sync with strategy parameters
+    # and position changes.
+    # =========================================================================
+
+    def _init_stop_loss_sync(self) -> None:
+        """Initialize stop loss sync state."""
+        if not hasattr(self, "_sl_sync_state"):
+            self._sl_sync_state: Dict[str, Any] = {
+                "current_sl_order_id": None,
+                "current_sl_price": None,
+                "current_sl_quantity": None,
+                "sl_created_at": None,
+                "position_entry_price_at_sl_creation": None,
+                "position_quantity_at_sl_creation": None,
+                "config_stop_loss_pct_at_creation": None,
+                "last_sync_check": None,
+                "sync_failures": 0,
+                "version": 0,
+            }
+
+    def register_stop_loss_order(
+        self,
+        order_id: str,
+        stop_price: Decimal,
+        quantity: Decimal,
+        entry_price: Decimal,
+        stop_loss_pct: Decimal,
+    ) -> None:
+        """
+        Register a stop loss order for sync tracking.
+
+        Args:
+            order_id: Stop loss order ID
+            stop_price: Stop loss trigger price
+            quantity: Order quantity
+            entry_price: Position entry price at time of creation
+            stop_loss_pct: Config stop loss percentage at time of creation
+        """
+        self._init_stop_loss_sync()
+
+        self._sl_sync_state["current_sl_order_id"] = order_id
+        self._sl_sync_state["current_sl_price"] = stop_price
+        self._sl_sync_state["current_sl_quantity"] = quantity
+        self._sl_sync_state["sl_created_at"] = datetime.now(timezone.utc)
+        self._sl_sync_state["position_entry_price_at_sl_creation"] = entry_price
+        self._sl_sync_state["position_quantity_at_sl_creation"] = quantity
+        self._sl_sync_state["config_stop_loss_pct_at_creation"] = stop_loss_pct
+        self._sl_sync_state["version"] += 1
+
+        logger.debug(
+            f"[{self._bot_id}] Registered stop loss: {order_id} @ {stop_price}, "
+            f"v{self._sl_sync_state['version']}"
+        )
+
+    def check_stop_loss_sync(
+        self,
+        current_entry_price: Decimal,
+        current_quantity: Decimal,
+        current_stop_loss_pct: Decimal,
+        position_side: str,
+    ) -> Dict[str, Any]:
+        """
+        Check if stop loss is in sync with current position and config.
+
+        Args:
+            current_entry_price: Current position entry price
+            current_quantity: Current position quantity
+            current_stop_loss_pct: Current config stop loss percentage
+            position_side: Position side (LONG/SHORT)
+
+        Returns:
+            Dict with sync status and recommended actions
+        """
+        self._init_stop_loss_sync()
+        state = self._sl_sync_state
+
+        result = {
+            "is_synced": True,
+            "needs_update": False,
+            "reasons": [],
+            "recommended_new_price": None,
+            "recommended_new_quantity": None,
+        }
+
+        if not state["current_sl_order_id"]:
+            result["is_synced"] = False
+            result["needs_update"] = True
+            result["reasons"].append("NO_STOP_LOSS_ORDER")
+            return result
+
+        # Check if entry price changed significantly (DCA)
+        if state["position_entry_price_at_sl_creation"]:
+            entry_change_pct = abs(
+                (current_entry_price - state["position_entry_price_at_sl_creation"]) /
+                state["position_entry_price_at_sl_creation"]
+            )
+
+            if entry_change_pct > Decimal("0.001"):  # 0.1% threshold
+                result["is_synced"] = False
+                result["needs_update"] = True
+                result["reasons"].append(f"ENTRY_PRICE_CHANGED ({entry_change_pct*100:.2f}%)")
+
+                # Calculate new stop price
+                if position_side.upper() == "LONG":
+                    result["recommended_new_price"] = current_entry_price * (
+                        Decimal("1") - current_stop_loss_pct
+                    )
+                else:
+                    result["recommended_new_price"] = current_entry_price * (
+                        Decimal("1") + current_stop_loss_pct
+                    )
+
+        # Check if quantity changed
+        if state["position_quantity_at_sl_creation"]:
+            if current_quantity != state["position_quantity_at_sl_creation"]:
+                result["is_synced"] = False
+                result["needs_update"] = True
+                result["reasons"].append("QUANTITY_CHANGED")
+                result["recommended_new_quantity"] = current_quantity
+
+        # Check if stop loss percentage config changed
+        if state["config_stop_loss_pct_at_creation"]:
+            if current_stop_loss_pct != state["config_stop_loss_pct_at_creation"]:
+                result["is_synced"] = False
+                result["needs_update"] = True
+                result["reasons"].append("CONFIG_CHANGED")
+
+                # Recalculate stop price with new config
+                if position_side.upper() == "LONG":
+                    result["recommended_new_price"] = current_entry_price * (
+                        Decimal("1") - current_stop_loss_pct
+                    )
+                else:
+                    result["recommended_new_price"] = current_entry_price * (
+                        Decimal("1") + current_stop_loss_pct
+                    )
+
+        # Round recommended price
+        if result["recommended_new_price"]:
+            result["recommended_new_price"] = result["recommended_new_price"].quantize(
+                Decimal("0.1")
+            )
+
+        state["last_sync_check"] = datetime.now(timezone.utc)
+
+        if not result["is_synced"]:
+            logger.warning(
+                f"[{self._bot_id}] Stop loss out of sync: {result['reasons']}"
+            )
+
+        return result
+
+    async def sync_stop_loss_order(
+        self,
+        symbol: str,
+        position_side: str,
+        current_entry_price: Decimal,
+        current_quantity: Decimal,
+        current_stop_loss_pct: Decimal,
+    ) -> Dict[str, Any]:
+        """
+        Sync stop loss order with current position and config.
+
+        This method:
+        1. Checks if sync is needed
+        2. Cancels old stop loss if exists
+        3. Places new stop loss with correct parameters
+
+        Args:
+            symbol: Trading symbol
+            position_side: Position side
+            current_entry_price: Current entry price
+            current_quantity: Current quantity
+            current_stop_loss_pct: Current stop loss config
+
+        Returns:
+            Dict with sync result
+        """
+        self._init_stop_loss_sync()
+
+        result = {
+            "success": False,
+            "action_taken": None,
+            "new_order_id": None,
+            "new_stop_price": None,
+            "error": None,
+        }
+
+        # Check if sync is needed
+        sync_check = self.check_stop_loss_sync(
+            current_entry_price=current_entry_price,
+            current_quantity=current_quantity,
+            current_stop_loss_pct=current_stop_loss_pct,
+            position_side=position_side,
+        )
+
+        if sync_check["is_synced"]:
+            result["success"] = True
+            result["action_taken"] = "ALREADY_SYNCED"
+            return result
+
+        try:
+            # Cancel existing stop loss if any
+            if self._sl_sync_state["current_sl_order_id"]:
+                cancel_result = await self._cancel_algo_order_with_verification(
+                    algo_id=self._sl_sync_state["current_sl_order_id"],
+                    symbol=symbol,
+                )
+
+                if not cancel_result["is_cancelled"] and not cancel_result["was_triggered"]:
+                    result["error"] = f"Failed to cancel old stop loss: {cancel_result['error_message']}"
+                    self._sl_sync_state["sync_failures"] += 1
+                    return result
+
+            # Calculate new stop price
+            if position_side.upper() == "LONG":
+                new_stop_price = current_entry_price * (Decimal("1") - current_stop_loss_pct)
+                close_side = "SELL"
+            else:
+                new_stop_price = current_entry_price * (Decimal("1") + current_stop_loss_pct)
+                close_side = "BUY"
+
+            new_stop_price = new_stop_price.quantize(Decimal("0.1"))
+
+            # Place new stop loss
+            new_order = await self._exchange.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                order_type="STOP_MARKET",
+                quantity=current_quantity,
+                stop_price=new_stop_price,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
+
+            if new_order:
+                new_order_id = str(getattr(new_order, "order_id", ""))
+
+                # Register the new stop loss
+                self.register_stop_loss_order(
+                    order_id=new_order_id,
+                    stop_price=new_stop_price,
+                    quantity=current_quantity,
+                    entry_price=current_entry_price,
+                    stop_loss_pct=current_stop_loss_pct,
+                )
+
+                result["success"] = True
+                result["action_taken"] = "SYNCED"
+                result["new_order_id"] = new_order_id
+                result["new_stop_price"] = new_stop_price
+                self._sl_sync_state["sync_failures"] = 0
+
+                logger.info(
+                    f"[{self._bot_id}] Stop loss synced: {new_order_id} @ {new_stop_price}, "
+                    f"reasons: {sync_check['reasons']}"
+                )
+
+        except Exception as e:
+            result["error"] = str(e)
+            self._sl_sync_state["sync_failures"] += 1
+            logger.error(f"[{self._bot_id}] Stop loss sync failed: {e}")
+
+        return result
+
+    def clear_stop_loss_sync(self) -> None:
+        """Clear stop loss sync state (call when position is closed)."""
+        self._init_stop_loss_sync()
+
+        self._sl_sync_state["current_sl_order_id"] = None
+        self._sl_sync_state["current_sl_price"] = None
+        self._sl_sync_state["current_sl_quantity"] = None
+        self._sl_sync_state["position_entry_price_at_sl_creation"] = None
+        self._sl_sync_state["position_quantity_at_sl_creation"] = None
+        self._sl_sync_state["config_stop_loss_pct_at_creation"] = None
+
+        logger.debug(f"[{self._bot_id}] Stop loss sync state cleared")
+
+    # =========================================================================
+    # Circuit Breaker Position Handling (熔斷後持倉處理)
+    # =========================================================================
+    #
+    # Ensures all positions are properly closed when circuit breaker
+    # triggers, preventing continued risk exposure.
+    # =========================================================================
+
+    # Circuit Breaker Configuration
+    CIRCUIT_BREAKER_FORCE_CLOSE = True  # Force close positions on circuit breaker
+    CIRCUIT_BREAKER_CANCEL_ORDERS = True  # Cancel all pending orders
+    CIRCUIT_BREAKER_LOCKOUT_HOURS = 24  # Lockout period after circuit breaker
+
+    def _init_circuit_breaker(self) -> None:
+        """Initialize circuit breaker state."""
+        if not hasattr(self, "_circuit_breaker_state"):
+            self._circuit_breaker_state: Dict[str, Any] = {
+                "is_triggered": False,
+                "trigger_time": None,
+                "trigger_reason": None,
+                "lockout_until": None,
+                "positions_closed": [],
+                "orders_cancelled": [],
+                "trigger_count_today": 0,
+                "last_trigger_date": None,
+            }
+
+    def is_circuit_breaker_active(self) -> tuple[bool, Optional[str]]:
+        """
+        Check if circuit breaker is currently active.
+
+        Returns:
+            Tuple of (is_active, reason)
+        """
+        self._init_circuit_breaker()
+        state = self._circuit_breaker_state
+
+        if not state["is_triggered"]:
+            return False, None
+
+        now = datetime.now(timezone.utc)
+
+        # Check if lockout period has expired
+        if state["lockout_until"] and now >= state["lockout_until"]:
+            # Auto-reset after lockout
+            self._reset_circuit_breaker()
+            return False, None
+
+        remaining = (state["lockout_until"] - now).total_seconds() / 3600 if state["lockout_until"] else 0
+        return True, f"Circuit breaker active: {state['trigger_reason']} ({remaining:.1f}h remaining)"
+
+    async def trigger_circuit_breaker(
+        self,
+        reason: str,
+        positions: Optional[List[Dict]] = None,
+        force_close: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Trigger circuit breaker and handle all positions.
+
+        This method:
+        1. Marks circuit breaker as triggered
+        2. Closes all open positions (if force_close=True)
+        3. Cancels all pending orders
+        4. Sets lockout period
+
+        Args:
+            reason: Reason for triggering (e.g., "DAILY_LOSS_LIMIT", "MAX_DRAWDOWN")
+            positions: List of positions to close (optional, will query if not provided)
+            force_close: Whether to force close positions
+
+        Returns:
+            Dict with circuit breaker result
+        """
+        self._init_circuit_breaker()
+        state = self._circuit_breaker_state
+
+        now = datetime.now(timezone.utc)
+
+        result = {
+            "triggered": True,
+            "reason": reason,
+            "positions_closed": [],
+            "orders_cancelled": [],
+            "errors": [],
+            "lockout_until": None,
+        }
+
+        logger.critical(
+            f"[{self._bot_id}] CIRCUIT BREAKER TRIGGERED: {reason}"
+        )
+
+        # Update state
+        state["is_triggered"] = True
+        state["trigger_time"] = now
+        state["trigger_reason"] = reason
+        state["lockout_until"] = now + timedelta(hours=self.CIRCUIT_BREAKER_LOCKOUT_HOURS)
+        result["lockout_until"] = state["lockout_until"]
+
+        # Update daily trigger count
+        today = now.date()
+        if state["last_trigger_date"] != today:
+            state["trigger_count_today"] = 0
+            state["last_trigger_date"] = today
+        state["trigger_count_today"] += 1
+
+        # Force close all positions
+        if force_close and self.CIRCUIT_BREAKER_FORCE_CLOSE:
+            close_result = await self._circuit_breaker_close_all_positions()
+            result["positions_closed"] = close_result.get("closed", [])
+            if close_result.get("errors"):
+                result["errors"].extend(close_result["errors"])
+
+        # Cancel all pending orders
+        if self.CIRCUIT_BREAKER_CANCEL_ORDERS:
+            cancel_result = await self._circuit_breaker_cancel_all_orders()
+            result["orders_cancelled"] = cancel_result.get("cancelled", [])
+            if cancel_result.get("errors"):
+                result["errors"].extend(cancel_result["errors"])
+
+        state["positions_closed"] = result["positions_closed"]
+        state["orders_cancelled"] = result["orders_cancelled"]
+
+        # Send critical notification
+        if hasattr(self, "_notifier") and self._notifier:
+            try:
+                await self._notifier.send_alert(
+                    level="CRITICAL",
+                    title=f"CIRCUIT BREAKER - {self._bot_id}",
+                    message=(
+                        f"Circuit breaker triggered!\n"
+                        f"Reason: {reason}\n"
+                        f"Positions closed: {len(result['positions_closed'])}\n"
+                        f"Orders cancelled: {len(result['orders_cancelled'])}\n"
+                        f"Lockout until: {state['lockout_until'].isoformat()}"
+                    ),
+                )
+            except Exception:
+                pass
+
+        return result
+
+    async def _circuit_breaker_close_all_positions(self) -> Dict[str, Any]:
+        """
+        Close all positions as part of circuit breaker.
+
+        Returns:
+            Dict with closed positions and errors
+        """
+        result = {
+            "closed": [],
+            "errors": [],
+        }
+
+        try:
+            # Get symbol from config if available
+            symbol = getattr(self._config, "symbol", None) if hasattr(self, "_config") else None
+
+            if symbol:
+                positions = await self._exchange.futures.get_positions(symbol)
+            else:
+                # Try to get all positions
+                positions = await self._exchange.futures.get_positions()
+
+            for pos in positions:
+                if pos.quantity <= 0:
+                    continue
+
+                try:
+                    # Determine close side
+                    close_side = "SELL" if pos.side.value.upper() == "LONG" else "BUY"
+                    pos_symbol = getattr(pos, "symbol", symbol)
+
+                    # Place market close order
+                    order = await self._exchange.futures_create_order(
+                        symbol=pos_symbol,
+                        side=close_side,
+                        order_type="MARKET",
+                        quantity=pos.quantity,
+                        reduce_only=True,
+                        bot_id=self._bot_id,
+                    )
+
+                    if order:
+                        result["closed"].append({
+                            "symbol": pos_symbol,
+                            "side": pos.side.value,
+                            "quantity": str(pos.quantity),
+                            "order_id": str(getattr(order, "order_id", "")),
+                        })
+
+                        logger.critical(
+                            f"[{self._bot_id}] Circuit breaker closed position: "
+                            f"{pos.side.value} {pos.quantity} {pos_symbol}"
+                        )
+
+                except Exception as e:
+                    error_msg = f"Failed to close {pos.symbol}: {e}"
+                    result["errors"].append(error_msg)
+                    logger.error(f"[{self._bot_id}] {error_msg}")
+
+        except Exception as e:
+            result["errors"].append(f"Failed to get positions: {e}")
+            logger.error(f"[{self._bot_id}] Circuit breaker get positions failed: {e}")
+
+        return result
+
+    async def _circuit_breaker_cancel_all_orders(self) -> Dict[str, Any]:
+        """
+        Cancel all pending orders as part of circuit breaker.
+
+        Returns:
+            Dict with cancelled orders and errors
+        """
+        result = {
+            "cancelled": [],
+            "errors": [],
+        }
+
+        try:
+            symbol = getattr(self._config, "symbol", None) if hasattr(self, "_config") else None
+
+            if symbol:
+                orders = await self._exchange.futures.get_open_orders(symbol)
+            else:
+                orders = await self._exchange.futures.get_open_orders()
+
+            for order in orders:
+                try:
+                    order_symbol = getattr(order, "symbol", symbol)
+                    order_id = str(getattr(order, "order_id", ""))
+
+                    await self._exchange.futures.cancel_order(
+                        symbol=order_symbol,
+                        order_id=order_id,
+                    )
+
+                    result["cancelled"].append({
+                        "symbol": order_symbol,
+                        "order_id": order_id,
+                        "type": getattr(order, "order_type", "UNKNOWN"),
+                    })
+
+                    logger.info(
+                        f"[{self._bot_id}] Circuit breaker cancelled order: {order_id}"
+                    )
+
+                except Exception as e:
+                    error_msg = f"Failed to cancel order {getattr(order, 'order_id', 'unknown')}: {e}"
+                    result["errors"].append(error_msg)
+                    logger.error(f"[{self._bot_id}] {error_msg}")
+
+        except Exception as e:
+            result["errors"].append(f"Failed to get orders: {e}")
+            logger.error(f"[{self._bot_id}] Circuit breaker get orders failed: {e}")
+
+        return result
+
+    def check_entry_allowed(self) -> tuple[bool, str]:
+        """
+        Check if new entries are allowed (considering circuit breaker, cooldown, etc).
+
+        This is a comprehensive check that should be called before any entry.
+
+        Returns:
+            Tuple of (is_allowed, reason)
+        """
+        # Check circuit breaker
+        cb_active, cb_reason = self.is_circuit_breaker_active()
+        if cb_active:
+            return False, cb_reason
+
+        # Check stop loss cooldown
+        sl_allowed, sl_reason = self.check_stop_loss_cooldown()
+        if not sl_allowed:
+            return False, sl_reason
+
+        # Check position size reduction
+        size_mult = self.get_position_size_reduction()
+        if size_mult <= 0:
+            return False, "Position entries blocked due to repeated stop losses"
+
+        return True, "Entry allowed"
+
+    def _reset_circuit_breaker(self) -> None:
+        """Reset circuit breaker state after lockout period."""
+        self._init_circuit_breaker()
+
+        self._circuit_breaker_state["is_triggered"] = False
+        self._circuit_breaker_state["trigger_reason"] = None
+        # Keep historical data for reference
+        # Reset oscillation state as well
+        self.reset_oscillation_state()
+
+        logger.info(f"[{self._bot_id}] Circuit breaker reset after lockout period")
+
+    def get_circuit_breaker_status(self) -> Dict[str, Any]:
+        """Get circuit breaker status."""
+        self._init_circuit_breaker()
+        state = self._circuit_breaker_state
+
+        now = datetime.now(timezone.utc)
+        remaining_hours = 0
+        if state["lockout_until"] and now < state["lockout_until"]:
+            remaining_hours = (state["lockout_until"] - now).total_seconds() / 3600
+
+        return {
+            "is_triggered": state["is_triggered"],
+            "trigger_reason": state["trigger_reason"],
+            "trigger_time": state["trigger_time"].isoformat() if state["trigger_time"] else None,
+            "lockout_remaining_hours": remaining_hours,
+            "positions_closed": len(state["positions_closed"]),
+            "orders_cancelled": len(state["orders_cancelled"]),
+            "trigger_count_today": state["trigger_count_today"],
+        }
+
+    async def ensure_no_positions_after_circuit_breaker(self) -> Dict[str, Any]:
+        """
+        Verify and ensure no positions remain after circuit breaker.
+
+        This is a safety check that should be called periodically after
+        circuit breaker triggers to ensure no positions slipped through.
+
+        Returns:
+            Dict with verification result
+        """
+        self._init_circuit_breaker()
+
+        if not self._circuit_breaker_state["is_triggered"]:
+            return {"checked": False, "reason": "Circuit breaker not active"}
+
+        result = {
+            "checked": True,
+            "positions_found": 0,
+            "positions_closed": [],
+            "errors": [],
+        }
+
+        try:
+            symbol = getattr(self._config, "symbol", None) if hasattr(self, "_config") else None
+
+            if symbol:
+                positions = await self._exchange.futures.get_positions(symbol)
+            else:
+                positions = await self._exchange.futures.get_positions()
+
+            active_positions = [p for p in positions if p.quantity > 0]
+            result["positions_found"] = len(active_positions)
+
+            if active_positions:
+                logger.warning(
+                    f"[{self._bot_id}] Found {len(active_positions)} positions after "
+                    f"circuit breaker - force closing"
+                )
+
+                close_result = await self._circuit_breaker_close_all_positions()
+                result["positions_closed"] = close_result.get("closed", [])
+                result["errors"] = close_result.get("errors", [])
+
+        except Exception as e:
+            result["errors"].append(str(e))
+            logger.error(f"[{self._bot_id}] Position verification failed: {e}")
+
+        return result
+
+    # =========================================================================
+    # Comprehensive Entry Validation (綜合進場驗證)
+    # =========================================================================
+
+    async def validate_entry_comprehensive(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        stop_loss_price: Optional[Decimal] = None,
+    ) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Comprehensive entry validation including all protection checks.
+
+        This is the RECOMMENDED method to call before any new position entry.
+
+        Args:
+            symbol: Trading symbol
+            side: Entry side (BUY/SELL)
+            quantity: Entry quantity
+            price: Entry price
+            stop_loss_price: Optional stop loss price for buffer zone check
+
+        Returns:
+            Tuple of (is_allowed, message, details)
+        """
+        details = {
+            "circuit_breaker": {"passed": False},
+            "cooldown": {"passed": False},
+            "position_size": {"passed": False, "multiplier": "1.0"},
+            "buffer_zone": {"passed": True},  # Default to passed if no stop price
+            "global_risk": {"passed": False},
+        }
+
+        # 1. Check circuit breaker
+        cb_active, cb_reason = self.is_circuit_breaker_active()
+        if cb_active:
+            details["circuit_breaker"]["reason"] = cb_reason
+            return False, cb_reason, details
+        details["circuit_breaker"]["passed"] = True
+
+        # 2. Check stop loss cooldown
+        sl_allowed, sl_reason = self.check_stop_loss_cooldown()
+        if not sl_allowed:
+            details["cooldown"]["reason"] = sl_reason
+            return False, sl_reason, details
+        details["cooldown"]["passed"] = True
+
+        # 3. Check position size reduction
+        size_mult = self.get_position_size_reduction()
+        details["position_size"]["multiplier"] = str(size_mult)
+        if size_mult <= 0:
+            details["position_size"]["reason"] = "Blocked due to repeated stop losses"
+            return False, "Entry blocked due to repeated stop losses", details
+        details["position_size"]["passed"] = True
+
+        # 4. Check buffer zone if stop loss price provided
+        if stop_loss_price:
+            position_side = "LONG" if side.upper() == "BUY" else "SHORT"
+            in_buffer = self.check_buffer_zone(price, stop_loss_price, position_side)
+            if in_buffer:
+                details["buffer_zone"]["passed"] = False
+                details["buffer_zone"]["reason"] = "Price in stop loss buffer zone"
+                return False, "Price too close to stop loss level", details
+
+        # 5. Check global risk limits
+        exposure = quantity * price
+        global_ok, global_msg, global_details = await self.check_global_risk_limits(
+            bot_id=self._bot_id,
+            symbol=symbol,
+            additional_exposure=exposure,
+        )
+        details["global_risk"] = {"passed": global_ok, "details": global_details}
+        if not global_ok:
+            return False, f"Global risk: {global_msg}", details
+
+        # Apply position size reduction to quantity
+        adjusted_quantity = quantity * size_mult
+        details["adjusted_quantity"] = str(adjusted_quantity)
+
+        return True, "Entry validation passed", details

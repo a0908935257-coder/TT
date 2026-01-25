@@ -408,6 +408,12 @@ class SupertrendBot(BaseBot):
                         f"Strategy risk triggered: {risk_result['risk_level']} - "
                         f"{risk_result.get('action', 'none')}"
                     )
+                    # Trigger circuit breaker on CRITICAL risk level
+                    if risk_result["risk_level"] == "CRITICAL":
+                        await self.trigger_circuit_breaker(
+                            reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}"
+                        )
+                        self._position = None
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
@@ -838,6 +844,8 @@ class SupertrendBot(BaseBot):
                     if self._check_trailing_stop(current_price):
                         logger.warning(f"Trailing stop triggered at {current_price}")
                         await self._close_position(ExitReason.STOP_LOSS)
+                        self.record_stop_loss_trigger()
+                        self.clear_stop_loss_sync()
                         return
 
                 # Check for trend flip exit
@@ -961,6 +969,12 @@ class SupertrendBot(BaseBot):
             price: Entry price
             take_profit: Optional take profit price (grid-based)
         """
+        # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
+        entry_allowed, entry_reason = self.check_entry_allowed()
+        if not entry_allowed:
+            logger.warning(f"Entry blocked: {entry_reason}")
+            return
+
         # Check risk limits before opening
         if self._check_risk_limits():
             logger.warning(f"Trading paused due to risk limits - skipping {side.value} signal")
