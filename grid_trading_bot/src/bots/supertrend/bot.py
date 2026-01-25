@@ -819,6 +819,17 @@ class SupertrendBot(BaseBot):
                 )
             return False
 
+        # Pre-trade validation (time sync + data health)
+        order_side = "BUY" if side == PositionSide.LONG else "SELL"
+        if not await self._validate_pre_trade(
+            symbol=self._config.symbol,
+            side=order_side,
+            quantity=Decimal("0.001"),  # Minimum, actual calculated below
+            check_time_sync=True,
+            check_liquidity=False,  # Grid bots use small sizes
+        ):
+            return False
+
         # Check SignalCoordinator for multi-bot conflict prevention
         if self._signal_coordinator:
             signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT

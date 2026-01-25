@@ -542,6 +542,227 @@ class BaseBot(ABC):
         return True
 
     # =========================================================================
+    # Time Synchronization Health Check
+    # =========================================================================
+
+    async def _check_time_sync_health(
+        self,
+        max_offset_ms: int = 1000,
+        critical_offset_ms: int = 5000,
+    ) -> bool:
+        """
+        Check if exchange time synchronization is healthy.
+
+        Protects against:
+        - Order rejection due to timestamp issues
+        - Cross-market timing inconsistencies
+
+        Args:
+            max_offset_ms: Warning threshold in milliseconds
+            critical_offset_ms: Critical threshold (block trading)
+
+        Returns:
+            True if time sync is healthy, False if critical drift
+        """
+        try:
+            # Get time offsets from exchange client
+            if hasattr(self._exchange, 'get_time_offsets'):
+                offsets = self._exchange.get_time_offsets()
+                futures_offset = offsets.get('futures', 0)
+
+                if abs(futures_offset) > critical_offset_ms:
+                    logger.error(
+                        f"[{self._bot_id}] Critical time drift: {futures_offset}ms - "
+                        f"orders may be rejected"
+                    )
+                    # Attempt to resync
+                    if hasattr(self._exchange, 'force_time_sync'):
+                        await self._exchange.force_time_sync()
+                        logger.info(f"[{self._bot_id}] Forced time resync")
+                    return False
+
+                if abs(futures_offset) > max_offset_ms:
+                    logger.warning(
+                        f"[{self._bot_id}] Time drift warning: {futures_offset}ms"
+                    )
+
+            return True
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Failed to check time sync: {e}")
+            return True  # Don't block trading on check failure
+
+    # =========================================================================
+    # Liquidity and Order Book Validation
+    # =========================================================================
+
+    async def _check_liquidity(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        max_slippage_pct: Decimal = Decimal("0.005"),
+    ) -> tuple[bool, Optional[Decimal]]:
+        """
+        Check if sufficient liquidity exists for the order.
+
+        Protects against:
+        - Large order slippage
+        - Partial fills at poor prices
+        - Incomplete depth data
+
+        Args:
+            symbol: Trading symbol
+            side: "BUY" or "SELL"
+            quantity: Order quantity
+            max_slippage_pct: Maximum acceptable slippage (default 0.5%)
+
+        Returns:
+            Tuple of (has_liquidity, estimated_avg_price)
+        """
+        try:
+            # Get order book depth
+            orderbook = await self._exchange.futures.get_orderbook(
+                symbol=symbol,
+                limit=20,  # Get top 20 levels
+            )
+
+            if not orderbook:
+                logger.warning(f"[{self._bot_id}] Failed to get orderbook for {symbol}")
+                return True, None  # Don't block on failure
+
+            # Check the relevant side
+            if side.upper() == "BUY":
+                levels = orderbook.asks  # Buying consumes asks
+            else:
+                levels = orderbook.bids  # Selling consumes bids
+
+            if not levels or len(levels) == 0:
+                logger.warning(f"[{self._bot_id}] Empty {side} orderbook for {symbol}")
+                return False, None
+
+            # Validate depth data completeness
+            if len(levels) < 5:
+                logger.warning(
+                    f"[{self._bot_id}] Insufficient depth levels: {len(levels)} < 5"
+                )
+                # Don't block but log the warning
+
+            # Calculate average fill price
+            remaining_qty = quantity
+            total_cost = Decimal("0")
+            best_price = Decimal(str(levels[0][0]))
+
+            for price, qty in levels:
+                price = Decimal(str(price))
+                qty = Decimal(str(qty))
+
+                if remaining_qty <= 0:
+                    break
+
+                fill_qty = min(remaining_qty, qty)
+                total_cost += fill_qty * price
+                remaining_qty -= fill_qty
+
+            if remaining_qty > 0:
+                logger.warning(
+                    f"[{self._bot_id}] Insufficient liquidity: "
+                    f"need {quantity}, only {quantity - remaining_qty} available in top 20 levels"
+                )
+                return False, None
+
+            avg_price = total_cost / quantity
+
+            # Calculate slippage from best price
+            slippage = abs(avg_price - best_price) / best_price
+            if slippage > max_slippage_pct:
+                logger.warning(
+                    f"[{self._bot_id}] High slippage detected: "
+                    f"{float(slippage)*100:.2f}% > {float(max_slippage_pct)*100:.1f}%"
+                )
+                return False, avg_price
+
+            return True, avg_price
+
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Liquidity check failed: {e}")
+            return True, None  # Don't block on failure
+
+    def _calculate_order_splits(
+        self,
+        quantity: Decimal,
+        max_order_pct: Decimal = Decimal("0.10"),
+        min_orders: int = 1,
+        max_orders: int = 5,
+    ) -> list[Decimal]:
+        """
+        Split large orders to reduce market impact.
+
+        Args:
+            quantity: Total order quantity
+            max_order_pct: Max percentage of quantity per order
+            min_orders: Minimum number of splits
+            max_orders: Maximum number of splits
+
+        Returns:
+            List of order quantities
+        """
+        # For now, return single order (grid bots use small sizes)
+        # This is a placeholder for future large order handling
+        return [quantity]
+
+    # =========================================================================
+    # Pre-Trade Validation (combines all checks)
+    # =========================================================================
+
+    async def _validate_pre_trade(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        check_time_sync: bool = True,
+        check_liquidity: bool = False,
+    ) -> bool:
+        """
+        Comprehensive pre-trade validation.
+
+        Args:
+            symbol: Trading symbol
+            side: "BUY" or "SELL"
+            quantity: Order quantity
+            check_time_sync: Whether to check time synchronization
+            check_liquidity: Whether to check liquidity (for large orders)
+
+        Returns:
+            True if all checks pass
+        """
+        # Check data connection health
+        if not self._is_data_connection_healthy():
+            logger.warning(
+                f"[{self._bot_id}] Data connection unhealthy - skipping trade"
+            )
+            return False
+
+        # Check time synchronization
+        if check_time_sync:
+            if not await self._check_time_sync_health():
+                logger.warning(
+                    f"[{self._bot_id}] Time sync unhealthy - skipping trade"
+                )
+                return False
+
+        # Check liquidity for large orders
+        if check_liquidity:
+            has_liquidity, _ = await self._check_liquidity(symbol, side, quantity)
+            if not has_liquidity:
+                logger.warning(
+                    f"[{self._bot_id}] Insufficient liquidity - skipping trade"
+                )
+                return False
+
+        return True
+
+    # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)
     # =========================================================================
 

@@ -742,6 +742,17 @@ class BollingerBot(BaseBot):
             if quantity < Decimal("0.001"):
                 return False
 
+            # Pre-trade validation (time sync + data health)
+            order_side = "BUY" if side == PositionSide.LONG else "SELL"
+            if not await self._validate_pre_trade(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+                check_time_sync=True,
+                check_liquidity=False,  # Grid bots use small sizes
+            ):
+                return False
+
             # Check max position limit
             if self._position:
                 current_value = self._position.quantity * price
