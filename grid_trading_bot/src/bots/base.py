@@ -10660,3 +10660,796 @@ class BaseBot(ABC):
             },
             "global": self.get_cb_coordination_status() if hasattr(self, "_global_cb_registry") else None,
         }
+
+    # =========================================================================
+    # Network Resilience Management (網路彈性管理)
+    # =========================================================================
+    #
+    # Handles:
+    # 1. 網路斷線與交易所失去連接 - Network disconnection detection and recovery
+    # 2. 網路抖動連接時斷時續 - Network jitter detection and smoothing
+    # 3. DNS 解析失敗無法解析交易所域名 - DNS resolution failure with fallback
+    #
+    # =========================================================================
+
+    # Network Health Constants
+    NETWORK_HEALTH_CHECK_INTERVAL = 30  # Check every 30 seconds
+    NETWORK_MAX_LATENCY_MS = 5000  # Max acceptable latency (5s)
+    NETWORK_JITTER_THRESHOLD_MS = 500  # Jitter warning threshold
+    NETWORK_JITTER_CRITICAL_MS = 2000  # Jitter critical threshold
+    NETWORK_DISCONNECT_THRESHOLD = 3  # Consecutive failures before disconnect
+    NETWORK_RECONNECT_MAX_ATTEMPTS = 10  # Max reconnection attempts
+    NETWORK_RECONNECT_BASE_DELAY = 5  # Base delay for exponential backoff (seconds)
+    NETWORK_RECONNECT_MAX_DELAY = 300  # Max delay (5 minutes)
+
+    # DNS Constants
+    DNS_CACHE_TTL_SECONDS = 300  # Cache DNS for 5 minutes
+    DNS_RESOLVE_TIMEOUT = 10  # DNS resolution timeout (seconds)
+    DNS_MAX_RETRIES = 3  # Max DNS resolution retries
+
+    # Known exchange endpoints for DNS fallback
+    EXCHANGE_DNS_FALLBACKS: Dict[str, list] = {
+        "api.binance.com": ["52.84.17.1", "52.84.17.2"],  # Example IPs - update with real ones
+        "fapi.binance.com": ["52.84.125.1", "52.84.125.2"],
+        "stream.binance.com": ["52.84.200.1", "52.84.200.2"],
+        "fstream.binance.com": ["52.84.201.1", "52.84.201.2"],
+        # Testnet
+        "testnet.binance.vision": [],
+        "testnet.binancefuture.com": [],
+    }
+
+    def _init_network_health(self) -> None:
+        """Initialize network health tracking state."""
+        if hasattr(self, "_network_health_initialized") and self._network_health_initialized:
+            return
+
+        self._network_health_state: Dict[str, Any] = {
+            # Connection state
+            "is_connected": True,
+            "last_successful_request": datetime.now(timezone.utc),
+            "last_failed_request": None,
+            "consecutive_failures": 0,
+            "consecutive_successes": 0,
+
+            # Latency tracking
+            "latency_samples": [],  # Last N latency measurements
+            "avg_latency_ms": 0,
+            "max_latency_ms": 0,
+            "min_latency_ms": 0,
+
+            # Jitter tracking (latency variance)
+            "jitter_samples": [],
+            "current_jitter_ms": 0,
+            "jitter_state": "stable",  # stable, unstable, critical
+
+            # Disconnection tracking
+            "disconnect_count": 0,
+            "last_disconnect_time": None,
+            "total_downtime_seconds": 0,
+            "current_downtime_start": None,
+
+            # Reconnection state
+            "reconnect_attempts": 0,
+            "last_reconnect_attempt": None,
+            "reconnect_delay": self.NETWORK_RECONNECT_BASE_DELAY,
+
+            # Health score (0-100)
+            "health_score": 100,
+        }
+
+        # DNS cache
+        self._dns_cache: Dict[str, Dict[str, Any]] = {}
+
+        # Network event history
+        self._network_events: list = []
+        self._max_network_events = 100
+
+        self._network_health_initialized = True
+        logger.debug(f"[{self._bot_id}] Network health tracking initialized")
+
+    def record_network_request(
+        self,
+        success: bool,
+        latency_ms: Optional[float] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """
+        Record the result of a network request for health tracking.
+
+        Args:
+            success: Whether the request succeeded
+            latency_ms: Request latency in milliseconds
+            error: Error message if failed
+        """
+        self._init_network_health()
+        now = datetime.now(timezone.utc)
+        state = self._network_health_state
+
+        if success:
+            state["last_successful_request"] = now
+            state["consecutive_failures"] = 0
+            state["consecutive_successes"] += 1
+
+            # Track latency
+            if latency_ms is not None:
+                self._update_latency_tracking(latency_ms)
+
+            # Check if recovering from disconnect
+            if state["current_downtime_start"]:
+                downtime = (now - state["current_downtime_start"]).total_seconds()
+                state["total_downtime_seconds"] += downtime
+                state["current_downtime_start"] = None
+
+                logger.info(
+                    f"[{self._bot_id}] Network connection restored after {downtime:.1f}s"
+                )
+                self._record_network_event("connection_restored", {
+                    "downtime_seconds": downtime,
+                })
+
+                # Notify
+                if self._notifier:
+                    asyncio.create_task(
+                        self._notifier.notify_connection_restored(
+                            service_name=f"{self.bot_type}:{self._bot_id}",
+                            downtime=downtime,
+                        )
+                    )
+
+            # Reset reconnection state on sustained success
+            if state["consecutive_successes"] >= 5:
+                state["reconnect_attempts"] = 0
+                state["reconnect_delay"] = self.NETWORK_RECONNECT_BASE_DELAY
+
+        else:
+            state["last_failed_request"] = now
+            state["consecutive_failures"] += 1
+            state["consecutive_successes"] = 0
+
+            self._record_network_event("request_failed", {
+                "error": error,
+                "consecutive_failures": state["consecutive_failures"],
+            })
+
+            # Check for disconnect threshold
+            if state["consecutive_failures"] >= self.NETWORK_DISCONNECT_THRESHOLD:
+                if not state["current_downtime_start"]:
+                    state["is_connected"] = False
+                    state["disconnect_count"] += 1
+                    state["last_disconnect_time"] = now
+                    state["current_downtime_start"] = now
+
+                    logger.error(
+                        f"[{self._bot_id}] Network disconnected "
+                        f"(failures: {state['consecutive_failures']})"
+                    )
+                    self._record_network_event("disconnected", {
+                        "error": error,
+                        "disconnect_count": state["disconnect_count"],
+                    })
+
+                    # Notify
+                    if self._notifier:
+                        asyncio.create_task(
+                            self._notifier.notify_connection_lost(
+                                service_name=f"{self.bot_type}:{self._bot_id}",
+                                error=error,
+                            )
+                        )
+
+        # Update health score
+        self._update_network_health_score()
+
+    def _update_latency_tracking(self, latency_ms: float) -> None:
+        """Update latency and jitter tracking."""
+        state = self._network_health_state
+        samples = state["latency_samples"]
+
+        # Keep last 20 samples
+        samples.append(latency_ms)
+        if len(samples) > 20:
+            samples.pop(0)
+
+        # Update statistics
+        if samples:
+            state["avg_latency_ms"] = sum(samples) / len(samples)
+            state["max_latency_ms"] = max(samples)
+            state["min_latency_ms"] = min(samples)
+
+            # Calculate jitter (variance in latency)
+            if len(samples) >= 2:
+                jitter = abs(samples[-1] - samples[-2])
+                jitter_samples = state["jitter_samples"]
+                jitter_samples.append(jitter)
+                if len(jitter_samples) > 20:
+                    jitter_samples.pop(0)
+
+                state["current_jitter_ms"] = sum(jitter_samples) / len(jitter_samples)
+
+                # Classify jitter state
+                if state["current_jitter_ms"] > self.NETWORK_JITTER_CRITICAL_MS:
+                    if state["jitter_state"] != "critical":
+                        state["jitter_state"] = "critical"
+                        logger.warning(
+                            f"[{self._bot_id}] Network jitter CRITICAL: "
+                            f"{state['current_jitter_ms']:.0f}ms"
+                        )
+                        self._record_network_event("jitter_critical", {
+                            "jitter_ms": state["current_jitter_ms"],
+                        })
+                elif state["current_jitter_ms"] > self.NETWORK_JITTER_THRESHOLD_MS:
+                    if state["jitter_state"] != "unstable":
+                        state["jitter_state"] = "unstable"
+                        logger.info(
+                            f"[{self._bot_id}] Network jitter unstable: "
+                            f"{state['current_jitter_ms']:.0f}ms"
+                        )
+                else:
+                    state["jitter_state"] = "stable"
+
+    def _update_network_health_score(self) -> None:
+        """Calculate overall network health score (0-100)."""
+        state = self._network_health_state
+        score = 100
+
+        # Deduct for disconnection
+        if not state["is_connected"]:
+            score -= 50
+
+        # Deduct for consecutive failures
+        score -= min(state["consecutive_failures"] * 10, 30)
+
+        # Deduct for high latency
+        if state["avg_latency_ms"] > self.NETWORK_MAX_LATENCY_MS:
+            score -= 20
+        elif state["avg_latency_ms"] > self.NETWORK_MAX_LATENCY_MS / 2:
+            score -= 10
+
+        # Deduct for jitter
+        if state["jitter_state"] == "critical":
+            score -= 20
+        elif state["jitter_state"] == "unstable":
+            score -= 10
+
+        # Deduct for recent disconnects
+        if state["disconnect_count"] > 0:
+            # Reduce impact over time (last 24h)
+            recent_disconnects = min(state["disconnect_count"], 10)
+            score -= recent_disconnects * 2
+
+        state["health_score"] = max(0, min(100, score))
+
+    def _record_network_event(self, event_type: str, details: Dict[str, Any]) -> None:
+        """Record a network event for history."""
+        self._init_network_health()
+
+        event = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": event_type,
+            "details": details,
+        }
+
+        self._network_events.append(event)
+        if len(self._network_events) > self._max_network_events:
+            self._network_events.pop(0)
+
+    def is_network_healthy(self) -> tuple[bool, str]:
+        """
+        Check if network connection is healthy for trading.
+
+        Returns:
+            Tuple of (is_healthy, reason)
+        """
+        self._init_network_health()
+        state = self._network_health_state
+
+        # Check connection state
+        if not state["is_connected"]:
+            return False, f"Network disconnected (failures: {state['consecutive_failures']})"
+
+        # Check latency
+        if state["avg_latency_ms"] > self.NETWORK_MAX_LATENCY_MS:
+            return False, f"Network latency too high: {state['avg_latency_ms']:.0f}ms"
+
+        # Check jitter (unstable connection)
+        if state["jitter_state"] == "critical":
+            return False, f"Network jitter critical: {state['current_jitter_ms']:.0f}ms - connection unstable"
+
+        # Check recent activity
+        if state["last_successful_request"]:
+            silence = (datetime.now(timezone.utc) - state["last_successful_request"]).total_seconds()
+            if silence > 300:  # 5 minutes
+                return False, f"No successful requests for {silence:.0f}s"
+
+        # Check health score
+        if state["health_score"] < 30:
+            return False, f"Network health score too low: {state['health_score']}"
+
+        return True, "Network healthy"
+
+    async def attempt_network_reconnect(self) -> bool:
+        """
+        Attempt to reconnect to the exchange.
+
+        Implements exponential backoff with jitter.
+
+        Returns:
+            True if reconnection successful
+        """
+        self._init_network_health()
+        state = self._network_health_state
+
+        # Check max attempts
+        if state["reconnect_attempts"] >= self.NETWORK_RECONNECT_MAX_ATTEMPTS:
+            logger.error(
+                f"[{self._bot_id}] Max reconnection attempts "
+                f"({self.NETWORK_RECONNECT_MAX_ATTEMPTS}) reached"
+            )
+            return False
+
+        state["reconnect_attempts"] += 1
+        state["last_reconnect_attempt"] = datetime.now(timezone.utc)
+
+        # Calculate delay with jitter
+        import random
+        jitter = random.uniform(0.5, 1.5)
+        delay = min(
+            state["reconnect_delay"] * jitter,
+            self.NETWORK_RECONNECT_MAX_DELAY
+        )
+
+        logger.info(
+            f"[{self._bot_id}] Reconnection attempt {state['reconnect_attempts']}/"
+            f"{self.NETWORK_RECONNECT_MAX_ATTEMPTS} in {delay:.1f}s"
+        )
+
+        await asyncio.sleep(delay)
+
+        # Attempt reconnection via exchange client
+        try:
+            # Try DNS resolution first
+            dns_ok, dns_error = await self._verify_dns_resolution()
+            if not dns_ok:
+                logger.warning(f"[{self._bot_id}] DNS verification failed: {dns_error}")
+                # Try fallback IPs
+                await self._try_dns_fallback()
+
+            # Attempt connection test
+            if hasattr(self._exchange, 'get_price'):
+                start_time = time.time()
+                try:
+                    # Simple ping: get price
+                    symbol = getattr(self._config, 'symbol', 'BTCUSDT')
+                    await asyncio.wait_for(
+                        self._exchange.get_price(symbol),
+                        timeout=30.0
+                    )
+                    latency_ms = (time.time() - start_time) * 1000
+
+                    # Success!
+                    self.record_network_request(True, latency_ms)
+                    state["is_connected"] = True
+
+                    logger.info(
+                        f"[{self._bot_id}] Reconnection successful "
+                        f"(latency: {latency_ms:.0f}ms)"
+                    )
+                    self._record_network_event("reconnected", {
+                        "attempt": state["reconnect_attempts"],
+                        "latency_ms": latency_ms,
+                    })
+
+                    # Reset delay on success
+                    state["reconnect_delay"] = self.NETWORK_RECONNECT_BASE_DELAY
+                    return True
+
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{self._bot_id}] Reconnection timed out")
+                    self.record_network_request(False, error="timeout")
+
+                except Exception as e:
+                    logger.warning(f"[{self._bot_id}] Reconnection failed: {e}")
+                    self.record_network_request(False, error=str(e))
+
+            # Exponential backoff
+            state["reconnect_delay"] = min(
+                state["reconnect_delay"] * 2,
+                self.NETWORK_RECONNECT_MAX_DELAY
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Reconnection error: {e}")
+            state["reconnect_delay"] = min(
+                state["reconnect_delay"] * 2,
+                self.NETWORK_RECONNECT_MAX_DELAY
+            )
+            return False
+
+    # =========================================================================
+    # DNS Resolution Management
+    # =========================================================================
+
+    async def _verify_dns_resolution(self) -> tuple[bool, Optional[str]]:
+        """
+        Verify DNS resolution for exchange endpoints.
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        import socket
+
+        endpoints_to_check = ["api.binance.com", "fapi.binance.com"]
+
+        for endpoint in endpoints_to_check:
+            try:
+                # Check cache first
+                cached = self._get_cached_dns(endpoint)
+                if cached:
+                    continue
+
+                # Resolve DNS
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, socket.gethostbyname, endpoint),
+                    timeout=self.DNS_RESOLVE_TIMEOUT
+                )
+
+                # Cache the result
+                self._cache_dns(endpoint, result)
+                logger.debug(f"[{self._bot_id}] DNS resolved {endpoint} -> {result}")
+
+            except socket.gaierror as e:
+                error_msg = f"DNS resolution failed for {endpoint}: {e}"
+                logger.error(f"[{self._bot_id}] {error_msg}")
+                self._record_network_event("dns_failure", {
+                    "endpoint": endpoint,
+                    "error": str(e),
+                })
+                return False, error_msg
+
+            except asyncio.TimeoutError:
+                error_msg = f"DNS resolution timeout for {endpoint}"
+                logger.error(f"[{self._bot_id}] {error_msg}")
+                self._record_network_event("dns_timeout", {
+                    "endpoint": endpoint,
+                })
+                return False, error_msg
+
+            except Exception as e:
+                error_msg = f"DNS error for {endpoint}: {e}"
+                logger.error(f"[{self._bot_id}] {error_msg}")
+                return False, error_msg
+
+        return True, None
+
+    def _get_cached_dns(self, hostname: str) -> Optional[str]:
+        """Get DNS result from cache if valid."""
+        self._init_network_health()
+
+        if hostname in self._dns_cache:
+            cache_entry = self._dns_cache[hostname]
+            cache_time = datetime.fromisoformat(cache_entry["cached_at"])
+            age = (datetime.now(timezone.utc) - cache_time).total_seconds()
+
+            if age < self.DNS_CACHE_TTL_SECONDS:
+                return cache_entry["ip"]
+
+            # Cache expired
+            del self._dns_cache[hostname]
+
+        return None
+
+    def _cache_dns(self, hostname: str, ip: str) -> None:
+        """Cache a DNS resolution result."""
+        self._init_network_health()
+
+        self._dns_cache[hostname] = {
+            "ip": ip,
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def _try_dns_fallback(self) -> bool:
+        """
+        Try to use fallback IP addresses when DNS fails.
+
+        Returns:
+            True if fallback connection successful
+        """
+        import socket
+
+        for hostname, fallback_ips in self.EXCHANGE_DNS_FALLBACKS.items():
+            if not fallback_ips:
+                continue
+
+            for ip in fallback_ips:
+                try:
+                    # Test connection to fallback IP
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(5)
+                    result = sock.connect_ex((ip, 443))
+                    sock.close()
+
+                    if result == 0:
+                        logger.info(
+                            f"[{self._bot_id}] DNS fallback successful: "
+                            f"{hostname} -> {ip}"
+                        )
+                        self._cache_dns(hostname, ip)
+                        self._record_network_event("dns_fallback_success", {
+                            "hostname": hostname,
+                            "ip": ip,
+                        })
+                        return True
+
+                except Exception as e:
+                    logger.debug(f"[{self._bot_id}] Fallback IP {ip} failed: {e}")
+                    continue
+
+        logger.error(f"[{self._bot_id}] All DNS fallback IPs failed")
+        return False
+
+    async def resolve_dns_with_retry(self, hostname: str) -> Optional[str]:
+        """
+        Resolve DNS with retry and fallback.
+
+        Args:
+            hostname: Hostname to resolve
+
+        Returns:
+            IP address or None if failed
+        """
+        import socket
+
+        # Check cache first
+        cached = self._get_cached_dns(hostname)
+        if cached:
+            return cached
+
+        # Try resolution with retries
+        for attempt in range(self.DNS_MAX_RETRIES):
+            try:
+                loop = asyncio.get_event_loop()
+                ip = await asyncio.wait_for(
+                    loop.run_in_executor(None, socket.gethostbyname, hostname),
+                    timeout=self.DNS_RESOLVE_TIMEOUT
+                )
+
+                self._cache_dns(hostname, ip)
+                return ip
+
+            except (socket.gaierror, asyncio.TimeoutError) as e:
+                logger.warning(
+                    f"[{self._bot_id}] DNS resolution attempt {attempt + 1}/"
+                    f"{self.DNS_MAX_RETRIES} failed for {hostname}: {e}"
+                )
+
+                if attempt < self.DNS_MAX_RETRIES - 1:
+                    await asyncio.sleep(1)  # Brief delay between retries
+
+        # Try fallback IPs
+        if hostname in self.EXCHANGE_DNS_FALLBACKS:
+            for ip in self.EXCHANGE_DNS_FALLBACKS[hostname]:
+                try:
+                    # Quick connectivity test
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(3)
+                    result = sock.connect_ex((ip, 443))
+                    sock.close()
+
+                    if result == 0:
+                        logger.info(
+                            f"[{self._bot_id}] Using DNS fallback: {hostname} -> {ip}"
+                        )
+                        self._cache_dns(hostname, ip)
+                        return ip
+
+                except Exception:
+                    continue
+
+        logger.error(f"[{self._bot_id}] DNS resolution failed for {hostname}")
+        return None
+
+    # =========================================================================
+    # Network Jitter Smoothing
+    # =========================================================================
+
+    def should_delay_for_jitter(self) -> tuple[bool, float]:
+        """
+        Check if operation should be delayed due to network jitter.
+
+        Returns:
+            Tuple of (should_delay, recommended_delay_seconds)
+        """
+        self._init_network_health()
+        state = self._network_health_state
+
+        if state["jitter_state"] == "critical":
+            # Critical jitter: wait for stabilization
+            return True, 5.0
+
+        if state["jitter_state"] == "unstable":
+            # Unstable: add small delay
+            return True, 1.0
+
+        return False, 0.0
+
+    async def wait_for_network_stability(
+        self,
+        timeout_seconds: float = 60.0,
+        check_interval: float = 2.0,
+    ) -> bool:
+        """
+        Wait for network to stabilize before proceeding.
+
+        Args:
+            timeout_seconds: Maximum wait time
+            check_interval: How often to check
+
+        Returns:
+            True if network stabilized, False if timeout
+        """
+        self._init_network_health()
+        start_time = time.time()
+
+        while time.time() - start_time < timeout_seconds:
+            is_healthy, reason = self.is_network_healthy()
+
+            if is_healthy:
+                state = self._network_health_state
+                if state["jitter_state"] == "stable":
+                    return True
+
+            await asyncio.sleep(check_interval)
+
+        logger.warning(
+            f"[{self._bot_id}] Network stability timeout after {timeout_seconds}s"
+        )
+        return False
+
+    # =========================================================================
+    # Comprehensive Network Status
+    # =========================================================================
+
+    def get_network_status(self) -> Dict[str, Any]:
+        """Get comprehensive network status."""
+        self._init_network_health()
+        state = self._network_health_state
+
+        is_healthy, health_reason = self.is_network_healthy()
+
+        return {
+            "is_healthy": is_healthy,
+            "health_reason": health_reason,
+            "health_score": state["health_score"],
+            "connection": {
+                "is_connected": state["is_connected"],
+                "consecutive_failures": state["consecutive_failures"],
+                "consecutive_successes": state["consecutive_successes"],
+                "disconnect_count": state["disconnect_count"],
+                "total_downtime_seconds": state["total_downtime_seconds"],
+            },
+            "latency": {
+                "avg_ms": round(state["avg_latency_ms"], 1),
+                "max_ms": round(state["max_latency_ms"], 1),
+                "min_ms": round(state["min_latency_ms"], 1),
+            },
+            "jitter": {
+                "current_ms": round(state["current_jitter_ms"], 1),
+                "state": state["jitter_state"],
+            },
+            "reconnection": {
+                "attempts": state["reconnect_attempts"],
+                "max_attempts": self.NETWORK_RECONNECT_MAX_ATTEMPTS,
+                "current_delay": state["reconnect_delay"],
+            },
+            "dns_cache_size": len(self._dns_cache),
+            "recent_events": self._network_events[-5:] if self._network_events else [],
+        }
+
+    async def check_network_before_trade(self) -> tuple[bool, str]:
+        """
+        Comprehensive network check before executing a trade.
+
+        Combines all network health checks.
+
+        Returns:
+            Tuple of (can_trade, reason)
+        """
+        self._init_network_health()
+
+        # 1. Basic network health
+        is_healthy, reason = self.is_network_healthy()
+        if not is_healthy:
+            return False, f"Network unhealthy: {reason}"
+
+        # 2. Check for jitter delay
+        should_delay, delay_seconds = self.should_delay_for_jitter()
+        if should_delay and delay_seconds > 3.0:
+            return False, f"Network jitter too high, recommended delay: {delay_seconds}s"
+
+        # 3. DNS verification (periodic)
+        state = self._network_health_state
+        if state["consecutive_successes"] == 0:
+            # No recent success, verify DNS
+            dns_ok, dns_error = await self._verify_dns_resolution()
+            if not dns_ok:
+                return False, f"DNS resolution failed: {dns_error}"
+
+        # 4. Data connection health (from existing method)
+        if not self._is_data_connection_healthy():
+            return False, "Data connection unhealthy"
+
+        return True, "Network OK"
+
+    async def handle_network_error(
+        self,
+        error: Exception,
+        operation: str = "unknown",
+    ) -> Dict[str, Any]:
+        """
+        Handle a network error with appropriate recovery actions.
+
+        Args:
+            error: The exception that occurred
+            operation: Description of the operation that failed
+
+        Returns:
+            Dict with handling result and recommended action
+        """
+        self._init_network_health()
+        error_str = str(error).lower()
+
+        result = {
+            "handled": False,
+            "action": "none",
+            "should_retry": False,
+            "retry_delay": 0,
+            "error_type": "unknown",
+        }
+
+        # Classify error type
+        if "timeout" in error_str:
+            result["error_type"] = "timeout"
+            result["should_retry"] = True
+            result["retry_delay"] = 2
+        elif "connection" in error_str or "refused" in error_str:
+            result["error_type"] = "connection"
+            result["should_retry"] = True
+            result["retry_delay"] = 5
+        elif "dns" in error_str or "resolve" in error_str or "getaddrinfo" in error_str:
+            result["error_type"] = "dns"
+            result["should_retry"] = True
+            result["retry_delay"] = 10
+            result["action"] = "verify_dns"
+        elif "ssl" in error_str or "certificate" in error_str:
+            result["error_type"] = "ssl"
+            result["should_retry"] = False
+            result["action"] = "check_ssl"
+        else:
+            result["error_type"] = "other"
+            result["should_retry"] = True
+            result["retry_delay"] = 1
+
+        # Record the failure
+        self.record_network_request(False, error=f"{operation}: {error}")
+
+        # Take action based on error type
+        if result["error_type"] == "dns":
+            # Try DNS fallback
+            await self._try_dns_fallback()
+
+        # Check if we need to attempt reconnection
+        state = self._network_health_state
+        if not state["is_connected"]:
+            result["action"] = "reconnect"
+            result["should_retry"] = False  # Don't retry, need full reconnect
+
+        result["handled"] = True
+
+        logger.info(
+            f"[{self._bot_id}] Network error handled: type={result['error_type']}, "
+            f"action={result['action']}, retry={result['should_retry']}"
+        )
+
+        return result

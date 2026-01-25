@@ -376,6 +376,17 @@ class BollingerBot(BaseBot):
         else:
             checks["position_synced"] = True  # No position is valid
 
+        # Network health check (網路彈性)
+        net_healthy, _ = self.is_network_healthy()
+        checks["network_healthy"] = net_healthy
+
+        # DNS resolution check
+        try:
+            dns_ok, _ = await self._verify_dns_resolution()
+            checks["dns_ok"] = dns_ok
+        except Exception:
+            checks["dns_ok"] = False
+
         return checks
 
     # =========================================================================
@@ -644,6 +655,25 @@ class BollingerBot(BaseBot):
                             await self._close_position(current_price, ExitReason.STOP_LOSS)
                             self.reset_stop_loss_protection()
 
+                # Network health monitoring (網路彈性監控)
+                try:
+                    start_time = time.time()
+                    test_price = await self._get_current_price()
+                    latency_ms = (time.time() - start_time) * 1000
+                    self.record_network_request(True, latency_ms)
+
+                    net_healthy, net_reason = self.is_network_healthy()
+                    if not net_healthy:
+                        logger.warning(f"Network unhealthy: {net_reason}")
+                        if not self._network_health_state.get("is_connected", True):
+                            reconnected = await self.attempt_network_reconnect()
+                            if not reconnected:
+                                logger.error("Network reconnection failed")
+                except Exception as net_err:
+                    error_result = await self.handle_network_error(net_err, "background_monitor")
+                    if error_result.get("action") == "reconnect":
+                        await self.attempt_network_reconnect()
+
                 self._send_heartbeat()
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
@@ -910,6 +940,12 @@ class BollingerBot(BaseBot):
                 check_time_sync=True,
                 check_liquidity=False,  # Grid bots use small sizes
             ):
+                return False
+
+            # Network health check (網路彈性檢查)
+            network_ok, network_reason = await self.check_network_before_trade()
+            if not network_ok:
+                logger.warning(f"Network check failed: {network_reason}")
                 return False
 
             # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
