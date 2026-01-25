@@ -5454,3 +5454,1028 @@ class BaseBot(ABC):
         if not self._stats.start_time:
             return 0
         return int((datetime.now(timezone.utc) - self._stats.start_time).total_seconds())
+
+    # =========================================================================
+    # Per-Strategy Risk Isolation (風控相互影響)
+    # Prevents one strategy's losses from affecting healthy strategies
+    # =========================================================================
+
+    # Strategy-level risk thresholds
+    STRATEGY_LOSS_WARNING_PCT = Decimal("0.03")  # 3% strategy loss warning
+    STRATEGY_LOSS_PAUSE_PCT = Decimal("0.05")    # 5% strategy loss -> pause self
+    STRATEGY_LOSS_STOP_PCT = Decimal("0.10")     # 10% strategy loss -> stop self
+    STRATEGY_DRAWDOWN_WARNING_PCT = Decimal("0.05")  # 5% drawdown warning
+    STRATEGY_DRAWDOWN_PAUSE_PCT = Decimal("0.08")    # 8% drawdown -> pause
+    STRATEGY_CONSECUTIVE_LOSS_WARNING = 3  # 3 consecutive losses
+    STRATEGY_CONSECUTIVE_LOSS_PAUSE = 5    # 5 consecutive losses -> pause
+
+    def _init_strategy_risk_tracking(self) -> None:
+        """Initialize per-strategy risk tracking."""
+        if not hasattr(self, "_strategy_risk"):
+            self._strategy_risk = {
+                "initial_capital": Decimal("0"),
+                "current_capital": Decimal("0"),
+                "peak_capital": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+                "unrealized_pnl": Decimal("0"),
+                "consecutive_losses": 0,
+                "consecutive_wins": 0,
+                "daily_loss": Decimal("0"),
+                "daily_trades": 0,
+                "daily_reset_date": None,
+                "is_paused_by_risk": False,
+                "is_stopped_by_risk": False,
+                "last_check_time": None,
+                "risk_events": [],  # Recent risk events
+            }
+
+    def set_strategy_initial_capital(self, capital: Decimal) -> None:
+        """
+        Set initial capital for per-strategy risk tracking.
+
+        Args:
+            capital: Initial capital allocated to this strategy
+        """
+        self._init_strategy_risk_tracking()
+        self._strategy_risk["initial_capital"] = capital
+        self._strategy_risk["current_capital"] = capital
+        self._strategy_risk["peak_capital"] = capital
+        logger.info(f"[{self._bot_id}] Strategy initial capital set: {capital}")
+
+    def update_strategy_capital(
+        self,
+        realized_pnl: Optional[Decimal] = None,
+        unrealized_pnl: Optional[Decimal] = None,
+    ) -> None:
+        """
+        Update strategy capital tracking.
+
+        Args:
+            realized_pnl: Realized P&L to add
+            unrealized_pnl: Current unrealized P&L
+        """
+        self._init_strategy_risk_tracking()
+        risk = self._strategy_risk
+
+        if realized_pnl is not None:
+            risk["realized_pnl"] += realized_pnl
+            # Track win/loss streaks
+            if realized_pnl > 0:
+                risk["consecutive_wins"] += 1
+                risk["consecutive_losses"] = 0
+            elif realized_pnl < 0:
+                risk["consecutive_losses"] += 1
+                risk["consecutive_wins"] = 0
+                risk["daily_loss"] += abs(realized_pnl)
+
+            risk["daily_trades"] += 1
+
+        if unrealized_pnl is not None:
+            risk["unrealized_pnl"] = unrealized_pnl
+
+        # Update current capital
+        risk["current_capital"] = (
+            risk["initial_capital"] + risk["realized_pnl"] + risk["unrealized_pnl"]
+        )
+
+        # Update peak
+        if risk["current_capital"] > risk["peak_capital"]:
+            risk["peak_capital"] = risk["current_capital"]
+
+    async def check_strategy_risk(self) -> Dict[str, Any]:
+        """
+        Check per-strategy risk levels.
+
+        Returns:
+            Dictionary with risk check results and actions taken
+        """
+        self._init_strategy_risk_tracking()
+        risk = self._strategy_risk
+        risk["last_check_time"] = datetime.now(timezone.utc)
+
+        # Check for daily reset
+        today = datetime.now(timezone.utc).date()
+        if risk["daily_reset_date"] != today:
+            risk["daily_loss"] = Decimal("0")
+            risk["daily_trades"] = 0
+            risk["daily_reset_date"] = today
+
+        result = {
+            "risk_level": "NORMAL",
+            "action": None,
+            "alerts": [],
+            "metrics": {},
+        }
+
+        initial = risk["initial_capital"]
+        if initial <= 0:
+            return result
+
+        current = risk["current_capital"]
+
+        # Calculate metrics
+        total_pnl = risk["realized_pnl"] + risk["unrealized_pnl"]
+        loss_pct = abs(total_pnl / initial) if total_pnl < 0 else Decimal("0")
+        drawdown_pct = (
+            (risk["peak_capital"] - current) / risk["peak_capital"]
+            if risk["peak_capital"] > 0 else Decimal("0")
+        )
+
+        result["metrics"] = {
+            "total_pnl": total_pnl,
+            "loss_pct": loss_pct,
+            "drawdown_pct": drawdown_pct,
+            "consecutive_losses": risk["consecutive_losses"],
+            "daily_loss": risk["daily_loss"],
+            "current_capital": current,
+            "peak_capital": risk["peak_capital"],
+        }
+
+        # Check thresholds - from most severe to least
+        if loss_pct >= self.STRATEGY_LOSS_STOP_PCT:
+            result["risk_level"] = "CRITICAL"
+            result["action"] = "STOP_SELF"
+            result["alerts"].append(
+                f"Strategy loss {loss_pct:.2%} >= {self.STRATEGY_LOSS_STOP_PCT:.2%} - STOPPING"
+            )
+            risk["is_stopped_by_risk"] = True
+            await self._on_strategy_risk_stop(result)
+
+        elif loss_pct >= self.STRATEGY_LOSS_PAUSE_PCT or drawdown_pct >= self.STRATEGY_DRAWDOWN_PAUSE_PCT:
+            result["risk_level"] = "DANGER"
+            result["action"] = "PAUSE_SELF"
+            if loss_pct >= self.STRATEGY_LOSS_PAUSE_PCT:
+                result["alerts"].append(
+                    f"Strategy loss {loss_pct:.2%} >= {self.STRATEGY_LOSS_PAUSE_PCT:.2%}"
+                )
+            if drawdown_pct >= self.STRATEGY_DRAWDOWN_PAUSE_PCT:
+                result["alerts"].append(
+                    f"Strategy drawdown {drawdown_pct:.2%} >= {self.STRATEGY_DRAWDOWN_PAUSE_PCT:.2%}"
+                )
+            risk["is_paused_by_risk"] = True
+            await self._on_strategy_risk_pause(result)
+
+        elif risk["consecutive_losses"] >= self.STRATEGY_CONSECUTIVE_LOSS_PAUSE:
+            result["risk_level"] = "DANGER"
+            result["action"] = "PAUSE_SELF"
+            result["alerts"].append(
+                f"Consecutive losses {risk['consecutive_losses']} >= {self.STRATEGY_CONSECUTIVE_LOSS_PAUSE}"
+            )
+            risk["is_paused_by_risk"] = True
+            await self._on_strategy_risk_pause(result)
+
+        elif loss_pct >= self.STRATEGY_LOSS_WARNING_PCT or drawdown_pct >= self.STRATEGY_DRAWDOWN_WARNING_PCT:
+            result["risk_level"] = "WARNING"
+            result["action"] = "NOTIFY"
+            if loss_pct >= self.STRATEGY_LOSS_WARNING_PCT:
+                result["alerts"].append(
+                    f"Strategy loss {loss_pct:.2%} >= {self.STRATEGY_LOSS_WARNING_PCT:.2%}"
+                )
+            if drawdown_pct >= self.STRATEGY_DRAWDOWN_WARNING_PCT:
+                result["alerts"].append(
+                    f"Strategy drawdown {drawdown_pct:.2%} >= {self.STRATEGY_DRAWDOWN_WARNING_PCT:.2%}"
+                )
+            await self._on_strategy_risk_warning(result)
+
+        elif risk["consecutive_losses"] >= self.STRATEGY_CONSECUTIVE_LOSS_WARNING:
+            result["risk_level"] = "WARNING"
+            result["action"] = "NOTIFY"
+            result["alerts"].append(
+                f"Consecutive losses {risk['consecutive_losses']} >= {self.STRATEGY_CONSECUTIVE_LOSS_WARNING}"
+            )
+            await self._on_strategy_risk_warning(result)
+
+        # Record event if there's an alert
+        if result["alerts"]:
+            risk["risk_events"].append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "level": result["risk_level"],
+                "action": result["action"],
+                "alerts": result["alerts"],
+            })
+            # Keep only last 50 events
+            risk["risk_events"] = risk["risk_events"][-50:]
+
+        return result
+
+    async def _on_strategy_risk_warning(self, result: Dict[str, Any]) -> None:
+        """
+        Handle strategy risk warning - notify but don't stop.
+        Does NOT affect other strategies.
+        """
+        logger.warning(
+            f"[{self._bot_id}] Strategy risk WARNING: {result['alerts']}"
+        )
+        if self._notifier:
+            await self._notifier.send_warning(
+                title=f"⚠️ Strategy Risk Warning: {self._bot_id}",
+                message=(
+                    f"Alerts: {', '.join(result['alerts'])}\n"
+                    f"Loss: {result['metrics'].get('loss_pct', 0):.2%}\n"
+                    f"Drawdown: {result['metrics'].get('drawdown_pct', 0):.2%}\n"
+                    f"Consecutive Losses: {result['metrics'].get('consecutive_losses', 0)}"
+                ),
+            )
+
+    async def _on_strategy_risk_pause(self, result: Dict[str, Any]) -> None:
+        """
+        Handle strategy risk pause - pause ONLY this bot, not others.
+        Other healthy strategies continue operating.
+        """
+        logger.error(
+            f"[{self._bot_id}] Strategy risk PAUSE: {result['alerts']}"
+        )
+        if self._notifier:
+            await self._notifier.send_alert(
+                title=f"🛑 Strategy Paused (Risk): {self._bot_id}",
+                message=(
+                    f"This strategy is paused due to risk limits.\n"
+                    f"Other strategies are NOT affected.\n\n"
+                    f"Alerts: {', '.join(result['alerts'])}\n"
+                    f"Loss: {result['metrics'].get('loss_pct', 0):.2%}\n"
+                    f"Drawdown: {result['metrics'].get('drawdown_pct', 0):.2%}"
+                ),
+            )
+        # Pause only this bot
+        await self.pause()
+
+    async def _on_strategy_risk_stop(self, result: Dict[str, Any]) -> None:
+        """
+        Handle strategy risk stop - stop ONLY this bot with position clearing.
+        Other healthy strategies continue operating.
+        """
+        logger.critical(
+            f"[{self._bot_id}] Strategy risk STOP: {result['alerts']}"
+        )
+        if self._notifier:
+            await self._notifier.send_alert(
+                title=f"🚨 Strategy Stopped (Risk): {self._bot_id}",
+                message=(
+                    f"This strategy is STOPPED due to severe risk breach.\n"
+                    f"Other strategies are NOT affected.\n\n"
+                    f"Alerts: {', '.join(result['alerts'])}\n"
+                    f"Loss: {result['metrics'].get('loss_pct', 0):.2%}\n"
+                    f"Action: Closing positions and stopping"
+                ),
+            )
+        # Stop only this bot with position clearing
+        await self.stop(clear_position=True)
+
+    def reset_strategy_risk_pause(self) -> bool:
+        """
+        Manually reset strategy risk pause state.
+        Call this after reviewing and acknowledging the risk event.
+
+        Returns:
+            True if reset successful
+        """
+        self._init_strategy_risk_tracking()
+        if not self._strategy_risk["is_paused_by_risk"]:
+            return False
+
+        self._strategy_risk["is_paused_by_risk"] = False
+        self._strategy_risk["consecutive_losses"] = 0
+        logger.info(f"[{self._bot_id}] Strategy risk pause reset")
+        return True
+
+    def get_strategy_risk_status(self) -> Dict[str, Any]:
+        """
+        Get current strategy risk status.
+
+        Returns:
+            Dictionary with all risk metrics
+        """
+        self._init_strategy_risk_tracking()
+        risk = self._strategy_risk
+        initial = risk["initial_capital"]
+
+        total_pnl = risk["realized_pnl"] + risk["unrealized_pnl"]
+        loss_pct = abs(total_pnl / initial) if initial > 0 and total_pnl < 0 else Decimal("0")
+        drawdown_pct = (
+            (risk["peak_capital"] - risk["current_capital"]) / risk["peak_capital"]
+            if risk["peak_capital"] > 0 else Decimal("0")
+        )
+
+        return {
+            "bot_id": self._bot_id,
+            "initial_capital": str(risk["initial_capital"]),
+            "current_capital": str(risk["current_capital"]),
+            "peak_capital": str(risk["peak_capital"]),
+            "realized_pnl": str(risk["realized_pnl"]),
+            "unrealized_pnl": str(risk["unrealized_pnl"]),
+            "total_pnl": str(total_pnl),
+            "loss_pct": str(loss_pct),
+            "drawdown_pct": str(drawdown_pct),
+            "consecutive_losses": risk["consecutive_losses"],
+            "consecutive_wins": risk["consecutive_wins"],
+            "daily_loss": str(risk["daily_loss"]),
+            "daily_trades": risk["daily_trades"],
+            "is_paused_by_risk": risk["is_paused_by_risk"],
+            "is_stopped_by_risk": risk["is_stopped_by_risk"],
+            "last_check_time": risk["last_check_time"].isoformat() if risk["last_check_time"] else None,
+            "recent_events": risk["risk_events"][-5:],
+        }
+
+    # =========================================================================
+    # Virtual Position Ledger (淨倉位管理)
+    # Track per-bot virtual positions separately from net exchange position
+    # =========================================================================
+
+    def _init_virtual_position_ledger(self) -> None:
+        """Initialize virtual position tracking."""
+        if not hasattr(self, "_virtual_positions"):
+            self._virtual_positions: Dict[str, Dict[str, Any]] = {}
+            # symbol -> {
+            #   "quantity": Decimal,
+            #   "side": str,  # "LONG" or "SHORT"
+            #   "avg_entry_price": Decimal,
+            #   "fills": List[Dict],  # Individual fills for attribution
+            #   "unrealized_pnl": Decimal,
+            #   "realized_pnl": Decimal,
+            #   "last_sync_time": datetime,
+            #   "drift_detected": bool,
+            # }
+
+    def record_virtual_fill(
+        self,
+        symbol: str,
+        side: str,  # "BUY" or "SELL"
+        quantity: Decimal,
+        price: Decimal,
+        order_id: str,
+        fee: Decimal = Decimal("0"),
+        is_reduce_only: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Record a fill in the virtual position ledger.
+
+        This tracks what THIS bot thinks it owns, separately from exchange net position.
+
+        Args:
+            symbol: Trading symbol
+            side: Fill side (BUY or SELL)
+            quantity: Fill quantity
+            price: Fill price
+            order_id: Order ID for attribution
+            fee: Trading fee
+            is_reduce_only: Whether this is a reduce-only order
+
+        Returns:
+            Updated virtual position state
+        """
+        self._init_virtual_position_ledger()
+
+        fill_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "order_id": order_id,
+            "side": side,
+            "quantity": str(quantity),
+            "price": str(price),
+            "fee": str(fee),
+            "is_reduce_only": is_reduce_only,
+        }
+
+        if symbol not in self._virtual_positions:
+            # New position
+            self._virtual_positions[symbol] = {
+                "quantity": Decimal("0"),
+                "side": None,
+                "avg_entry_price": Decimal("0"),
+                "fills": [],
+                "unrealized_pnl": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+                "last_sync_time": None,
+                "drift_detected": False,
+            }
+
+        pos = self._virtual_positions[symbol]
+        pos["fills"].append(fill_record)
+
+        # Keep only last 100 fills per symbol
+        pos["fills"] = pos["fills"][-100:]
+
+        # Calculate position change
+        current_qty = pos["quantity"]
+        current_side = pos["side"]
+
+        if side == "BUY":
+            if current_side is None or current_side == "LONG" or current_qty == 0:
+                # Adding to long position
+                total_value = (current_qty * pos["avg_entry_price"]) + (quantity * price)
+                pos["quantity"] = current_qty + quantity
+                if pos["quantity"] > 0:
+                    pos["avg_entry_price"] = total_value / pos["quantity"]
+                pos["side"] = "LONG"
+            else:
+                # Reducing short position (BUY to close SHORT)
+                realized = (pos["avg_entry_price"] - price) * min(quantity, current_qty)
+                pos["realized_pnl"] += realized - fee
+                pos["quantity"] = current_qty - quantity
+                if pos["quantity"] <= 0:
+                    if pos["quantity"] < 0:
+                        # Flipped to long
+                        pos["quantity"] = abs(pos["quantity"])
+                        pos["side"] = "LONG"
+                        pos["avg_entry_price"] = price
+                    else:
+                        pos["side"] = None
+                        pos["avg_entry_price"] = Decimal("0")
+
+        elif side == "SELL":
+            if current_side is None or current_side == "SHORT" or current_qty == 0:
+                # Adding to short position
+                total_value = (current_qty * pos["avg_entry_price"]) + (quantity * price)
+                pos["quantity"] = current_qty + quantity
+                if pos["quantity"] > 0:
+                    pos["avg_entry_price"] = total_value / pos["quantity"]
+                pos["side"] = "SHORT"
+            else:
+                # Reducing long position (SELL to close LONG)
+                realized = (price - pos["avg_entry_price"]) * min(quantity, current_qty)
+                pos["realized_pnl"] += realized - fee
+                pos["quantity"] = current_qty - quantity
+                if pos["quantity"] <= 0:
+                    if pos["quantity"] < 0:
+                        # Flipped to short
+                        pos["quantity"] = abs(pos["quantity"])
+                        pos["side"] = "SHORT"
+                        pos["avg_entry_price"] = price
+                    else:
+                        pos["side"] = None
+                        pos["avg_entry_price"] = Decimal("0")
+
+        # Update strategy risk tracking
+        if fill_record["is_reduce_only"] or (side == "SELL" and current_side == "LONG") or (side == "BUY" and current_side == "SHORT"):
+            # This was a closing trade
+            if "realized" in dir():
+                self.update_strategy_capital(realized_pnl=realized - fee)
+
+        logger.debug(
+            f"[{self._bot_id}] Virtual fill recorded: {side} {quantity} {symbol} @ {price}, "
+            f"Position now: {pos['side']} {pos['quantity']}"
+        )
+
+        return self._get_virtual_position_summary(symbol)
+
+    def update_virtual_unrealized_pnl(
+        self,
+        symbol: str,
+        current_price: Decimal,
+    ) -> Decimal:
+        """
+        Update unrealized P&L for a virtual position.
+
+        Args:
+            symbol: Trading symbol
+            current_price: Current market price
+
+        Returns:
+            Unrealized P&L amount
+        """
+        self._init_virtual_position_ledger()
+
+        if symbol not in self._virtual_positions:
+            return Decimal("0")
+
+        pos = self._virtual_positions[symbol]
+        if pos["quantity"] <= 0:
+            pos["unrealized_pnl"] = Decimal("0")
+            return Decimal("0")
+
+        if pos["side"] == "LONG":
+            pos["unrealized_pnl"] = (current_price - pos["avg_entry_price"]) * pos["quantity"]
+        elif pos["side"] == "SHORT":
+            pos["unrealized_pnl"] = (pos["avg_entry_price"] - current_price) * pos["quantity"]
+
+        # Update strategy risk tracking
+        self.update_strategy_capital(unrealized_pnl=pos["unrealized_pnl"])
+
+        return pos["unrealized_pnl"]
+
+    def get_virtual_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get virtual position for a symbol.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Virtual position dict or None
+        """
+        self._init_virtual_position_ledger()
+        return self._get_virtual_position_summary(symbol)
+
+    def _get_virtual_position_summary(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Get formatted virtual position summary."""
+        if symbol not in self._virtual_positions:
+            return None
+
+        pos = self._virtual_positions[symbol]
+        return {
+            "symbol": symbol,
+            "bot_id": self._bot_id,
+            "quantity": str(pos["quantity"]),
+            "side": pos["side"],
+            "avg_entry_price": str(pos["avg_entry_price"]),
+            "unrealized_pnl": str(pos["unrealized_pnl"]),
+            "realized_pnl": str(pos["realized_pnl"]),
+            "fill_count": len(pos["fills"]),
+            "last_sync_time": pos["last_sync_time"].isoformat() if pos["last_sync_time"] else None,
+            "drift_detected": pos["drift_detected"],
+        }
+
+    def get_all_virtual_positions(self) -> Dict[str, Dict[str, Any]]:
+        """Get all virtual positions for this bot."""
+        self._init_virtual_position_ledger()
+        return {
+            symbol: self._get_virtual_position_summary(symbol)
+            for symbol in self._virtual_positions
+        }
+
+    async def reconcile_virtual_position(
+        self,
+        symbol: str,
+        exchange_quantity: Decimal,
+        exchange_side: Optional[str],
+        tolerance_pct: Decimal = Decimal("0.01"),  # 1% tolerance
+    ) -> Dict[str, Any]:
+        """
+        Reconcile virtual position with exchange position.
+
+        Detects drift between what this bot thinks it owns vs exchange state.
+
+        Args:
+            symbol: Trading symbol
+            exchange_quantity: Exchange reported quantity
+            exchange_side: Exchange reported side
+            tolerance_pct: Acceptable drift tolerance
+
+        Returns:
+            Reconciliation result with drift details
+        """
+        self._init_virtual_position_ledger()
+
+        result = {
+            "symbol": symbol,
+            "bot_id": self._bot_id,
+            "virtual_quantity": Decimal("0"),
+            "virtual_side": None,
+            "exchange_quantity": exchange_quantity,
+            "exchange_side": exchange_side,
+            "drift_quantity": Decimal("0"),
+            "drift_pct": Decimal("0"),
+            "drift_detected": False,
+            "reconciled": True,
+            "action_needed": None,
+        }
+
+        if symbol not in self._virtual_positions:
+            # No virtual position but exchange has position
+            if exchange_quantity > 0:
+                result["drift_detected"] = True
+                result["drift_quantity"] = exchange_quantity
+                result["action_needed"] = "INVESTIGATE_ORPHAN_POSITION"
+                result["reconciled"] = False
+            return result
+
+        pos = self._virtual_positions[symbol]
+        virtual_qty = pos["quantity"]
+        virtual_side = pos["side"]
+
+        result["virtual_quantity"] = virtual_qty
+        result["virtual_side"] = virtual_side
+
+        # Side mismatch
+        if virtual_side and exchange_side and virtual_side != exchange_side.upper():
+            result["drift_detected"] = True
+            result["action_needed"] = "SIDE_MISMATCH"
+            result["reconciled"] = False
+            pos["drift_detected"] = True
+            logger.error(
+                f"[{self._bot_id}] Position side mismatch for {symbol}: "
+                f"Virtual={virtual_side}, Exchange={exchange_side}"
+            )
+            return result
+
+        # Quantity drift
+        drift = abs(virtual_qty - exchange_quantity)
+        result["drift_quantity"] = drift
+
+        if virtual_qty > 0:
+            result["drift_pct"] = drift / virtual_qty
+        elif exchange_quantity > 0:
+            result["drift_pct"] = Decimal("1")  # 100% drift if we think we have 0
+
+        if result["drift_pct"] > tolerance_pct:
+            result["drift_detected"] = True
+            pos["drift_detected"] = True
+
+            if virtual_qty > exchange_quantity:
+                result["action_needed"] = "VIRTUAL_OVERCOUNTED"
+            else:
+                result["action_needed"] = "VIRTUAL_UNDERCOUNTED"
+
+            result["reconciled"] = False
+
+            logger.warning(
+                f"[{self._bot_id}] Position drift detected for {symbol}: "
+                f"Virtual={virtual_qty}, Exchange={exchange_quantity}, Drift={result['drift_pct']:.2%}"
+            )
+        else:
+            pos["drift_detected"] = False
+
+        pos["last_sync_time"] = datetime.now(timezone.utc)
+
+        return result
+
+    def correct_virtual_position(
+        self,
+        symbol: str,
+        correct_quantity: Decimal,
+        correct_side: Optional[str],
+        reason: str = "Manual correction",
+    ) -> bool:
+        """
+        Manually correct virtual position to match exchange.
+
+        Use this after investigating drift.
+
+        Args:
+            symbol: Trading symbol
+            correct_quantity: Correct quantity
+            correct_side: Correct side
+            reason: Reason for correction
+
+        Returns:
+            True if correction applied
+        """
+        self._init_virtual_position_ledger()
+
+        if symbol not in self._virtual_positions:
+            self._virtual_positions[symbol] = {
+                "quantity": Decimal("0"),
+                "side": None,
+                "avg_entry_price": Decimal("0"),
+                "fills": [],
+                "unrealized_pnl": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+                "last_sync_time": None,
+                "drift_detected": False,
+            }
+
+        pos = self._virtual_positions[symbol]
+        old_qty = pos["quantity"]
+        old_side = pos["side"]
+
+        pos["quantity"] = correct_quantity
+        pos["side"] = correct_side.upper() if correct_side else None
+        pos["drift_detected"] = False
+        pos["last_sync_time"] = datetime.now(timezone.utc)
+
+        # Record correction as a fill
+        pos["fills"].append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "order_id": "MANUAL_CORRECTION",
+            "side": "CORRECTION",
+            "quantity": str(correct_quantity - old_qty),
+            "price": "0",
+            "fee": "0",
+            "reason": reason,
+            "old_quantity": str(old_qty),
+            "old_side": old_side,
+        })
+
+        logger.info(
+            f"[{self._bot_id}] Virtual position corrected for {symbol}: "
+            f"{old_side} {old_qty} -> {pos['side']} {pos['quantity']}, Reason: {reason}"
+        )
+
+        return True
+
+    # =========================================================================
+    # Cost Basis and P&L Attribution (持倉歸屬不清)
+    # FIFO-based cost basis tracking for accurate profit attribution
+    # =========================================================================
+
+    def _init_cost_basis_tracking(self) -> None:
+        """Initialize cost basis tracking."""
+        if not hasattr(self, "_cost_basis_ledger"):
+            self._cost_basis_ledger: Dict[str, List[Dict[str, Any]]] = {}
+            # symbol -> List of open lots (FIFO order)
+            # Each lot: {
+            #   "lot_id": str,
+            #   "timestamp": datetime,
+            #   "quantity": Decimal,
+            #   "remaining_quantity": Decimal,
+            #   "entry_price": Decimal,
+            #   "order_id": str,
+            #   "fee": Decimal,
+            # }
+
+    def record_cost_basis_entry(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        price: Decimal,
+        order_id: str,
+        fee: Decimal = Decimal("0"),
+    ) -> str:
+        """
+        Record a new cost basis entry (opening position).
+
+        Uses FIFO (First-In-First-Out) for P&L calculation.
+
+        Args:
+            symbol: Trading symbol
+            quantity: Entry quantity
+            price: Entry price
+            order_id: Order ID for tracking
+            fee: Entry fee
+
+        Returns:
+            Lot ID for this entry
+        """
+        self._init_cost_basis_tracking()
+
+        if symbol not in self._cost_basis_ledger:
+            self._cost_basis_ledger[symbol] = []
+
+        lot_id = f"{self._bot_id}_{symbol}_{order_id}_{int(time.time()*1000)}"
+
+        lot = {
+            "lot_id": lot_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "quantity": quantity,
+            "remaining_quantity": quantity,
+            "entry_price": price,
+            "order_id": order_id,
+            "fee": fee,
+        }
+
+        self._cost_basis_ledger[symbol].append(lot)
+
+        logger.debug(
+            f"[{self._bot_id}] Cost basis entry: {lot_id}, "
+            f"{quantity} {symbol} @ {price}"
+        )
+
+        return lot_id
+
+    def close_cost_basis_fifo(
+        self,
+        symbol: str,
+        close_quantity: Decimal,
+        close_price: Decimal,
+        close_order_id: str,
+        close_fee: Decimal = Decimal("0"),
+    ) -> Dict[str, Any]:
+        """
+        Close position using FIFO cost basis matching.
+
+        Matches against oldest open lots first.
+
+        Args:
+            symbol: Trading symbol
+            close_quantity: Quantity to close
+            close_price: Closing price
+            close_order_id: Close order ID
+            close_fee: Closing fee
+
+        Returns:
+            P&L attribution results
+        """
+        self._init_cost_basis_tracking()
+
+        result = {
+            "symbol": symbol,
+            "bot_id": self._bot_id,
+            "close_order_id": close_order_id,
+            "close_quantity": str(close_quantity),
+            "close_price": str(close_price),
+            "matched_lots": [],
+            "total_cost_basis": Decimal("0"),
+            "total_realized_pnl": Decimal("0"),
+            "total_fees": close_fee,
+            "unmatched_quantity": Decimal("0"),
+        }
+
+        if symbol not in self._cost_basis_ledger:
+            result["unmatched_quantity"] = close_quantity
+            logger.warning(
+                f"[{self._bot_id}] No cost basis found for {symbol}, "
+                f"unmatched close: {close_quantity}"
+            )
+            return result
+
+        remaining_to_close = close_quantity
+        lots = self._cost_basis_ledger[symbol]
+
+        for lot in lots:
+            if remaining_to_close <= 0:
+                break
+
+            if lot["remaining_quantity"] <= 0:
+                continue
+
+            # Match against this lot (FIFO)
+            match_qty = min(remaining_to_close, lot["remaining_quantity"])
+
+            # Calculate P&L for this lot
+            cost_basis = match_qty * lot["entry_price"]
+            proceeds = match_qty * close_price
+            # Proportional entry fee
+            entry_fee_portion = lot["fee"] * (match_qty / lot["quantity"])
+            # Proportional exit fee
+            exit_fee_portion = close_fee * (match_qty / close_quantity) if close_quantity > 0 else Decimal("0")
+
+            lot_pnl = proceeds - cost_basis - entry_fee_portion - exit_fee_portion
+
+            # Record match
+            result["matched_lots"].append({
+                "lot_id": lot["lot_id"],
+                "matched_quantity": str(match_qty),
+                "entry_price": str(lot["entry_price"]),
+                "entry_timestamp": lot["timestamp"],
+                "cost_basis": str(cost_basis),
+                "proceeds": str(proceeds),
+                "pnl": str(lot_pnl),
+                "entry_fee_portion": str(entry_fee_portion),
+                "exit_fee_portion": str(exit_fee_portion),
+            })
+
+            result["total_cost_basis"] += cost_basis
+            result["total_realized_pnl"] += lot_pnl
+            result["total_fees"] += entry_fee_portion
+
+            # Update lot
+            lot["remaining_quantity"] -= match_qty
+            remaining_to_close -= match_qty
+
+        result["unmatched_quantity"] = remaining_to_close
+
+        # Clean up empty lots
+        self._cost_basis_ledger[symbol] = [
+            lot for lot in lots if lot["remaining_quantity"] > 0
+        ]
+
+        # Update strategy risk with realized P&L
+        self.update_strategy_capital(realized_pnl=result["total_realized_pnl"])
+
+        # Also record in virtual ledger
+        self.record_virtual_fill(
+            symbol=symbol,
+            side="SELL",  # Closing long
+            quantity=close_quantity,
+            price=close_price,
+            order_id=close_order_id,
+            fee=close_fee,
+            is_reduce_only=True,
+        )
+
+        logger.info(
+            f"[{self._bot_id}] FIFO close: {close_quantity} {symbol} @ {close_price}, "
+            f"P&L: {result['total_realized_pnl']}, "
+            f"Matched {len(result['matched_lots'])} lots"
+        )
+
+        return result
+
+    def get_open_lots(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Get all open lots for a symbol (for position attribution).
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            List of open lots with remaining quantity
+        """
+        self._init_cost_basis_tracking()
+
+        if symbol not in self._cost_basis_ledger:
+            return []
+
+        return [
+            {
+                "lot_id": lot["lot_id"],
+                "timestamp": lot["timestamp"],
+                "entry_price": str(lot["entry_price"]),
+                "original_quantity": str(lot["quantity"]),
+                "remaining_quantity": str(lot["remaining_quantity"]),
+                "order_id": lot["order_id"],
+                "fee": str(lot["fee"]),
+            }
+            for lot in self._cost_basis_ledger[symbol]
+            if lot["remaining_quantity"] > 0
+        ]
+
+    def get_weighted_avg_cost_basis(self, symbol: str) -> Optional[Decimal]:
+        """
+        Get weighted average cost basis for a symbol.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Weighted average entry price or None
+        """
+        self._init_cost_basis_tracking()
+
+        if symbol not in self._cost_basis_ledger:
+            return None
+
+        total_value = Decimal("0")
+        total_qty = Decimal("0")
+
+        for lot in self._cost_basis_ledger[symbol]:
+            if lot["remaining_quantity"] > 0:
+                total_value += lot["remaining_quantity"] * lot["entry_price"]
+                total_qty += lot["remaining_quantity"]
+
+        if total_qty <= 0:
+            return None
+
+        return total_value / total_qty
+
+    def get_total_position_from_lots(self, symbol: str) -> Decimal:
+        """
+        Get total position size from open lots.
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            Total quantity from all open lots
+        """
+        self._init_cost_basis_tracking()
+
+        if symbol not in self._cost_basis_ledger:
+            return Decimal("0")
+
+        return sum(
+            lot["remaining_quantity"]
+            for lot in self._cost_basis_ledger[symbol]
+            if lot["remaining_quantity"] > 0
+        )
+
+    def get_pnl_attribution_summary(self) -> Dict[str, Any]:
+        """
+        Get comprehensive P&L attribution summary for this bot.
+
+        Returns:
+            Summary of all positions, realized P&L, and attribution
+        """
+        self._init_virtual_position_ledger()
+        self._init_cost_basis_tracking()
+
+        summary = {
+            "bot_id": self._bot_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "positions": {},
+            "total_realized_pnl": Decimal("0"),
+            "total_unrealized_pnl": Decimal("0"),
+            "total_open_lots": 0,
+        }
+
+        # From virtual positions
+        for symbol, pos in self._virtual_positions.items():
+            summary["total_realized_pnl"] += pos["realized_pnl"]
+            summary["total_unrealized_pnl"] += pos["unrealized_pnl"]
+
+            summary["positions"][symbol] = {
+                "virtual_quantity": str(pos["quantity"]),
+                "virtual_side": pos["side"],
+                "avg_entry_price": str(pos["avg_entry_price"]),
+                "realized_pnl": str(pos["realized_pnl"]),
+                "unrealized_pnl": str(pos["unrealized_pnl"]),
+                "open_lots": [],
+            }
+
+        # Add lot details
+        for symbol, lots in self._cost_basis_ledger.items():
+            open_lots = [
+                {
+                    "lot_id": lot["lot_id"],
+                    "entry_price": str(lot["entry_price"]),
+                    "remaining_quantity": str(lot["remaining_quantity"]),
+                    "timestamp": lot["timestamp"],
+                }
+                for lot in lots
+                if lot["remaining_quantity"] > 0
+            ]
+
+            summary["total_open_lots"] += len(open_lots)
+
+            if symbol in summary["positions"]:
+                summary["positions"][symbol]["open_lots"] = open_lots
+            elif open_lots:
+                summary["positions"][symbol] = {
+                    "virtual_quantity": "0",
+                    "virtual_side": None,
+                    "open_lots": open_lots,
+                }
+
+        summary["total_realized_pnl"] = str(summary["total_realized_pnl"])
+        summary["total_unrealized_pnl"] = str(summary["total_unrealized_pnl"])
+
+        return summary

@@ -204,6 +204,11 @@ class SupertrendBot(BaseBot):
             leverage=self._config.leverage,
         )
 
+        # Initialize per-strategy risk tracking (風控相互影響隔離)
+        capital = self._config.max_capital or Decimal("1000")
+        self.set_strategy_initial_capital(capital)
+        logger.info(f"Strategy initial capital set: {capital} USDT")
+
         # Get historical klines to initialize indicator
         interval_map = {
             "1m": KlineInterval.m1,

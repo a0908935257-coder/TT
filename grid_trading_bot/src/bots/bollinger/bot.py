@@ -166,6 +166,10 @@ class BollingerBot(BaseBot):
         # 2. Get initial capital
         await self._update_capital()
         self._initial_capital = self._capital
+
+        # Initialize per-strategy risk tracking (風控相互影響隔離)
+        self.set_strategy_initial_capital(self._capital)
+
         logger.info(f"Initial capital: {self._capital} USDT")
 
         # 3. Load historical klines
@@ -535,6 +539,35 @@ class BollingerBot(BaseBot):
             try:
                 await self._update_capital()
                 self._stats.update_drawdown(self._capital, self._initial_capital)
+
+                # Update virtual position unrealized P&L
+                if self._position:
+                    current_price = self._klines[-1].close if self._klines else Decimal("0")
+                    if current_price > 0:
+                        self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+
+                # Check per-strategy risk (風控隔離 - only affects this bot)
+                risk_result = await self.check_strategy_risk()
+                if risk_result["risk_level"] in ["DANGER", "CRITICAL"]:
+                    logger.warning(
+                        f"Strategy risk triggered: {risk_result['risk_level']} - "
+                        f"{risk_result.get('action', 'none')}"
+                    )
+
+                # Reconcile virtual position with exchange (drift detection)
+                if self._position:
+                    exchange_qty = self._position.quantity
+                    exchange_side = self._position.side.value.upper() if self._position.side else None
+                    recon_result = await self.reconcile_virtual_position(
+                        symbol=self._config.symbol,
+                        exchange_quantity=exchange_qty,
+                        exchange_side=exchange_side,
+                    )
+                    if recon_result.get("drift_detected"):
+                        logger.warning(
+                            f"Position drift detected: {recon_result.get('action_needed')}"
+                        )
+
                 self._send_heartbeat()
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
@@ -957,6 +990,28 @@ class BollingerBot(BaseBot):
                     level.entry_price = fill_price
                     level.entry_time = datetime.now(timezone.utc)
 
+                # Record virtual fill (淨倉位管理 - track per-bot position)
+                order_id_str = str(getattr(order, "order_id", ""))
+                fee = fill_qty * fill_price * self._config.fee_rate
+                self.record_virtual_fill(
+                    symbol=self._config.symbol,
+                    side=order_side,
+                    quantity=fill_qty,
+                    price=fill_price,
+                    order_id=order_id_str,
+                    fee=fee,
+                    is_reduce_only=False,
+                )
+
+                # Record cost basis entry (持倉歸屬 - FIFO tracking)
+                self.record_cost_basis_entry(
+                    symbol=self._config.symbol,
+                    quantity=fill_qty,
+                    price=fill_price,
+                    order_id=order_id_str,
+                    fee=fee,
+                )
+
                 logger.info(
                     f"Opened {side.value} position: qty={fill_qty}, "
                     f"price={fill_price:.2f}, TP={tp_price:.2f}, SL={sl_price:.2f}"
@@ -1046,6 +1101,21 @@ class BollingerBot(BaseBot):
                     exit_reason=reason.value,
                 )
                 self._stats.record_trade(trade)
+
+                # Close cost basis with FIFO (持倉歸屬 - P&L attribution)
+                order_id_str = str(getattr(order, "order_id", ""))
+                close_fee = quantity * exit_price * self._config.fee_rate
+                cost_basis_result = self.close_cost_basis_fifo(
+                    symbol=self._config.symbol,
+                    close_quantity=quantity,
+                    close_price=exit_price,
+                    close_order_id=order_id_str,
+                    close_fee=close_fee,
+                )
+                logger.debug(
+                    f"Cost basis closed: {len(cost_basis_result.get('matched_lots', []))} lots, "
+                    f"Attributed P&L: {cost_basis_result.get('total_realized_pnl')}"
+                )
 
                 # Reset grid level
                 if self._grid and self._position.grid_level_index is not None:
