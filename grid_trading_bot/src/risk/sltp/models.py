@@ -9,7 +9,7 @@ Defines data models for unified SLTP management including:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
@@ -229,17 +229,17 @@ class SLTPState:
             self.highest_price = high
         if low < self.lowest_price:
             self.lowest_price = low
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
 
     def update_stop_loss(self, new_stop: Decimal) -> bool:
         """Update stop loss price. Returns True if changed."""
         if self.is_long and new_stop > self.current_stop_loss:
             self.current_stop_loss = new_stop
-            self.updated_at = datetime.now()
+            self.updated_at = datetime.now(timezone.utc)
             return True
         elif not self.is_long and new_stop < self.current_stop_loss:
             self.current_stop_loss = new_stop
-            self.updated_at = datetime.now()
+            self.updated_at = datetime.now(timezone.utc)
             return True
         return False
 
@@ -249,9 +249,9 @@ class SLTPState:
             level = self.take_profit_levels[level_index]
             if not level.triggered:
                 level.triggered = True
-                level.triggered_at = datetime.now()
+                level.triggered_at = datetime.now(timezone.utc)
                 self.closed_quantity += self.quantity * level.percentage
-                self.updated_at = datetime.now()
+                self.updated_at = datetime.now(timezone.utc)
 
                 # Check if all levels triggered
                 if all(tp.triggered for tp in self.take_profit_levels):
@@ -263,8 +263,8 @@ class SLTPState:
     def mark_sl_triggered(self) -> None:
         """Mark stop loss as triggered."""
         self.stop_loss_triggered = True
-        self.stop_loss_triggered_at = datetime.now()
-        self.updated_at = datetime.now()
+        self.stop_loss_triggered_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
 
     @property
     def remaining_quantity(self) -> Decimal:

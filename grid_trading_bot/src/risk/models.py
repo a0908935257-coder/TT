@@ -10,7 +10,7 @@ Defines data models for global risk management including:
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
@@ -99,7 +99,7 @@ class DrawdownInfo:
         drawdown_pct = (
             (drawdown_amount / peak_value) if peak_value > 0 else Decimal("0")
         )
-        duration = datetime.now() - peak_time
+        duration = datetime.now(timezone.utc) - peak_time
 
         return cls(
             peak_value=peak_value,
@@ -190,7 +190,7 @@ class RiskAlert:
             threshold=threshold,
             message=message,
             action_taken=action_taken,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             acknowledged=False,
         )
 
@@ -211,7 +211,7 @@ class CircuitBreakerState:
 
     def trigger(self, reason: str, cooldown_seconds: int) -> None:
         """Trigger the circuit breaker."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.is_triggered = True
         self.triggered_at = now
         self.trigger_reason = reason
@@ -234,14 +234,14 @@ class CircuitBreakerState:
         """Check if still in cooldown period."""
         if not self.cooldown_until:
             return False
-        return datetime.now() < self.cooldown_until
+        return datetime.now(timezone.utc) < self.cooldown_until
 
     @property
     def cooldown_remaining(self) -> timedelta:
         """Get remaining cooldown time."""
         if not self.cooldown_until:
             return timedelta(0)
-        remaining = self.cooldown_until - datetime.now()
+        remaining = self.cooldown_until - datetime.now(timezone.utc)
         return remaining if remaining > timedelta(0) else timedelta(0)
 
 
@@ -260,7 +260,7 @@ class GlobalRiskStatus:
     def add_alert(self, alert: RiskAlert) -> None:
         """Add an alert to the active alerts list."""
         self.active_alerts.append(alert)
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(timezone.utc)
 
     def get_unacknowledged_alerts(self) -> List[RiskAlert]:
         """Get all unacknowledged alerts."""
@@ -269,12 +269,12 @@ class GlobalRiskStatus:
     def clear_acknowledged_alerts(self) -> None:
         """Remove all acknowledged alerts."""
         self.active_alerts = [a for a in self.active_alerts if not a.acknowledged]
-        self.last_updated = datetime.now()
+        self.last_updated = datetime.now(timezone.utc)
 
     def update_level(self, new_level: RiskLevel) -> bool:
         """Update risk level if it has changed. Returns True if changed."""
         if self.level != new_level:
             self.level = new_level
-            self.last_updated = datetime.now()
+            self.last_updated = datetime.now(timezone.utc)
             return True
         return False

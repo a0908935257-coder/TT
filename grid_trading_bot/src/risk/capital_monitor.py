@@ -5,7 +5,7 @@ Monitors total capital changes and detects anomalies.
 Tracks capital snapshots, calculates daily P&L, and triggers alerts.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional, Protocol, Tuple
 
@@ -72,7 +72,7 @@ class CapitalMonitor:
         # Capital tracking
         self._initial_capital: Decimal = config.total_capital
         self._peak_capital: Decimal = config.total_capital
-        self._peak_time: datetime = datetime.now()
+        self._peak_time: datetime = datetime.now(timezone.utc)
 
         # Daily tracking
         self._daily_start_capital: Optional[Decimal] = None
@@ -172,7 +172,7 @@ class CapitalMonitor:
 
         # Create snapshot
         snapshot = CapitalSnapshot(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             total_capital=total_capital,
             available_balance=available_balance,
             position_value=position_value,
@@ -209,7 +209,7 @@ class CapitalMonitor:
             New CapitalSnapshot
         """
         snapshot = CapitalSnapshot(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             total_capital=total_capital,
             available_balance=available_balance,
             position_value=position_value,
@@ -411,7 +411,7 @@ class CapitalMonitor:
         else:
             self._daily_start_capital = self._initial_capital
 
-        self._daily_start_time = datetime.now()
+        self._daily_start_time = datetime.now(timezone.utc)
         self._daily_trade_count = 0
         self._daily_win_count = 0
         self._daily_loss_count = 0

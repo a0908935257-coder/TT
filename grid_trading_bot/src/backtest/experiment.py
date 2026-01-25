@@ -6,7 +6,7 @@ for systematic strategy development and evaluation.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -184,7 +184,7 @@ class Experiment:
             status=ExperimentStatus(data.get("status", "pending")),
             created_at=datetime.fromisoformat(data["created_at"])
             if "created_at" in data
-            else datetime.now(),
+            else datetime.now(timezone.utc),
             started_at=datetime.fromisoformat(data["started_at"])
             if data.get("started_at")
             else None,
@@ -357,7 +357,7 @@ class ExperimentTracker:
         """
         experiment = self.load_experiment(experiment_id)
         experiment.status = ExperimentStatus.RUNNING
-        experiment.started_at = datetime.now()
+        experiment.started_at = datetime.now(timezone.utc)
 
         self._save_experiment(experiment)
         self._index[experiment_id]["status"] = experiment.status.value
@@ -382,7 +382,7 @@ class ExperimentTracker:
         """
         experiment = self.load_experiment(experiment_id)
         experiment.status = ExperimentStatus.COMPLETED
-        experiment.completed_at = datetime.now()
+        experiment.completed_at = datetime.now(timezone.utc)
         experiment.result = result
 
         self._save_experiment(experiment)
@@ -418,7 +418,7 @@ class ExperimentTracker:
         """
         experiment = self.load_experiment(experiment_id)
         experiment.status = ExperimentStatus.FAILED
-        experiment.completed_at = datetime.now()
+        experiment.completed_at = datetime.now(timezone.utc)
         experiment.result = ExperimentResult(error_message=error_message)
 
         self._save_experiment(experiment)

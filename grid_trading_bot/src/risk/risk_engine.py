@@ -6,7 +6,7 @@ Provides centralized risk monitoring, alert generation, and action execution.
 """
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Callable, List, Optional, Protocol
 
@@ -292,7 +292,7 @@ class RiskEngine:
         Returns:
             GlobalRiskStatus with current risk state
         """
-        self._last_check_time = datetime.now()
+        self._last_check_time = datetime.now(timezone.utc)
 
         # 1. Update capital snapshot
         if self._exchange:
@@ -307,7 +307,7 @@ class RiskEngine:
         # Create default capital if none
         if capital is None:
             capital = CapitalSnapshot(
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 total_capital=self._config.total_capital,
                 available_balance=self._config.total_capital,
                 position_value=Decimal("0"),
@@ -364,7 +364,7 @@ class RiskEngine:
             daily_pnl=self._capital_monitor.get_daily_pnl(),
             circuit_breaker=self._circuit_breaker.get_state(),
             active_alerts=alerts,
-            last_updated=datetime.now(),
+            last_updated=datetime.now(timezone.utc),
         )
 
         # 7. Check emergency stop

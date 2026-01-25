@@ -12,7 +12,7 @@ Part of the second line of defense (real-time risk monitoring).
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Protocol, Set
@@ -342,7 +342,7 @@ class ConcentrationMonitor:
         effective_positions = Decimal("1") / hhi if hhi > 0 else Decimal(str(len(positions)))
 
         snapshot = ConcentrationSnapshot(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             total_portfolio_value=total_value,
             position_concentrations=position_concentrations,
             largest_position_pct=largest_pct,
@@ -757,7 +757,7 @@ class ConcentrationMonitor:
 
     def clear_old_alerts(self, max_age_hours: int = 24) -> int:
         """Clear alerts older than max_age_hours. Returns count removed."""
-        cutoff = datetime.now()
+        cutoff = datetime.now(timezone.utc)
         from datetime import timedelta
         cutoff = cutoff - timedelta(hours=max_age_hours)
 

@@ -6,7 +6,7 @@ for trading strategies.
 """
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -82,10 +82,10 @@ class StrategyMetadata:
             author=data.get("author", ""),
             created_at=datetime.fromisoformat(data["created_at"])
             if "created_at" in data
-            else datetime.now(),
+            else datetime.now(timezone.utc),
             updated_at=datetime.fromisoformat(data["updated_at"])
             if "updated_at" in data
-            else datetime.now(),
+            else datetime.now(timezone.utc),
             tags=data.get("tags", []),
             parent_version=data.get("parent_version"),
             notes=data.get("notes", ""),
@@ -424,7 +424,7 @@ class VersionManager:
             StrategySnapshot of the saved version
         """
         # Update timestamp
-        metadata.updated_at = datetime.now()
+        metadata.updated_at = datetime.now(timezone.utc)
 
         # Create snapshot
         if hasattr(config, "__dataclass_fields__"):

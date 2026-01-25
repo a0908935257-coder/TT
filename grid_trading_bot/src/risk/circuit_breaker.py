@@ -5,7 +5,7 @@ Provides automatic protection when risk thresholds are breached.
 Triggers emergency stop, pauses bots, and manages cooldown period.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Callable, List, Optional, Protocol
 
@@ -199,7 +199,7 @@ class CircuitBreaker:
             logger.warning("Circuit breaker already triggered")
             return
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Update state
         self._state = CircuitState.OPEN
@@ -242,7 +242,7 @@ class CircuitBreaker:
             logger.info("Circuit breaker not triggered, nothing to reset")
             return
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Check cooldown unless forced
         if not force and self._cooldown_until and now < self._cooldown_until:
@@ -303,7 +303,7 @@ class CircuitBreaker:
         if self._state != CircuitState.OPEN or not self._cooldown_until:
             return timedelta(0)
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         if now >= self._cooldown_until:
             return timedelta(0)
 
@@ -322,7 +322,7 @@ class CircuitBreaker:
         if not self._cooldown_until:
             return True
 
-        return datetime.now() >= self._cooldown_until
+        return datetime.now(timezone.utc) >= self._cooldown_until
 
     # =========================================================================
     # Protection Methods

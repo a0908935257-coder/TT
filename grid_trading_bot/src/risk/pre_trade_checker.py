@@ -16,7 +16,7 @@ Checks performed:
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Deque, Dict, List, Optional, Protocol, Set
@@ -295,7 +295,7 @@ class PreTradeRiskChecker:
 
         # Record order time if passed
         if result.passed:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             self._order_timestamps.append(now)
             self._last_order_time = now
         else:
@@ -379,7 +379,7 @@ class PreTradeRiskChecker:
         self, order: OrderRequest, result: PreTradeCheckResult
     ) -> None:
         """Check order frequency limits."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Check cooldown since last order
         if self._last_order_time:

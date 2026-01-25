@@ -294,7 +294,7 @@ class FirewallManager:
             Created rule
         """
         self._rule_counter += 1
-        rule_id = f"rule_{self._rule_counter}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        rule_id = f"rule_{self._rule_counter}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
         rule = FirewallRule(
             rule_id=rule_id,

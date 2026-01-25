@@ -487,7 +487,7 @@ class RBACManager:
         Returns:
             Created role
         """
-        role_id = f"role_{name.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}"
+        role_id = f"role_{name.lower().replace(' ', '_')}_{datetime.now(timezone.utc).strftime('%Y%m%d')}"
 
         # Inherit parent permissions
         if parent_role and parent_role in self._roles:

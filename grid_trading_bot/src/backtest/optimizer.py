@@ -7,7 +7,7 @@ including grid search, random search, and Bayesian optimization (via Optuna).
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Callable, Optional, Union
@@ -548,7 +548,7 @@ class BayesianOptimizer(Optimizer):
                 duration_seconds=optuna_trial.duration.total_seconds()
                 if optuna_trial.duration
                 else 0.0,
-                timestamp=optuna_trial.datetime_start or datetime.now(),
+                timestamp=optuna_trial.datetime_start or datetime.now(timezone.utc),
             )
             trials.append(trial)
 

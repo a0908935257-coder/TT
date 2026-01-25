@@ -6,7 +6,7 @@ Can be triggered manually or automatically, immediately stops all trading and cl
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
@@ -199,7 +199,7 @@ class EmergencyStop:
             logger.warning("Emergency stop already activated")
             return self.get_status()
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self._is_activated = True
         self._activated_at = now
         self._activation_reason = reason

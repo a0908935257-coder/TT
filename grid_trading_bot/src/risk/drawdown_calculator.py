@@ -4,7 +4,7 @@ Drawdown Calculator.
 Tracks maximum drawdown and historical drawdown periods.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional
 
@@ -110,7 +110,7 @@ class DrawdownCalculator:
         Returns:
             Current DrawdownInfo
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Track first update time
         if self._first_update_time is None:
@@ -395,5 +395,5 @@ class DrawdownCalculator:
         """
         if self._peak_value == Decimal("0"):
             self._peak_value = value
-            self._peak_time = datetime.now()
+            self._peak_time = datetime.now(timezone.utc)
             logger.debug(f"Initial peak set to: {value}")

@@ -5,7 +5,7 @@ Provides async interface to Binance Futures trading API with support for
 both public and private (authenticated) endpoints.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -904,8 +904,8 @@ class BinanceFuturesAPI:
             quantity=Decimal(str(quantity)),
             filled_qty=Decimal("0"),
             avg_price=None,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
     async def cancel_order(
