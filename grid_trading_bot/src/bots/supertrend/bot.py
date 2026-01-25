@@ -258,6 +258,9 @@ class SupertrendBot(BaseBot):
         # Start periodic state saving
         self._start_save_task()
 
+        # Start position reconciliation (detect manual operations)
+        self._start_position_reconciliation()
+
     async def _do_stop(self, clear_position: bool = False) -> None:
         """
         Actual stop logic for Supertrend bot.
@@ -283,6 +286,9 @@ class SupertrendBot(BaseBot):
         elif self._position and self._position.stop_loss_order_id:
             # Cancel stop loss order but keep position
             await self._cancel_stop_loss_order()
+
+        # Stop position reconciliation
+        self._stop_position_reconciliation()
 
         # Stop periodic save task and save final state
         self._stop_save_task()
@@ -822,7 +828,7 @@ class SupertrendBot(BaseBot):
                 )
             return False
 
-        # Pre-trade validation (time sync + data health)
+        # Pre-trade validation (time sync + data health + position reconciliation)
         order_side = "BUY" if side == PositionSide.LONG else "SELL"
         if not await self._validate_pre_trade(
             symbol=self._config.symbol,
@@ -831,6 +837,17 @@ class SupertrendBot(BaseBot):
             check_time_sync=True,
             check_liquidity=False,  # Grid bots use small sizes
         ):
+            return False
+
+        # Check balance before order (prevent rejection)
+        balance_ok, balance_msg = await self._check_balance_for_order(
+            symbol=self._config.symbol,
+            quantity=Decimal("0.001"),  # Will be calculated below
+            price=price,
+            leverage=self._config.leverage,
+        )
+        if not balance_ok:
+            logger.warning(f"Order blocked: {balance_msg}")
             return False
 
         # Check SignalCoordinator for multi-bot conflict prevention
@@ -881,15 +898,19 @@ class SupertrendBot(BaseBot):
                 logger.warning("Insufficient balance to open position")
                 return False
 
-            # Place market order (through order queue for cross-bot coordination)
-            order_side = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL
-            order = await self._exchange.futures_create_order(
-                symbol=self._config.symbol,
-                side=order_side.value,
-                order_type="MARKET",
-                quantity=quantity,
-                bot_id=self._bot_id,
-            )
+            # Place market order with timeout protection
+            order_side_enum = OrderSide.BUY if side == PositionSide.LONG else OrderSide.SELL
+
+            async def place_order():
+                return await self._exchange.futures_create_order(
+                    symbol=self._config.symbol,
+                    side=order_side_enum.value,
+                    order_type="MARKET",
+                    quantity=quantity,
+                    bot_id=self._bot_id,
+                )
+
+            order = await self._place_order_with_timeout(place_order)
 
             if order:
                 # Calculate stop loss price
@@ -940,7 +961,13 @@ class SupertrendBot(BaseBot):
                 return True
 
         except Exception as e:
-            logger.error(f"Failed to open position: {e}")
+            # Classify and handle the error
+            await self._handle_order_rejection(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=Decimal("0"),
+                error=e,
+            )
             return False
 
     def _check_trailing_stop(self, current_price: Decimal) -> bool:

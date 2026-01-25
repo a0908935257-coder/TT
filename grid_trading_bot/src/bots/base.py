@@ -1405,6 +1405,543 @@ class BaseBot(ABC):
             self._state_lock.release()
 
     # =========================================================================
+    # Position Reconciliation (Detect Manual Operations)
+    # =========================================================================
+
+    # Position reconciliation interval (seconds)
+    POSITION_RECONCILIATION_INTERVAL = 30
+
+    def _init_position_reconciliation(self) -> None:
+        """Initialize position reconciliation tracking."""
+        if not hasattr(self, "_reconciliation_task"):
+            self._reconciliation_task: Optional[asyncio.Task] = None
+        if not hasattr(self, "_last_known_position"):
+            self._last_known_position: Optional[Dict[str, Any]] = None
+        if not hasattr(self, "_position_mismatch_count"):
+            self._position_mismatch_count: int = 0
+
+    def _start_position_reconciliation(self) -> None:
+        """Start background position reconciliation task."""
+        self._init_position_reconciliation()
+
+        if self._reconciliation_task is not None:
+            return
+
+        async def reconciliation_loop():
+            while self._state == BotState.RUNNING:
+                await asyncio.sleep(self.POSITION_RECONCILIATION_INTERVAL)
+                if self._state == BotState.RUNNING:
+                    await self._reconcile_position()
+
+        self._reconciliation_task = asyncio.create_task(reconciliation_loop())
+        logger.debug(f"[{self._bot_id}] Position reconciliation started")
+
+    def _stop_position_reconciliation(self) -> None:
+        """Stop background position reconciliation task."""
+        if hasattr(self, "_reconciliation_task") and self._reconciliation_task:
+            self._reconciliation_task.cancel()
+            self._reconciliation_task = None
+            logger.debug(f"[{self._bot_id}] Position reconciliation stopped")
+
+    async def _reconcile_position(self) -> bool:
+        """
+        Reconcile local position state with exchange.
+
+        Detects:
+        - Manual position closure
+        - External stop loss/liquidation
+        - Position size changes from partial fills/manual trades
+
+        Returns:
+            True if positions are in sync, False if mismatch detected
+        """
+        try:
+            # Get current exchange position
+            exchange_pos = await self._sync_position_from_exchange()
+
+            # Get local position state
+            local_position = getattr(self, "_position", None)
+            local_qty = Decimal("0")
+            local_side = None
+
+            if local_position:
+                local_qty = getattr(local_position, "quantity", Decimal("0"))
+                local_side = getattr(local_position, "side", None)
+                if local_side and hasattr(local_side, "value"):
+                    local_side = local_side.value
+
+            # Check for mismatches
+            mismatch_detected = False
+            mismatch_reason = ""
+
+            if exchange_pos is None and local_qty > 0:
+                # Position closed externally
+                mismatch_detected = True
+                mismatch_reason = "Position closed externally (stop loss/liquidation/manual)"
+                self._position_mismatch_count += 1
+
+                # Clear local state
+                self._position = None
+
+                # Notify
+                logger.warning(
+                    f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason} - "
+                    f"local had {local_side} {local_qty}"
+                )
+
+                if self._notifier:
+                    await self._notifier.send_warning(
+                        title=f"⚠️ Position Closed Externally",
+                        message=(
+                            f"Bot: {self._bot_id}\n"
+                            f"Symbol: {self.symbol}\n"
+                            f"Lost position: {local_side} {local_qty}\n"
+                            f"Reason: External closure detected"
+                        ),
+                    )
+
+            elif exchange_pos and local_qty == 0:
+                # Exchange has position we don't know about
+                mismatch_detected = True
+                mismatch_reason = "Unexpected position on exchange (manual open)"
+                self._position_mismatch_count += 1
+
+                logger.warning(
+                    f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason} - "
+                    f"exchange has {exchange_pos['side']} {exchange_pos['quantity']}"
+                )
+
+                if self._notifier:
+                    await self._notifier.send_warning(
+                        title=f"⚠️ Unexpected Position Detected",
+                        message=(
+                            f"Bot: {self._bot_id}\n"
+                            f"Symbol: {self.symbol}\n"
+                            f"Found position: {exchange_pos['side']} {exchange_pos['quantity']}\n"
+                            f"Action: Bot pausing to avoid conflicts"
+                        ),
+                    )
+
+            elif exchange_pos and local_qty > 0:
+                # Both have positions - check for size mismatch
+                exchange_qty = exchange_pos.get("quantity", Decimal("0"))
+                exchange_side = exchange_pos.get("side", "")
+
+                # Allow 0.1% tolerance for quantity
+                qty_diff = abs(exchange_qty - local_qty) / local_qty if local_qty > 0 else Decimal("0")
+
+                if qty_diff > Decimal("0.001"):
+                    mismatch_detected = True
+                    mismatch_reason = f"Position size mismatch: local={local_qty}, exchange={exchange_qty}"
+                    self._position_mismatch_count += 1
+
+                    logger.warning(
+                        f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason}"
+                    )
+
+                elif exchange_side.upper() != (local_side.upper() if local_side else ""):
+                    mismatch_detected = True
+                    mismatch_reason = f"Position side mismatch: local={local_side}, exchange={exchange_side}"
+                    self._position_mismatch_count += 1
+
+                    logger.warning(
+                        f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason}"
+                    )
+
+            # Reset mismatch count if in sync
+            if not mismatch_detected:
+                self._position_mismatch_count = 0
+
+            # Store last known position for comparison
+            self._last_known_position = exchange_pos
+
+            return not mismatch_detected
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Position reconciliation error: {e}")
+            return False
+
+    # =========================================================================
+    # Order Rejection Handling (Balance Check, Error Classification)
+    # =========================================================================
+
+    # Order error codes
+    ORDER_ERROR_INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE"
+    ORDER_ERROR_INVALID_QUANTITY = "INVALID_QUANTITY"
+    ORDER_ERROR_INVALID_PRICE = "INVALID_PRICE"
+    ORDER_ERROR_POSITION_LIMIT = "POSITION_LIMIT"
+    ORDER_ERROR_RATE_LIMIT = "RATE_LIMIT"
+    ORDER_ERROR_TIMEOUT = "TIMEOUT"
+    ORDER_ERROR_UNKNOWN = "UNKNOWN"
+
+    async def _check_balance_for_order(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        price: Decimal,
+        leverage: int = 1,
+    ) -> tuple[bool, str]:
+        """
+        Check if account has sufficient balance for order.
+
+        Args:
+            symbol: Trading symbol
+            quantity: Order quantity
+            price: Order price (or estimated price for market orders)
+            leverage: Position leverage
+
+        Returns:
+            Tuple of (has_sufficient_balance, message)
+        """
+        try:
+            # Get account balance
+            balance = await self._exchange.futures.get_balance("USDT")
+            available = balance.free if balance else Decimal("0")
+
+            # Calculate required margin
+            notional_value = quantity * price
+            required_margin = notional_value / Decimal(leverage)
+
+            # Add buffer for fees (0.1%)
+            required_with_fees = required_margin * Decimal("1.001")
+
+            if available < required_with_fees:
+                return False, (
+                    f"Insufficient balance: need {required_with_fees:.2f} USDT "
+                    f"(margin + fees), have {available:.2f} USDT"
+                )
+
+            return True, f"Balance OK: {available:.2f} USDT available"
+
+        except Exception as e:
+            logger.error(f"[{self._bot_id}] Balance check failed: {e}")
+            return False, f"Balance check error: {e}"
+
+    def _classify_order_error(self, error: Exception) -> tuple[str, str]:
+        """
+        Classify order error for proper handling.
+
+        Args:
+            error: The exception from order placement
+
+        Returns:
+            Tuple of (error_code, human_readable_message)
+        """
+        error_str = str(error).lower()
+
+        # Check for common error patterns
+        if "insufficient" in error_str or "balance" in error_str or "margin" in error_str:
+            return self.ORDER_ERROR_INSUFFICIENT_BALANCE, "Insufficient balance or margin"
+
+        if "quantity" in error_str or "lot" in error_str or "min" in error_str:
+            return self.ORDER_ERROR_INVALID_QUANTITY, "Invalid order quantity"
+
+        if "price" in error_str or "tick" in error_str:
+            return self.ORDER_ERROR_INVALID_PRICE, "Invalid price"
+
+        if "position" in error_str and "limit" in error_str:
+            return self.ORDER_ERROR_POSITION_LIMIT, "Position limit exceeded"
+
+        if "rate" in error_str or "limit" in error_str or "429" in error_str:
+            return self.ORDER_ERROR_RATE_LIMIT, "Rate limit exceeded"
+
+        if "timeout" in error_str or "timed out" in error_str:
+            return self.ORDER_ERROR_TIMEOUT, "Order timed out"
+
+        return self.ORDER_ERROR_UNKNOWN, f"Unknown error: {error}"
+
+    async def _handle_order_rejection(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        error: Exception,
+    ) -> bool:
+        """
+        Handle order rejection with proper logging and notification.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            error: The exception from order placement
+
+        Returns:
+            True if error was handled and retry is possible
+        """
+        error_code, message = self._classify_order_error(error)
+
+        logger.warning(
+            f"[{self._bot_id}] Order rejected: {error_code} - {message}\n"
+            f"  Symbol: {symbol}, Side: {side}, Qty: {quantity}"
+        )
+
+        # Track rejection for statistics
+        if not hasattr(self, "_order_rejection_count"):
+            self._order_rejection_count = 0
+        self._order_rejection_count += 1
+
+        # Notify for important rejections
+        if error_code in [
+            self.ORDER_ERROR_INSUFFICIENT_BALANCE,
+            self.ORDER_ERROR_POSITION_LIMIT,
+        ]:
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title=f"🚫 Order Rejected: {error_code}",
+                    message=(
+                        f"Bot: {self._bot_id}\n"
+                        f"Symbol: {symbol}\n"
+                        f"Side: {side}\n"
+                        f"Quantity: {quantity}\n"
+                        f"Reason: {message}"
+                    ),
+                )
+
+        # Return True if retry is possible
+        return error_code == self.ORDER_ERROR_RATE_LIMIT
+
+    # =========================================================================
+    # Order Timeout Handling
+    # =========================================================================
+
+    # Default order timeout (seconds)
+    DEFAULT_ORDER_TIMEOUT_SECONDS = 30
+
+    # Maximum retries for timed-out orders
+    MAX_ORDER_RETRIES = 2
+
+    async def _place_order_with_timeout(
+        self,
+        order_func: Callable,
+        timeout_seconds: Optional[float] = None,
+        retry_count: int = 0,
+    ) -> Optional[Any]:
+        """
+        Place order with timeout and retry logic.
+
+        Args:
+            order_func: Async function that places the order
+            timeout_seconds: Timeout in seconds (default: DEFAULT_ORDER_TIMEOUT_SECONDS)
+            retry_count: Current retry attempt
+
+        Returns:
+            Order result or None if failed
+        """
+        if timeout_seconds is None:
+            timeout_seconds = self.DEFAULT_ORDER_TIMEOUT_SECONDS
+
+        try:
+            # Execute order with timeout
+            result = await asyncio.wait_for(order_func(), timeout=timeout_seconds)
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[{self._bot_id}] Order timed out after {timeout_seconds}s "
+                f"(attempt {retry_count + 1}/{self.MAX_ORDER_RETRIES + 1})"
+            )
+
+            # Retry if under limit
+            if retry_count < self.MAX_ORDER_RETRIES:
+                logger.info(f"[{self._bot_id}] Retrying order...")
+                await asyncio.sleep(1)  # Brief delay before retry
+                return await self._place_order_with_timeout(
+                    order_func, timeout_seconds, retry_count + 1
+                )
+
+            # Max retries reached
+            logger.error(
+                f"[{self._bot_id}] Order failed after {self.MAX_ORDER_RETRIES + 1} attempts"
+            )
+
+            if self._notifier:
+                await self._notifier.send_warning(
+                    title="⏱️ Order Timeout",
+                    message=(
+                        f"Bot: {self._bot_id}\n"
+                        f"Order timed out after {self.MAX_ORDER_RETRIES + 1} attempts\n"
+                        f"Check exchange manually"
+                    ),
+                )
+
+            return None
+
+        except Exception as e:
+            # Handle other errors
+            await self._handle_order_rejection(
+                self.symbol, "UNKNOWN", Decimal("0"), e
+            )
+            return None
+
+    async def _verify_order_fill(
+        self,
+        order_id: str,
+        symbol: str,
+        expected_quantity: Decimal,
+        timeout_seconds: float = 10.0,
+        poll_interval: float = 1.0,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Verify order was filled by polling order status.
+
+        Args:
+            order_id: Order ID to check
+            symbol: Trading symbol
+            expected_quantity: Expected fill quantity
+            timeout_seconds: Maximum time to wait for fill
+            poll_interval: Time between status checks
+
+        Returns:
+            Tuple of (is_filled, order_details)
+        """
+        start_time = asyncio.get_event_loop().time()
+
+        while True:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout_seconds:
+                logger.warning(
+                    f"[{self._bot_id}] Order fill verification timed out: {order_id}"
+                )
+                return False, None
+
+            try:
+                # Query order status
+                order = await self._exchange.futures.get_order(
+                    symbol=symbol,
+                    order_id=order_id,
+                )
+
+                if order:
+                    status = getattr(order, "status", "").upper()
+                    filled_qty = getattr(order, "filled_qty", Decimal("0"))
+
+                    if status == "FILLED":
+                        logger.debug(
+                            f"[{self._bot_id}] Order {order_id} filled: {filled_qty}"
+                        )
+                        return True, {
+                            "order_id": order_id,
+                            "status": status,
+                            "filled_qty": filled_qty,
+                            "avg_price": getattr(order, "avg_price", None),
+                        }
+
+                    if status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                        logger.warning(
+                            f"[{self._bot_id}] Order {order_id} ended with status: {status}"
+                        )
+                        return False, {"order_id": order_id, "status": status}
+
+                    # Still pending - continue polling
+                    logger.debug(
+                        f"[{self._bot_id}] Order {order_id} status: {status}, "
+                        f"filled: {filled_qty}/{expected_quantity}"
+                    )
+
+            except Exception as e:
+                logger.warning(f"[{self._bot_id}] Error checking order status: {e}")
+
+            await asyncio.sleep(poll_interval)
+
+    async def _cancel_order_with_timeout(
+        self,
+        order_id: str,
+        symbol: str,
+        timeout_seconds: float = 10.0,
+    ) -> bool:
+        """
+        Cancel order with timeout protection.
+
+        Args:
+            order_id: Order ID to cancel
+            symbol: Trading symbol
+            timeout_seconds: Timeout in seconds
+
+        Returns:
+            True if cancelled successfully
+        """
+        try:
+            cancel_result = await asyncio.wait_for(
+                self._exchange.futures.cancel_order(
+                    symbol=symbol,
+                    order_id=order_id,
+                ),
+                timeout=timeout_seconds,
+            )
+            logger.info(f"[{self._bot_id}] Order {order_id} cancelled")
+            return True
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[{self._bot_id}] Cancel order timed out for {order_id}"
+            )
+            return False
+
+        except Exception as e:
+            # Order might already be filled/cancelled
+            error_str = str(e).lower()
+            if "unknown order" in error_str or "not found" in error_str:
+                logger.debug(f"[{self._bot_id}] Order {order_id} already gone")
+                return True
+            logger.error(f"[{self._bot_id}] Cancel order error: {e}")
+            return False
+
+    # =========================================================================
+    # Pre-Order Validation (Combined Checks)
+    # =========================================================================
+
+    async def _validate_before_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        leverage: int = 1,
+    ) -> tuple[bool, str]:
+        """
+        Comprehensive pre-order validation.
+
+        Checks:
+        1. Position reconciliation
+        2. Balance sufficiency
+        3. Time synchronization
+        4. Data health
+
+        Args:
+            symbol: Trading symbol
+            side: Order side
+            quantity: Order quantity
+            price: Order price
+            leverage: Position leverage
+
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        # 1. Reconcile position first
+        position_ok = await self._reconcile_position()
+        if not position_ok:
+            return False, "Position mismatch detected - cannot place order"
+
+        # 2. Check balance
+        balance_ok, balance_msg = await self._check_balance_for_order(
+            symbol, quantity, price, leverage
+        )
+        if not balance_ok:
+            return False, balance_msg
+
+        # 3. Check time sync
+        time_ok = await self._check_time_sync_health()
+        if not time_ok:
+            return False, "Time sync critical - please wait for resync"
+
+        # 4. Check data connection
+        if not self._is_data_connection_healthy():
+            return False, "Data connection unhealthy - may have stale data"
+
+        return True, "All pre-order checks passed"
+
+    # =========================================================================
     # Abstract Lifecycle Methods (Subclass Must Implement)
     # =========================================================================
 

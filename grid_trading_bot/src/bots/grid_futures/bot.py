@@ -205,6 +205,9 @@ class GridFuturesBot(BaseBot):
         # Start periodic state saving
         self._start_save_task()
 
+        # Start position reconciliation (detect manual operations)
+        self._start_position_reconciliation()
+
         logger.info("Grid Futures Bot started successfully")
         logger.info(f"  Subscribed to {self._config.symbol} {self._config.timeframe} klines")
 
@@ -243,6 +246,9 @@ class GridFuturesBot(BaseBot):
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
+
+        # Stop position reconciliation
+        self._stop_position_reconciliation()
 
         # Stop periodic save task and save final state
         self._stop_save_task()
@@ -692,7 +698,7 @@ class GridFuturesBot(BaseBot):
                 # Don't log repeatedly - capital is simply too low
                 return False
 
-            # Pre-trade validation (time sync + data health)
+            # Pre-trade validation (time sync + data health + position reconciliation)
             order_side = "BUY" if side == PositionSide.LONG else "SELL"
             if not await self._validate_pre_trade(
                 symbol=self._config.symbol,
@@ -701,6 +707,17 @@ class GridFuturesBot(BaseBot):
                 check_time_sync=True,
                 check_liquidity=False,  # Grid bots use small sizes
             ):
+                return False
+
+            # Check balance before order (prevent rejection)
+            balance_ok, balance_msg = await self._check_balance_for_order(
+                symbol=self._config.symbol,
+                quantity=quantity,
+                price=price,
+                leverage=self._config.leverage,
+            )
+            if not balance_ok:
+                logger.warning(f"Order blocked: {balance_msg}")
                 return False
 
             # Check max position limit
@@ -728,21 +745,24 @@ class GridFuturesBot(BaseBot):
                     )
                     return False
 
-            # Place market order (through order queue for cross-bot coordination)
-            if side == PositionSide.LONG:
-                order = await self._exchange.market_buy(
-                    symbol=self._config.symbol,
-                    quantity=quantity,
-                    market=MarketType.FUTURES,
-                    bot_id=self._bot_id,
-                )
-            else:
-                order = await self._exchange.market_sell(
-                    symbol=self._config.symbol,
-                    quantity=quantity,
-                    market=MarketType.FUTURES,
-                    bot_id=self._bot_id,
-                )
+            # Place market order with timeout protection
+            async def place_order():
+                if side == PositionSide.LONG:
+                    return await self._exchange.market_buy(
+                        symbol=self._config.symbol,
+                        quantity=quantity,
+                        market=MarketType.FUTURES,
+                        bot_id=self._bot_id,
+                    )
+                else:
+                    return await self._exchange.market_sell(
+                        symbol=self._config.symbol,
+                        quantity=quantity,
+                        market=MarketType.FUTURES,
+                        bot_id=self._bot_id,
+                    )
+
+            order = await self._place_order_with_timeout(place_order)
 
             if order:
                 fill_price = order.avg_price if order.avg_price else price
@@ -808,7 +828,13 @@ class GridFuturesBot(BaseBot):
                 return True
 
         except Exception as e:
-            logger.error(f"Failed to open position: {e}")
+            # Classify and handle the error
+            await self._handle_order_rejection(
+                symbol=self._config.symbol,
+                side=order_side,
+                quantity=quantity,
+                error=e,
+            )
 
         return False
 
