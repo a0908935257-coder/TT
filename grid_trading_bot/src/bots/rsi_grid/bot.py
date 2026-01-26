@@ -148,16 +148,16 @@ class RSIGridBot(BaseBot):
         self._consecutive_losses: int = 0
         self._risk_paused: bool = False
 
-        # Signal cooldown to prevent signal stacking
+        # Signal cooldown to prevent signal stacking (configurable)
         self._signal_cooldown: int = 0
-        self._cooldown_bars: int = 2  # Minimum bars between signals
+        self._cooldown_bars: int = config.cooldown_bars  # Use config value
 
         # Slippage tracking (from BaseBot)
         self._init_slippage_tracking()
 
-        # Hysteresis: track last triggered level to prevent oscillation
+        # Hysteresis: track last triggered level to prevent oscillation (configurable)
         self._last_triggered_level: Optional[int] = None
-        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+        self._hysteresis_pct: Decimal = config.hysteresis_pct  # Use config value
 
         # Initialize state lock for concurrent protection
         self._init_state_lock()
@@ -1438,6 +1438,9 @@ class RSIGridBot(BaseBot):
         Prevents oscillation around grid levels by requiring price to move
         away by a minimum percentage before retriggering the same level.
 
+        Note: This feature is disabled by default for RSI Grid strategy based on
+        backtest results showing it hurts performance for low-frequency strategies.
+
         Args:
             level_index: Grid level index
             direction: "long" or "short"
@@ -1447,6 +1450,10 @@ class RSIGridBot(BaseBot):
         Returns:
             True if entry is allowed (passed hysteresis check)
         """
+        # Check if hysteresis is enabled in config
+        if not self._config.use_hysteresis:
+            return True
+
         # First trigger is always allowed
         if self._last_triggered_level is None:
             return True
@@ -1480,12 +1487,12 @@ class RSIGridBot(BaseBot):
         rsi: Decimal,
         rsi_zone: RSIZone,
     ) -> None:
-        """Check for entry signals with hysteresis protection."""
+        """Check for entry signals with optional hysteresis protection."""
         if not self._grid:
             return
 
-        # Check signal cooldown to prevent signal stacking
-        if self._signal_cooldown > 0:
+        # Check signal cooldown to prevent signal stacking (if enabled)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry check")
             return
 
@@ -1519,8 +1526,10 @@ class RSIGridBot(BaseBot):
                         grid_level=level.index,
                     )
                     if success:
-                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
-                        self._last_triggered_level = level.index  # Track for hysteresis
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        if self._config.use_hysteresis:
+                            self._last_triggered_level = level.index  # Track for hysteresis
                         return
 
         # Short entry: price rises to touch grid level
@@ -1542,8 +1551,10 @@ class RSIGridBot(BaseBot):
                         grid_level=level.index,
                     )
                     if success:
-                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
-                        self._last_triggered_level = level.index  # Track for hysteresis
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        if self._config.use_hysteresis:
+                            self._last_triggered_level = level.index  # Track for hysteresis
                         return
 
     async def _check_exit(

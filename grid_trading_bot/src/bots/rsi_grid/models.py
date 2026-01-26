@@ -143,12 +143,19 @@ class RSIGridConfig:
     # Fee rate
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
+    # Protective features (disabled by default based on backtest results showing
+    # they hurt performance for low-frequency strategies like RSI Grid)
+    use_hysteresis: bool = False  # Disable hysteresis (回測顯示對 RSI Grid 有負面影響)
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
+    use_signal_cooldown: bool = False  # Disable signal cooldown (回測顯示對 RSI Grid 有負面影響)
+    cooldown_bars: int = 2
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         decimal_fields = [
             'atr_multiplier', 'position_size_pct', 'max_position_pct',
             'stop_loss_atr_mult', 'max_stop_loss_pct', 'daily_loss_limit_pct',
-            'fee_rate'
+            'fee_rate', 'hysteresis_pct'
         ]
         for field_name in decimal_fields:
             value = getattr(self, field_name)

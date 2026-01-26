@@ -74,6 +74,12 @@ class RSIGridStrategyConfig:
         max_stop_loss_pct: Maximum stop loss percentage (default 3%)
         take_profit_grids: Number of grids for take profit (default 1)
         max_positions: Maximum concurrent positions (default 5)
+
+        # Live-like protective features
+        use_hysteresis: Enable hysteresis buffer zone (like live bot)
+        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
+        use_signal_cooldown: Enable signal cooldown (like live bot)
+        cooldown_bars: Minimum bars between signals
     """
 
     # RSI Parameters
@@ -97,11 +103,17 @@ class RSIGridStrategyConfig:
     take_profit_grids: int = 1
     max_positions: int = 5
 
+    # Live-like protective features (like live bot)
+    use_hysteresis: bool = False
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 2
+
     def __post_init__(self):
         """Normalize Decimal types."""
         decimal_fields = [
             'atr_multiplier', 'position_size_pct',
-            'stop_loss_atr_mult', 'max_stop_loss_pct'
+            'stop_loss_atr_mult', 'max_stop_loss_pct', 'hysteresis_pct'
         ]
         for field_name in decimal_fields:
             value = getattr(self, field_name)
@@ -180,6 +192,13 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         # Position tracking
         self._open_position_count: int = 0
 
+        # Hysteresis state (like live bot)
+        self._last_triggered_level: Optional[int] = None
+        self._last_triggered_side: Optional[str] = None
+
+        # Signal cooldown state (like live bot)
+        self._signal_cooldown: int = 0
+
     def warmup_period(self) -> int:
         """Return warmup period for indicator initialization."""
         return max(
@@ -203,6 +222,11 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         self._grid_initialized = False
         self._current_trend = 0
         self._open_position_count = 0
+        # Reset hysteresis state
+        self._last_triggered_level = None
+        self._last_triggered_side = None
+        # Reset cooldown state
+        self._signal_cooldown = 0
 
     def _calculate_rsi(self, closes: List[Decimal]) -> Optional[Decimal]:
         """Calculate RSI from close prices using Wilder's smoothing."""
@@ -393,6 +417,43 @@ class RSIGridBacktestStrategy(BacktestStrategy):
 
         return 0
 
+    def _check_hysteresis(self, level_idx: int, side: str, level_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if hysteresis allows entry (like live bot).
+
+        Prevents oscillation by requiring price to move beyond the buffer zone
+        before re-triggering the same level.
+
+        Args:
+            level_idx: Grid level index
+            side: "long" or "short"
+            level_price: The grid level price
+            current_price: Current market price
+
+        Returns:
+            True if entry is allowed, False if blocked by hysteresis
+        """
+        if not self._config.use_hysteresis:
+            return True
+
+        # Different level or different side - always allow
+        if self._last_triggered_level != level_idx or self._last_triggered_side != side:
+            return True
+
+        # Same level and side - check if price moved beyond hysteresis buffer
+        buffer = level_price * self._config.hysteresis_pct
+
+        if side == "long":
+            # For long, price must have moved UP beyond buffer before coming back down
+            if current_price > level_price + buffer:
+                return True
+        else:  # short
+            # For short, price must have moved DOWN beyond buffer before coming back up
+            if current_price < level_price - buffer:
+                return True
+
+        return False
+
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
         Process kline and generate signal.
@@ -415,6 +476,10 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         closes = context.get_closes(max(self._config.rsi_period + 10, self._config.trend_sma_period + 5))
         klines_window = context.get_klines_window(self._config.atr_period + 5)
 
+        # Decrement signal cooldown (like live bot)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         # Update RSI
         self._prev_rsi = self._current_rsi
         self._current_rsi = self._calculate_rsi(closes)
@@ -432,6 +497,10 @@ class RSIGridBacktestStrategy(BacktestStrategy):
 
         # Already have position - don't generate new signals
         if context.has_position:
+            return None
+
+        # Check signal cooldown (like live bot)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             return None
 
         # Check max positions
@@ -470,18 +539,30 @@ class RSIGridBacktestStrategy(BacktestStrategy):
                 entry_level = self._grid_levels[level_idx]
                 # Current candle's low touches grid level (price dip)
                 if not entry_level.is_long_filled and curr_low <= entry_level.price:
-                    entry_level.is_long_filled = True
-                    self._open_position_count += 1
+                    # Check hysteresis before entry (like live bot)
+                    if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                        pass  # Blocked by hysteresis, continue to check short
+                    else:
+                        entry_level.is_long_filled = True
+                        self._open_position_count += 1
 
-                    stop_loss = entry_level.price - sl_distance
-                    take_profit = entry_level.price + tp_distance
+                        # Update hysteresis state (like live bot)
+                        self._last_triggered_level = level_idx
+                        self._last_triggered_side = "long"
 
-                    return Signal.long_entry(
-                        price=entry_level.price,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        reason=f"rsi_grid_long_zone={rsi_zone.value}_trend={self._current_trend}",
-                    )
+                        # Set signal cooldown (like live bot)
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._config.cooldown_bars
+
+                        stop_loss = entry_level.price - sl_distance
+                        take_profit = entry_level.price + tp_distance
+
+                        return Signal.long_entry(
+                            price=entry_level.price,
+                            stop_loss=stop_loss,
+                            take_profit=take_profit,
+                            reason=f"rsi_grid_long_zone={rsi_zone.value}_trend={self._current_trend}",
+                        )
 
         # Short entry: price rises to touch grid level
         if allowed_dir in [AllowedDirection.SHORT_ONLY, AllowedDirection.BOTH]:
@@ -489,18 +570,30 @@ class RSIGridBacktestStrategy(BacktestStrategy):
                 entry_level = self._grid_levels[level_idx + 1]
                 # Current candle's high touches grid level (price rally)
                 if not entry_level.is_short_filled and curr_high >= entry_level.price:
-                    entry_level.is_short_filled = True
-                    self._open_position_count += 1
+                    # Check hysteresis before entry (like live bot)
+                    if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                        pass  # Blocked by hysteresis
+                    else:
+                        entry_level.is_short_filled = True
+                        self._open_position_count += 1
 
-                    stop_loss = entry_level.price + sl_distance
-                    take_profit = entry_level.price - tp_distance
+                        # Update hysteresis state (like live bot)
+                        self._last_triggered_level = level_idx + 1
+                        self._last_triggered_side = "short"
 
-                    return Signal.short_entry(
-                        price=entry_level.price,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        reason=f"rsi_grid_short_zone={rsi_zone.value}_trend={self._current_trend}",
-                    )
+                        # Set signal cooldown (like live bot)
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._config.cooldown_bars
+
+                        stop_loss = entry_level.price + sl_distance
+                        take_profit = entry_level.price - tp_distance
+
+                        return Signal.short_entry(
+                            price=entry_level.price,
+                            stop_loss=stop_loss,
+                            take_profit=take_profit,
+                            reason=f"rsi_grid_short_zone={rsi_zone.value}_trend={self._current_trend}",
+                        )
 
         return None
 

@@ -73,6 +73,10 @@ class SupertrendStrategyConfig:
         rsi_overbought: RSI overbought level (block LONG above this)
         rsi_oversold: RSI oversold level (block SHORT below this)
         min_trend_bars: Minimum bars in trend before entry
+        use_hysteresis: Enable hysteresis buffer zone (like live bot)
+        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
+        use_signal_cooldown: Enable signal cooldown (like live bot)
+        cooldown_bars: Minimum bars between signals
     """
 
     mode: SupertrendMode = SupertrendMode.TREND_GRID
@@ -89,6 +93,12 @@ class SupertrendStrategyConfig:
     rsi_oversold: int = 40
     # Trend confirmation
     min_trend_bars: int = 2
+    # Hysteresis (like live bot) - prevents oscillation at grid boundaries
+    use_hysteresis: bool = False
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
+    # Signal cooldown (like live bot) - prevents signal stacking
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 2
 
 
 @dataclass
@@ -149,6 +159,13 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # RSI state (for filtering)
         self._closes: List[Decimal] = []
         self._current_rsi: Optional[Decimal] = None
+
+        # Hysteresis state (like live bot)
+        self._last_triggered_level: Optional[int] = None
+        self._last_triggered_side: Optional[str] = None
+
+        # Signal cooldown state (like live bot)
+        self._signal_cooldown: int = 0
 
     @property
     def config(self) -> SupertrendStrategyConfig:
@@ -226,6 +243,43 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         return True
 
+    def _check_hysteresis(self, level_idx: int, side: str, level_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if hysteresis allows entry (like live bot).
+
+        Prevents oscillation by requiring price to move beyond the buffer zone
+        before re-triggering the same level.
+
+        Args:
+            level_idx: Grid level index
+            side: "long" or "short"
+            level_price: The grid level price
+            current_price: Current market price
+
+        Returns:
+            True if entry is allowed, False if blocked by hysteresis
+        """
+        if not self._config.use_hysteresis:
+            return True
+
+        # Different level or different side - always allow
+        if self._last_triggered_level != level_idx or self._last_triggered_side != side:
+            return True
+
+        # Same level and side - check if price moved beyond hysteresis buffer
+        buffer = level_price * self._config.hysteresis_pct
+
+        if side == "long":
+            # For long, price must have moved UP beyond buffer before coming back down
+            if current_price > level_price + buffer:
+                return True
+        else:  # short
+            # For short, price must have moved DOWN beyond buffer before coming back up
+            if current_price < level_price - buffer:
+                return True
+
+        return False
+
     def _calculate_atr(self, klines: List[Kline], period: int) -> Optional[Decimal]:
         """Calculate Average True Range."""
         if len(klines) < period + 1:
@@ -302,6 +356,8 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         - Bullish trend: Buy dips at grid levels (LONG only)
         - Bearish trend: Sell rallies at grid levels (SHORT only)
         - RSI filter to avoid entries in extreme conditions
+        - Hysteresis buffer to prevent oscillation (if enabled)
+        - Signal cooldown to prevent signal stacking (if enabled)
         """
         # Update Supertrend
         st_data = self._supertrend.update(kline)
@@ -317,12 +373,20 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         else:
             self._trend_bars = 1  # Reset on trend change
 
+        # Decrement signal cooldown (like live bot)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         # Calculate RSI for filtering
         current_price = kline.close
         self._current_rsi = self._calculate_rsi(current_price)
 
         # Skip if already in position
         if context.has_position:
+            return None
+
+        # Check signal cooldown (like live bot)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             return None
 
         klines = context.klines
@@ -359,7 +423,19 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                 if not self._check_rsi_filter("LONG"):
                     return None
 
+                # Check hysteresis before entry (like live bot)
+                if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx
+                self._last_triggered_side = "long"
+
+                # Set signal cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 # Take profit at next grid level up
                 tp_level = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
@@ -382,7 +458,19 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                 if not self._check_rsi_filter("SHORT"):
                     return None
 
+                # Check hysteresis before entry (like live bot)
+                if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx + 1
+                self._last_triggered_side = "short"
+
+                # Set signal cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 # Take profit at next grid level down
                 tp_level = max(level_idx + 1 - self._config.take_profit_grids, 0)
@@ -471,3 +559,8 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         self._trend_bars = 0
         self._closes = []
         self._current_rsi = None
+        # Reset hysteresis state
+        self._last_triggered_level = None
+        self._last_triggered_side = None
+        # Reset cooldown state
+        self._signal_cooldown = 0

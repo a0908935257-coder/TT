@@ -158,6 +158,13 @@ bots:
       take_profit_grids: 1
       max_positions: 5
 
+      # Protective Features (disabled based on backtest results)
+      # 回測顯示這些保護機制對 RSI Grid 策略有負面影響
+      use_hysteresis: false              # 遲滯緩衝區 (已禁用)
+      hysteresis_pct: 0.002              # 0.2% (如需啟用)
+      use_signal_cooldown: false         # 訊號冷卻 (已禁用)
+      cooldown_bars: 2                   # 2 bars (如需啟用)
+
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略)
   # ===========================================================================
