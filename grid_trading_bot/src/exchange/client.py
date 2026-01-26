@@ -317,8 +317,8 @@ class ExchangeClient:
         if self._futures_user_data_listen_key:
             try:
                 await self._futures.delete_listen_key(self._futures_user_data_listen_key)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to delete futures listen key during close: {e}")
             self._futures_user_data_listen_key = None
 
         # Close WebSockets

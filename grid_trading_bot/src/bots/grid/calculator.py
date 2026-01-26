@@ -210,14 +210,30 @@ class SmartGridCalculator:
         )
 
     def _create_placeholder_atr(self) -> ATRData:
-        """Create placeholder ATR data for manual range mode."""
+        """
+        Create placeholder ATR data for manual range mode.
+
+        Note: The estimated ATR value is derived from the manual price range,
+        NOT from actual market volatility. This is intentional - in manual mode,
+        the user has explicitly set the trading range, so we back-calculate
+        an ATR value for consistency with the data model.
+
+        If actual ATR-based risk assessment is needed, use auto range mode instead.
+        """
         current_price = self._get_current_price()
         upper = self._config.manual_upper_price
         lower = self._config.manual_lower_price
         atr_config = self._config.atr_config
 
-        # Estimate ATR from range (assuming 2x multiplier)
+        # Back-calculate ATR from manual range for data model consistency
+        # Formula: range = ATR * multiplier * 2, so ATR = range / (multiplier * 2)
         estimated_atr = (upper - lower) / (atr_config.multiplier * Decimal("2"))
+
+        logger.warning(
+            f"Manual range mode: ATR value ({estimated_atr:.2f}) is estimated from "
+            f"price range, not actual market volatility. Risk calculations may not "
+            f"reflect true market conditions."
+        )
 
         return ATRData(
             value=estimated_atr,

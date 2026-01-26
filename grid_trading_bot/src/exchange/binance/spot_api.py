@@ -271,10 +271,15 @@ class BinanceSpotAPI:
         # Try to parse JSON
         try:
             data = await response.json()
-        except Exception:
+        except Exception as e:
             text = await response.text()
             if status >= 400:
                 raise ExchangeError(f"HTTP {status}: {text}")
+            # Log warning for successful response with unparseable JSON
+            logger.warning(
+                f"JSON parse failed for successful response (status={status}): {e}. "
+                f"Response text: {text[:200] if text else '(empty)'}"
+            )
             return {}
 
         # Check for Binance error

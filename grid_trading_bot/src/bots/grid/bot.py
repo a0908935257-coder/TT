@@ -636,7 +636,8 @@ class GridBot(BaseBot):
                     logger.error(f"Failed to restore orders after rollback: {restore_error}")
 
             await self._notify_error(f"Grid rebuild failed: {e}")
-            raise
+            # Re-raise with context to distinguish from initialization errors
+            raise RuntimeError(f"Grid rebuild failed at price {new_center_price}") from e
 
     # =========================================================================
     # Query Methods
