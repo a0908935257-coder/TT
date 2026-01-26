@@ -367,6 +367,8 @@ class QueuedRequest:
         default_factory=lambda: datetime.now(timezone.utc)
     )
     future: asyncio.Future = field(default_factory=asyncio.Future)
+    retry_count: int = 0
+    max_retries: int = 10  # Prevent infinite retry loops
 
 
 class RequestQueue:
@@ -839,12 +841,24 @@ class RateLimiter:
 
                 # Wait for rate limit
                 if not await self.acquire(weight=request.weight):
-                    # Re-queue with same priority
-                    await self._queue.enqueue(
-                        request.callback,
-                        request.priority,
-                        request.weight,
-                    )
+                    # Check retry limit to prevent infinite loops
+                    request.retry_count += 1
+                    if request.retry_count >= request.max_retries:
+                        logger.error(
+                            f"Request {request.id} exceeded max retries ({request.max_retries}), "
+                            f"failing with rate limit error"
+                        )
+                        request.future.set_exception(
+                            Exception(f"Rate limit exceeded after {request.max_retries} retries")
+                        )
+                        continue
+
+                    # Re-queue with same priority (keeping retry count)
+                    await self._queue._queue.put((
+                        -request.priority.value,
+                        request.created_at.timestamp(),
+                        request,
+                    ))
                     await asyncio.sleep(0.1)
                     continue
 

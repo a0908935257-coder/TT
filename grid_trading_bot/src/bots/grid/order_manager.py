@@ -725,6 +725,17 @@ class GridOrderManager:
                     )
                     self._orders[order_id] = order
 
+                    # Validate level index before accessing
+                    if level_index < 0 or level_index >= len(self._setup.levels):
+                        logger.error(
+                            f"Invalid level_index {level_index} for order {order_id}, "
+                            f"max={len(self._setup.levels) - 1}"
+                        )
+                        # Clean up invalid mapping
+                        self._level_order_map.pop(level_index, None)
+                        self._order_level_map.pop(order_id, None)
+                        continue
+
                     # Update level state based on order status
                     level = self._setup.levels[level_index]
                     if order.status == OrderStatus.FILLED:
@@ -753,14 +764,13 @@ class GridOrderManager:
                         f"Failed to get order status for {order_id}: {e}. "
                         "Order state may be inconsistent - manual check recommended."
                     )
-                    # Mark level as needing attention but don't corrupt state
-                    if level_index is not None and level_index < len(self._setup.levels):
-                        level = self._setup.levels[level_index]
-                        level.state = LevelState.EMPTY
-                        level.order_id = None
-                        # Clean up mappings to allow retry
-                        self._level_order_map.pop(level_index, None)
-                        self._order_level_map.pop(order_id, None)
+                    # Don't change level state on error - order may still be active on exchange
+                    # Only log warning and keep mappings for manual investigation
+                    # Setting to EMPTY could cause duplicate orders if the original is still active
+                    logger.warning(
+                        f"Keeping level {level_index} in current state due to sync error. "
+                        f"Order {order_id} may need manual verification."
+                    )
 
         # Warn about external orders
         if external_orders:
@@ -1426,11 +1436,14 @@ class GridOrderManager:
             try:
                 if await self.cancel_order_at_level(level_index):
                     cancelled_count += 1
-                    # Clean up timestamp
-                    self._order_created_times.pop(order_id, None)
                     logger.info(f"Cancelled stale order {order_id} at level {level_index}")
             except Exception as e:
                 logger.error(f"Failed to cancel stale order {order_id}: {e}")
+            finally:
+                # Always clean up timestamp to prevent infinite retry loops
+                # Even if cancel fails, the order entry should be removed to avoid
+                # repeated cancel attempts. The order state will be corrected on next sync.
+                self._order_created_times.pop(order_id, None)
 
         if cancelled_count > 0:
             logger.info(f"Cancelled {cancelled_count} stale orders")

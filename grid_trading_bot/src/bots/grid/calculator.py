@@ -171,7 +171,7 @@ class SmartGridCalculator:
         )
 
         logger.info(
-            f"Grid calculated: {grid_count} levels, "
+            f"Grid calculated: {len(levels)} levels ({grid_count} grids), "
             f"range {lower_price:.2f}-{upper_price:.2f}, "
             f"spacing {grid_spacing_percent:.2f}%"
         )

@@ -1383,7 +1383,9 @@ class GridRiskManager:
         now = datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        if today_start > self._daily_start_time:
+        # Use date comparison to handle midnight boundary correctly
+        # This ensures reset happens even if initialized exactly at midnight
+        if today_start.date() > self._daily_start_time.date():
             await self.reset_daily_stats()
 
     # =========================================================================

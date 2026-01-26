@@ -647,12 +647,19 @@ class BinanceWebSocket:
             # Store message ID
             self._recent_msg_ids[msg_id] = current_time
 
-            # Cleanup old message IDs (every 100 messages)
-            if len(self._recent_msg_ids) > 100:
+            # Cleanup old message IDs periodically
+            # Trigger on: 1) every 100 messages, OR 2) every 60 seconds
+            should_cleanup = (
+                len(self._recent_msg_ids) > 100 or
+                (hasattr(self, '_last_dedup_cleanup') and
+                 current_time - self._last_dedup_cleanup > 60)
+            )
+            if should_cleanup or not hasattr(self, '_last_dedup_cleanup'):
                 cutoff = current_time - self._dedup_window
                 self._recent_msg_ids = {
                     k: v for k, v in self._recent_msg_ids.items() if v > cutoff
                 }
+                self._last_dedup_cleanup = current_time
 
         # Call global message handler if set
         if self._on_message:
