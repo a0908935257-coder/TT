@@ -645,7 +645,9 @@ class ExchangeClient:
                 # Enforce minimum interval between orders
                 elapsed = (datetime.now(timezone.utc) - last_order_time).total_seconds() * 1000
                 if elapsed < self._min_order_interval_ms:
-                    await asyncio.sleep((self._min_order_interval_ms - elapsed) / 1000)
+                    # Use max(0, ...) to handle potential clock drift from NTP sync
+                    sleep_time = max(0, self._min_order_interval_ms - elapsed) / 1000
+                    await asyncio.sleep(sleep_time)
 
                 # Process the request with the order lock
                 async with self._order_lock:

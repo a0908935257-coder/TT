@@ -75,8 +75,11 @@ class ExchangeHealth:
                 alpha * latency_ms + (1 - alpha) * self.average_latency_ms
             )
 
-        # Update error rate
-        self.error_rate = self.failed_requests / self.total_requests
+        # Update error rate (with division by zero protection)
+        if self.total_requests > 0:
+            self.error_rate = self.failed_requests / self.total_requests
+        else:
+            self.error_rate = 0.0
 
     def record_failure(self) -> None:
         """Record a failed request."""
@@ -84,7 +87,12 @@ class ExchangeHealth:
         self.consecutive_failures += 1
         self.total_requests += 1
         self.failed_requests += 1
-        self.error_rate = self.failed_requests / self.total_requests
+
+        # Update error rate (with division by zero protection)
+        if self.total_requests > 0:
+            self.error_rate = self.failed_requests / self.total_requests
+        else:
+            self.error_rate = 0.0
 
         # Mark as unhealthy after 3 consecutive failures
         if self.consecutive_failures >= 3:

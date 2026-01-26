@@ -637,8 +637,10 @@ class OrderSimulator:
             price: Entry price
 
         Returns:
-            Position quantity
+            Position quantity (0 if price is invalid)
         """
+        if price <= 0:
+            return Decimal("0")
         notional = self._config.notional_per_trade
         return notional / price
 

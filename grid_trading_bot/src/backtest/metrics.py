@@ -236,13 +236,16 @@ class MetricsCalculator:
         mean_return = sum(returns_pct) / Decimal(len(returns_pct))
 
         # Downside deviation (only negative returns)
+        # Standard Sortino uses total observation count for downside deviation
         negative_returns = [r for r in returns_pct if r < 0]
 
         if not negative_returns:
             return Decimal("999") if mean_return > 0 else Decimal("0")
 
+        # Use total observation count for proper Sortino calculation
+        # This prevents overestimation of downside risk when few negative days exist
         downside_variance = sum(r**2 for r in negative_returns) / Decimal(
-            len(negative_returns)
+            len(returns_pct)
         )
 
         if downside_variance <= 0:

@@ -253,8 +253,10 @@ class TechnicalIndicators:
         closes = [k.close for k in klines[-period:]]
         middle = sum(closes) / Decimal(period)
 
-        # Calculate standard deviation
+        # Calculate standard deviation with precision protection
         variance = sum((c - middle) ** 2 for c in closes) / Decimal(period)
+        # Ensure variance is non-negative (handle floating-point precision issues)
+        variance = max(variance, Decimal("0"))
         std_dev = variance.sqrt()
 
         upper = middle + (Decimal(std) * std_dev)
@@ -289,6 +291,8 @@ class TechnicalIndicators:
                 middle = sum(closes) / Decimal(period)
 
                 variance = sum((c - middle) ** 2 for c in closes) / Decimal(period)
+                # Ensure variance is non-negative (handle floating-point precision issues)
+                variance = max(variance, Decimal("0"))
                 std_dev = variance.sqrt()
 
                 upper = middle + (Decimal(std) * std_dev)
