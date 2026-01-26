@@ -1047,7 +1047,7 @@ class BaseBot(ABC):
             else:
                 levels = orderbook.bids  # Selling consumes bids
 
-            if not levels or len(levels) == 0:
+            if not levels:
                 logger.warning(f"[{self._bot_id}] Empty {side} orderbook for {symbol}")
                 return False, None
 

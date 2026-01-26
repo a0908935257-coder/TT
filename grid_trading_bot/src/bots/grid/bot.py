@@ -303,7 +303,7 @@ class GridBot(BaseBot):
             clear_position: If True, market sell all positions
         """
         # Stop persistence task
-        self._stop_save_task()
+        await self._stop_save_task()
 
         # Stop risk monitoring
         if self._risk_manager:
@@ -738,10 +738,14 @@ class GridBot(BaseBot):
 
         self._save_task = asyncio.create_task(save_loop())
 
-    def _stop_save_task(self) -> None:
-        """Stop periodic save task."""
+    async def _stop_save_task(self) -> None:
+        """Stop periodic save task and wait for cleanup."""
         if self._save_task:
             self._save_task.cancel()
+            try:
+                await self._save_task
+            except asyncio.CancelledError:
+                pass
             self._save_task = None
 
     @classmethod

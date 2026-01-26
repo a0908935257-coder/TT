@@ -254,7 +254,7 @@ class BollingerBot(BaseBot):
         self._stop_position_reconciliation()
 
         # Stop periodic save task and save final state
-        self._stop_save_task()
+        await self._stop_save_task()
         await self._save_state()
 
         logger.info("Bollinger BB_TREND_GRID Bot stopped")
@@ -1410,10 +1410,14 @@ class BollingerBot(BaseBot):
 
         self._save_task = asyncio.create_task(save_loop())
 
-    def _stop_save_task(self) -> None:
-        """Stop periodic save task."""
+    async def _stop_save_task(self) -> None:
+        """Stop periodic save task and wait for cleanup."""
         if self._save_task:
             self._save_task.cancel()
+            try:
+                await self._save_task
+            except asyncio.CancelledError:
+                pass
             self._save_task = None
 
     @classmethod
