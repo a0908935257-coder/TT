@@ -154,6 +154,9 @@ class BaseBot(ABC):
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._error_message: Optional[str] = None
 
+        # Track fire-and-forget notification tasks to prevent resource leaks
+        self._notification_tasks: set[asyncio.Task] = set()
+
     # =========================================================================
     # Read-only Properties
     # =========================================================================
@@ -211,6 +214,52 @@ class BaseBot(ABC):
         Examples: "BTCUSDT", "ETHUSDT"
         """
         pass
+
+    # =========================================================================
+    # Notification Task Management
+    # =========================================================================
+
+    def _create_notification_task(self, coro) -> asyncio.Task:
+        """
+        Create a tracked notification task.
+
+        Fire-and-forget tasks are tracked to:
+        1. Prevent garbage collection before completion
+        2. Log exceptions that would otherwise be silent
+        3. Allow cleanup during bot stop
+
+        Args:
+            coro: Coroutine to execute
+
+        Returns:
+            The created task
+        """
+        task = asyncio.create_task(coro)
+        self._notification_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._notification_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.warning(f"[{self._bot_id}] Notification task failed: {exc}")
+
+        task.add_done_callback(_on_done)
+        return task
+
+    async def _cleanup_notification_tasks(self) -> None:
+        """Cancel and cleanup all pending notification tasks."""
+        if not self._notification_tasks:
+            return
+
+        for task in list(self._notification_tasks):
+            if not task.done():
+                task.cancel()
+
+        if self._notification_tasks:
+            await asyncio.gather(*self._notification_tasks, return_exceptions=True)
+        self._notification_tasks.clear()
 
     # =========================================================================
     # Kline Validation (Prevents Backtest vs Live Data Inconsistency)
@@ -5578,6 +5627,9 @@ class BaseBot(ABC):
 
             # Stop position reconciliation
             self._stop_position_reconciliation()
+
+            # Cleanup any pending notification tasks
+            await self._cleanup_notification_tasks()
 
             # Call subclass implementation (may have cleanup operations)
             await self._do_stop(clear_position)
@@ -11219,9 +11271,9 @@ class BaseBot(ABC):
                     "downtime_seconds": downtime,
                 })
 
-                # Notify
+                # Notify (tracked to prevent resource leak)
                 if self._notifier:
-                    asyncio.create_task(
+                    self._create_notification_task(
                         self._notifier.notify_connection_restored(
                             service_name=f"{self.bot_type}:{self._bot_id}",
                             downtime=downtime,
@@ -11260,9 +11312,9 @@ class BaseBot(ABC):
                         "disconnect_count": state["disconnect_count"],
                     })
 
-                    # Notify
+                    # Notify (tracked to prevent resource leak)
                     if self._notifier:
-                        asyncio.create_task(
+                        self._create_notification_task(
                             self._notifier.notify_connection_lost(
                                 service_name=f"{self.bot_type}:{self._bot_id}",
                                 error=error,
@@ -12315,7 +12367,7 @@ class BaseBot(ABC):
                 f"({state['consecutive_ssl_errors']} errors)"
             )
             if self._notifier:
-                asyncio.create_task(
+                self._create_notification_task(
                     self._notifier.send_error(
                         title=f"{self.bot_type}: SSL Error Alert",
                         message=(

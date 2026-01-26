@@ -257,6 +257,9 @@ class GridRiskManager:
         self._monitoring_task: Optional[asyncio.Task] = None
         self._running: bool = False
 
+        # Background tasks tracking (fire-and-forget tasks that need cleanup)
+        self._pending_tasks: set[asyncio.Task] = set()
+
         # State change callbacks
         self._state_change_callbacks: list[Callable[[BotState, BotState, str], Any]] = []
 
@@ -1240,6 +1243,16 @@ class GridRiskManager:
                 pass
             self._monitoring_task = None
 
+        # Cancel and cleanup any pending background tasks
+        if self._pending_tasks:
+            for task in list(self._pending_tasks):
+                if not task.done():
+                    task.cancel()
+            # Wait for all tasks to complete
+            if self._pending_tasks:
+                await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+            self._pending_tasks.clear()
+
         logger.info("Monitoring stopped")
 
     async def _monitoring_loop(self) -> None:
@@ -1498,10 +1511,14 @@ class GridRiskManager:
         if self.check_consecutive_losses():
             # Create and track the pause task to ensure it completes
             pause_task = asyncio.create_task(self.pause("Consecutive loss limit exceeded"))
-            pause_task.add_done_callback(
-                lambda t: logger.error(f"Pause task failed: {t.exception()}")
-                if t.exception() else None
-            )
+            self._pending_tasks.add(pause_task)
+
+            def _on_pause_done(task: asyncio.Task) -> None:
+                self._pending_tasks.discard(task)
+                if task.exception():
+                    logger.error(f"Pause task failed: {task.exception()}")
+
+            pause_task.add_done_callback(_on_pause_done)
 
     async def reset_daily_stats(self) -> None:
         """Reset daily statistics (called at 00:00 UTC)."""
@@ -1615,16 +1632,18 @@ class GridRiskManager:
             logger.warning(f"Cannot pause from state: {self._bot_state.value}")
             return False
 
-        # Cancel all orders
-        cancelled = await self._order_manager.cancel_all_orders()
-
-        # Update states - BotState first to ensure sync
+        # Update states FIRST before canceling orders (atomic state transition)
+        # This ensures we don't cancel orders and then fail to change state
         if not await self.change_state(BotState.PAUSED, reason):
             logger.error("Failed to change BotState to PAUSED")
             return False
 
-        # Only update RiskState after BotState change succeeds
+        # Update RiskState after BotState change succeeds
         self._state = RiskState.PAUSED
+
+        # Cancel all orders AFTER state change succeeds
+        # If cancel fails, we're already in PAUSED state which is correct
+        cancelled = await self._order_manager.cancel_all_orders()
 
         logger.info(f"Bot paused: {reason}. Cancelled {cancelled} orders.")
 
