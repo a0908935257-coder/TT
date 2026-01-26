@@ -457,7 +457,12 @@ class BollingerBot(BaseBot):
 
         upper_price = current_price + range_size
         lower_price = current_price - range_size
-        grid_spacing = (upper_price - lower_price) / Decimal(self._config.grid_count)
+
+        # Guard against division by zero
+        if self._config.grid_count <= 0:
+            grid_spacing = range_size
+        else:
+            grid_spacing = (upper_price - lower_price) / Decimal(self._config.grid_count)
 
         # Create grid levels
         levels = []
@@ -1532,7 +1537,11 @@ class BollingerBot(BaseBot):
                 upper = Decimal(grid_data["upper_price"])
                 lower = Decimal(grid_data["lower_price"])
                 grid_count = config.grid_count
-                grid_spacing = (upper - lower) / Decimal(grid_count)
+                # Guard against division by zero
+                if grid_count <= 0:
+                    grid_spacing = upper - lower
+                else:
+                    grid_spacing = (upper - lower) / Decimal(grid_count)
 
                 levels = []
                 level_states = grid_data.get("level_states", [])

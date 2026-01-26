@@ -156,7 +156,12 @@ class BollingerBacktestStrategy(BacktestStrategy):
 
         self._upper_price = current_price + range_size
         self._lower_price = current_price - range_size
-        self._grid_spacing = (self._upper_price - self._lower_price) / Decimal(self._config.grid_count)
+
+        # Guard against division by zero
+        if self._config.grid_count <= 0:
+            self._grid_spacing = range_size  # Fallback to single grid
+        else:
+            self._grid_spacing = (self._upper_price - self._lower_price) / Decimal(self._config.grid_count)
 
         # Create grid levels
         self._grid_levels = []

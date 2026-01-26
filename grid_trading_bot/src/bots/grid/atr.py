@@ -361,11 +361,13 @@ class ATRCalculator:
         max_grids_by_investment = int(investment / min_order_value)
         suggested_grid_count = min(max(max_grids_by_investment, min_grid_count), max_grid_count)
 
-        # Calculate grid spacing
-        grid_spacing_percent = (price_range / lower_price / Decimal(suggested_grid_count)) * Decimal("100")
-
-        # Amount per grid
-        amount_per_grid = investment / Decimal(suggested_grid_count)
+        # Calculate grid spacing (with division by zero protection)
+        if suggested_grid_count <= 0:
+            grid_spacing_percent = Decimal("0")
+            amount_per_grid = investment
+        else:
+            grid_spacing_percent = (price_range / lower_price / Decimal(suggested_grid_count)) * Decimal("100")
+            amount_per_grid = investment / Decimal(suggested_grid_count)
 
         # Expected profit per trade (approximately grid_spacing minus fees)
         # Assuming 0.1% fee per trade (maker/taker)
@@ -448,13 +450,16 @@ class ATRCalculator:
             max_grids_by_investment = int(config.total_investment / config.min_order_value)
             grid_count = min(max(max_grids_by_investment, config.min_grid_count), config.max_grid_count)
 
-        # Calculate grid spacing
+        # Calculate grid spacing (with division by zero protection)
         price_range = upper_price - lower_price
-        grid_spacing = price_range / Decimal(grid_count)
-        grid_spacing_percent = (grid_spacing / lower_price) * Decimal("100")
-
-        # Amount per grid
-        amount_per_grid = config.total_investment / Decimal(grid_count)
+        if grid_count <= 0:
+            grid_spacing = price_range
+            grid_spacing_percent = Decimal("0")
+            amount_per_grid = config.total_investment
+        else:
+            grid_spacing = price_range / Decimal(grid_count)
+            grid_spacing_percent = (grid_spacing / lower_price) * Decimal("100")
+            amount_per_grid = config.total_investment / Decimal(grid_count)
 
         # Create grid levels
         levels = cls._create_levels(
@@ -514,7 +519,10 @@ class ATRCalculator:
         # Handle both enum and string types
         grid_type_str = grid_type.value if isinstance(grid_type, GridType) else grid_type
 
-        if grid_type_str == "geometric":
+        # Guard against division by zero
+        if grid_count <= 0:
+            prices = [lower_price, upper_price]
+        elif grid_type_str == "geometric":
             # Geometric: equal percentage spacing
             ratio = (upper_price / lower_price) ** (Decimal("1") / Decimal(grid_count))
             prices = [lower_price * (ratio ** Decimal(i)) for i in range(grid_count + 1)]

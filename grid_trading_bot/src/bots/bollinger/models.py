@@ -222,6 +222,8 @@ class GridSetup:
     @property
     def grid_spacing(self) -> Decimal:
         """Grid spacing between levels."""
+        if self.grid_count <= 0:
+            return self.upper_price - self.lower_price
         return (self.upper_price - self.lower_price) / Decimal(self.grid_count)
 
 
