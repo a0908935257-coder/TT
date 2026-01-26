@@ -272,11 +272,8 @@ class MasterIPCHandler:
             logger.debug(f"Received heartbeat from {heartbeat.bot_id}: state={heartbeat.state}")
 
             # Update registry with heartbeat data
-            self._registry.update_heartbeat(
-                heartbeat.bot_id,
-                heartbeat.state,
-                heartbeat.metrics,
-            )
+            # Note: update_heartbeat only takes bot_id - state/metrics are handled by heartbeat monitor
+            await self._registry.update_heartbeat(heartbeat.bot_id)
 
             # Notify heartbeat monitor
             # Convert IPC Heartbeat to master heartbeat format
@@ -317,12 +314,13 @@ class MasterIPCHandler:
             from src.master.models import BotState
 
             if event.type == EventType.STARTED:
-                self._registry.update_state(event.bot_id, BotState.RUNNING)
+                await self._registry.update_state(event.bot_id, BotState.RUNNING)
             elif event.type == EventType.STOPPED:
-                self._registry.update_state(event.bot_id, BotState.STOPPED)
+                await self._registry.update_state(event.bot_id, BotState.STOPPED)
             elif event.type == EventType.ERROR:
-                self._registry.update_state(event.bot_id, BotState.ERROR)
-                self._registry.set_error(event.bot_id, event.data.get("error", "Unknown error"))
+                # Pass error message in the message parameter of update_state
+                error_msg = event.data.get("error", "Unknown error") if event.data else "Unknown error"
+                await self._registry.update_state(event.bot_id, BotState.ERROR, message=error_msg)
 
             # Invoke callback if provided
             if self._event_callback:

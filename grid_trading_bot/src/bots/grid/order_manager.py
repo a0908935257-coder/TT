@@ -518,9 +518,9 @@ class GridOrderManager:
                 self._market_type,
             )
 
-            # Update mappings
-            del self._level_order_map[level_index]
-            del self._order_level_map[order_id]
+            # Update mappings (use pop to avoid KeyError in concurrent scenarios)
+            self._level_order_map.pop(level_index, None)
+            self._order_level_map.pop(order_id, None)
             self._orders[order_id] = cancelled_order
 
             # Update level state
@@ -949,11 +949,9 @@ class GridOrderManager:
         level.filled_quantity = fill_qty
         level.filled_price = fill_price
 
-        # Remove from active mappings
-        if level_index in self._level_order_map:
-            del self._level_order_map[level_index]
-        if order.order_id in self._order_level_map:
-            del self._order_level_map[order.order_id]
+        # Remove from active mappings (use pop to avoid KeyError in concurrent scenarios)
+        self._level_order_map.pop(level_index, None)
+        self._order_level_map.pop(order.order_id, None)
 
         # Update order cache
         self._orders[order.order_id] = order
@@ -1208,11 +1206,9 @@ class GridOrderManager:
             level.state = LevelState.EMPTY
             level.order_id = None
 
-        # Remove from mappings
-        if level_index in self._level_order_map:
-            del self._level_order_map[level_index]
-        if order.order_id in self._order_level_map:
-            del self._order_level_map[order.order_id]
+        # Remove from mappings (use pop to avoid KeyError in concurrent scenarios)
+        self._level_order_map.pop(level_index, None)
+        self._order_level_map.pop(order.order_id, None)
 
         # Update in database
         await self._data_manager.update_order(order, bot_id=self._bot_id)

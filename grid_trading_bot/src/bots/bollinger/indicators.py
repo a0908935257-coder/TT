@@ -230,23 +230,21 @@ class BollingerCalculator:
             # Not enough history, don't flag as squeeze
             percentile = 50
         else:
-            sorted_bbw = sorted(self._bbw_history)
-            # Find rank of current BBW
-            rank = 0
-            for val in sorted_bbw:
-                if val < bbw:
-                    rank += 1
-                else:
-                    break
-            percentile = int((rank / len(sorted_bbw)) * 100)
+            # Count how many values are strictly less than current BBW
+            # This correctly handles duplicate values
+            rank = sum(1 for val in self._bbw_history if val < bbw)
+            percentile = int((rank / len(self._bbw_history)) * 100)
 
         # Determine squeeze state
         is_squeeze = percentile < self._bbw_threshold_pct
 
         # Calculate threshold value for display
         if len(self._bbw_history) >= 50:
+            sorted_bbw = sorted(self._bbw_history)
             threshold_idx = int(len(self._bbw_history) * self._bbw_threshold_pct / 100)
-            threshold = sorted(self._bbw_history)[threshold_idx]
+            # Clamp to valid index range to prevent IndexError
+            threshold_idx = min(threshold_idx, len(sorted_bbw) - 1)
+            threshold = sorted_bbw[threshold_idx]
         else:
             threshold = Decimal("0")
 

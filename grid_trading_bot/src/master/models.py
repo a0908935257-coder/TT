@@ -46,6 +46,7 @@ class BotState(str, Enum):
     STOPPING = "stopping"            # Bot is stopping
     STOPPED = "stopped"              # Bot is stopped
     ERROR = "error"                  # Bot encountered error
+    UNKNOWN = "unknown"              # Unknown/unrecognized state (fallback)
 
 
 class MarketType(str, Enum):
@@ -64,6 +65,7 @@ VALID_STATE_TRANSITIONS: dict[BotState, list[BotState]] = {
     BotState.STOPPING: [BotState.STOPPED],
     BotState.STOPPED: [BotState.INITIALIZING],
     BotState.ERROR: [BotState.STOPPED],
+    BotState.UNKNOWN: [BotState.STOPPED, BotState.ERROR],  # UNKNOWN can transition to recovery states
 }
 
 

@@ -375,11 +375,20 @@ class NotificationManager:
             if now - v < self._dedup_window
         }
 
-        if content_hash in self._dedup_cache:
-            return True
+        # Only check, don't mark - marking happens after successful send
+        return content_hash in self._dedup_cache
 
-        self._dedup_cache[content_hash] = now
-        return False
+    def _mark_as_sent(self, content_hash: str) -> None:
+        """
+        Mark content as sent for deduplication.
+
+        Should only be called after successful send to avoid
+        marking failed notifications as sent.
+
+        Args:
+            content_hash: Hash of the content
+        """
+        self._dedup_cache[content_hash] = time.time()
 
     def _hash_content(self, *args: Any) -> str:
         """
@@ -440,6 +449,9 @@ class NotificationManager:
                 if result:
                     self._stats["total_sent"] += 1
                     self._stats["by_level"][level.value] += 1
+                    # Only mark as sent AFTER successful send
+                    if dedup_key:
+                        self._mark_as_sent(dedup_key)
                 return result
             return False
         except Exception as e:
