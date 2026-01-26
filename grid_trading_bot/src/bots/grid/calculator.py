@@ -155,6 +155,9 @@ class SmartGridCalculator:
         expected_profit = self._calculate_expected_profit(grid_spacing_percent)
 
         # Calculate amount per grid (average)
+        # Guard against division by zero (should not happen if calculation succeeded)
+        if grid_count <= 0:
+            raise GridCalculationError("Grid count must be positive")
         amount_per_grid = self._config.total_investment / Decimal(grid_count)
 
         setup = GridSetup(
@@ -227,7 +230,9 @@ class SmartGridCalculator:
 
         # Back-calculate ATR from manual range for data model consistency
         # Formula: range = ATR * multiplier * 2, so ATR = range / (multiplier * 2)
-        estimated_atr = (upper - lower) / (atr_config.multiplier * Decimal("2"))
+        # Guard against division by zero if multiplier is misconfigured
+        multiplier_value = atr_config.multiplier if atr_config.multiplier > 0 else Decimal("1")
+        estimated_atr = (upper - lower) / (multiplier_value * Decimal("2"))
 
         logger.warning(
             f"Manual range mode: ATR value ({estimated_atr:.2f}) is estimated from "
@@ -402,7 +407,14 @@ class SmartGridCalculator:
 
         Returns:
             Spacing percentage
+
+        Raises:
+            GridCalculationError: If grid_count <= 0
         """
+        # Guard against division by zero
+        if grid_count <= 0:
+            raise GridCalculationError("Grid count must be positive for spacing calculation")
+
         if self._config.grid_type == GridType.GEOMETRIC:
             # Geometric: ratio = (upper/lower)^(1/n) - 1
             ratio = (upper / lower) ** (Decimal("1") / Decimal(grid_count))
@@ -503,7 +515,14 @@ class SmartGridCalculator:
 
         Returns:
             List of prices from lower to upper
+
+        Raises:
+            GridCalculationError: If grid_count <= 0
         """
+        # Guard against division by zero
+        if grid_count <= 0:
+            raise GridCalculationError("Grid count must be positive for price generation")
+
         prices = []
 
         if self._config.grid_type == GridType.GEOMETRIC:

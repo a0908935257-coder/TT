@@ -286,7 +286,13 @@ class ExecutionPlan:
 
     @property
     def is_complete(self) -> bool:
-        """Check if all child orders are complete."""
+        """Check if all child orders are complete.
+
+        Returns False if there are no child orders (empty plan is not complete).
+        """
+        # Empty plan is not complete
+        if not self.child_orders:
+            return False
         return all(c.is_complete for c in self.child_orders)
 
     @property

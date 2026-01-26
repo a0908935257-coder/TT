@@ -885,6 +885,10 @@ class OrderRouter:
                     elif status == "PARTIALLY_FILLED":
                         child.status = OrderStatus.PARTIALLY_FILLED
                         child.filled_quantity = Decimal(str(order_info.get("executedQty", 0)))
+                        # Also update average price for partial fills
+                        avg_price = order_info.get("avgPrice", order_info.get("price"))
+                        if avg_price:
+                            child.average_price = Decimal(str(avg_price))
 
                     elif status == "CANCELED":
                         child.status = OrderStatus.CANCELLED

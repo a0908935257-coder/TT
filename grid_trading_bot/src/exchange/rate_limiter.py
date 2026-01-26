@@ -451,6 +451,20 @@ class RequestQueue:
                     return self._queues[priority].popleft()
             return None
 
+    async def requeue(self, request: QueuedRequest) -> None:
+        """
+        Re-queue a request at the front of its priority queue.
+
+        Used for retrying rate-limited requests.
+
+        Args:
+            request: Request to re-queue
+        """
+        async with self._lock:
+            # Insert at front since it's a retry
+            self._queues[request.priority].appendleft(request)
+            logger.debug(f"Re-queued request {request.id} for retry #{request.retry_count}")
+
     def get_stats(self) -> Dict[str, int]:
         """Get queue statistics."""
         return {
@@ -776,7 +790,7 @@ class RateLimiter:
             max_weight=max_weight,
             current_order_count=current_orders,
             max_order_count=max_orders,
-            weight_usage_pct=Decimal(str(current_weight / max_weight * 100)),
+            weight_usage_pct=Decimal(str(current_weight / max_weight * 100)) if max_weight > 0 else Decimal("0"),
             order_usage_pct=Decimal(str(current_orders / max_orders * 100)) if max_orders > 0 else Decimal("0"),
             is_limited=self._is_limited,
             retry_after_seconds=self._retry_after,
@@ -854,11 +868,7 @@ class RateLimiter:
                         continue
 
                     # Re-queue with same priority (keeping retry count)
-                    await self._queue._queue.put((
-                        -request.priority.value,
-                        request.created_at.timestamp(),
-                        request,
-                    ))
+                    await self._queue.requeue(request)
                     await asyncio.sleep(0.1)
                     continue
 

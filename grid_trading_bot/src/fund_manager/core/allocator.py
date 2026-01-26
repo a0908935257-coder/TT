@@ -175,6 +175,10 @@ class FixedRatioAllocator(BaseAllocator):
 
         # Calculate allocation for each group
         for pattern, group_bots in bot_groups.items():
+            # Guard against empty groups (defensive - shouldn't happen)
+            if not group_bots:
+                continue
+
             alloc_config = next(
                 (a for a in bot_allocations if a.bot_pattern == pattern and a.enabled),
                 None,
@@ -186,7 +190,7 @@ class FixedRatioAllocator(BaseAllocator):
             pattern_total = available_funds * alloc_config.ratio
 
             # Distribute equally among bots in the group
-            per_bot = pattern_total / len(group_bots)
+            per_bot = pattern_total / Decimal(len(group_bots))
 
             for bot_id in group_bots:
                 # Apply limits
@@ -325,15 +329,22 @@ class DynamicWeightAllocator(BaseAllocator):
             if alloc_config:
                 # Use performance weight if available, otherwise use ratio
                 weight = self._weights.get(bot_id, alloc_config.ratio)
+                # Ensure weight is non-negative (negative weights would cause incorrect allocation)
+                if weight < 0:
+                    logger.warning(f"Negative weight for bot {bot_id}: {weight}, using 0")
+                    weight = Decimal("0")
                 applicable_bots.append((bot_id, alloc_config, weight))
 
         if not applicable_bots:
             return allocations
 
-        # Calculate total weight
+        # Calculate total weight (all weights are now >= 0)
         total_weight = sum(w for _, _, w in applicable_bots)
         if total_weight <= 0:
-            return allocations
+            # All weights are zero, use equal allocation
+            logger.warning("All weights are zero, falling back to equal allocation")
+            total_weight = Decimal(len(applicable_bots))
+            applicable_bots = [(bid, cfg, Decimal("1")) for bid, cfg, _ in applicable_bots]
 
         # Allocate based on normalized weights
         for bot_id, alloc_config, weight in applicable_bots:
