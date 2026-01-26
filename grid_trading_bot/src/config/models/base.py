@@ -98,6 +98,12 @@ class BaseConfig(BaseModel):
         "secret",
         "token",
         "webhook_url",
+        "webhook",  # Slack/Discord webhooks
+        "telegram",  # Telegram bot tokens
+        "credential",
+        "private_key",
+        "access_key",
+        "auth",
     }
 
     @model_validator(mode="before")

@@ -106,21 +106,35 @@ class RiskConfig(BaseConfig):
     @field_validator("max_drawdown", "daily_loss_limit", "weekly_loss_limit", mode="before")
     @classmethod
     def coerce_to_decimal(cls, v):
-        """Coerce numeric values to Decimal."""
+        """Coerce numeric values to Decimal with validation."""
         if v is None:
             return v
         if isinstance(v, (int, float, str)):
-            return Decimal(str(v))
+            try:
+                decimal_val = Decimal(str(v))
+                # Reject NaN and Infinity
+                if not decimal_val.is_finite():
+                    raise ValueError(f"Invalid value: {v} (NaN or Infinity not allowed)")
+                return decimal_val
+            except Exception as e:
+                raise ValueError(f"Cannot convert '{v}' to Decimal: {e}")
         return v
 
     @field_validator("max_position_size", "liquidation_warning", "margin_warning", mode="before")
     @classmethod
     def coerce_percentage_to_decimal(cls, v):
-        """Coerce percentage values to Decimal."""
+        """Coerce percentage values to Decimal with validation."""
         if v is None:
             return v
         if isinstance(v, (int, float, str)):
-            return Decimal(str(v))
+            try:
+                decimal_val = Decimal(str(v))
+                # Reject NaN and Infinity
+                if not decimal_val.is_finite():
+                    raise ValueError(f"Invalid value: {v} (NaN or Infinity not allowed)")
+                return decimal_val
+            except Exception as e:
+                raise ValueError(f"Cannot convert '{v}' to Decimal: {e}")
         return v
 
     def is_drawdown_exceeded(self, current_drawdown: Decimal) -> bool:

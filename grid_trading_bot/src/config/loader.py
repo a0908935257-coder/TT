@@ -203,6 +203,9 @@ class ConfigLoader:
         Returns:
             String with substitutions, or converted type if full match
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Check if the entire string is a single env var reference
         full_match = ENV_VAR_PATTERN.fullmatch(value)
         if full_match:
@@ -210,17 +213,40 @@ class ConfigLoader:
             env_value = os.environ.get(var_name, default)
 
             if env_value is None:
+                # Log warning for missing env var without default
+                logger.warning(
+                    f"Environment variable '{var_name}' not set and no default provided. "
+                    f"Original value '{value}' will be used, which may cause validation errors."
+                )
                 return value  # Keep original if no env var and no default
 
             # Try to convert to appropriate type
             return self._convert_value(env_value)
 
         # Replace all occurrences in the string
+        missing_vars = []
+
         def replace_match(match: re.Match) -> str:
             var_name, default = match.groups()
-            return os.environ.get(var_name, default if default is not None else match.group(0))
+            env_val = os.environ.get(var_name)
+            if env_val is not None:
+                return env_val
+            if default is not None:
+                return default
+            # Track missing variables
+            missing_vars.append(var_name)
+            return match.group(0)
 
-        return ENV_VAR_PATTERN.sub(replace_match, value)
+        result = ENV_VAR_PATTERN.sub(replace_match, value)
+
+        # Log warning for missing vars
+        if missing_vars:
+            logger.warning(
+                f"Environment variables not set: {missing_vars}. "
+                f"Result: '{result}'"
+            )
+
+        return result
 
     def _convert_value(self, value: str) -> Any:
         """

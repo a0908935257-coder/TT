@@ -104,8 +104,8 @@ class BinanceWebSocket:
         self._intentional_close = False  # Flag to prevent reconnection on intentional close
 
         # Heartbeat settings
-        self._heartbeat_interval = 30  # seconds
-        self._heartbeat_timeout = 60  # seconds (60s is sufficient for detecting dead connections)
+        self._heartbeat_interval = 20  # seconds (ping every 20s)
+        self._heartbeat_timeout = 30  # seconds (detect dead connection faster)
         self._last_pong_time: Optional[datetime] = None
 
         # Timeout tracking (reduce warning frequency)
@@ -115,6 +115,11 @@ class BinanceWebSocket:
         # Background tasks
         self._message_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._reconnect_task: Optional[asyncio.Task] = None  # Track reconnect to prevent task leak
+
+        # Message deduplication (track recent message timestamps)
+        self._recent_msg_ids: dict[str, float] = {}  # msg_id -> timestamp
+        self._dedup_window: float = 5.0  # seconds to keep message IDs
 
     # =========================================================================
     # Properties
@@ -211,6 +216,15 @@ class BinanceWebSocket:
                 pass
             self._heartbeat_task = None
 
+        # Cancel any pending reconnect task
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
+
         # Close WebSocket
         if self._ws:
             try:
@@ -266,7 +280,16 @@ class BinanceWebSocket:
 
             if streams_to_resubscribe:
                 logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams")
-                await self._send_subscribe(streams_to_resubscribe)
+                # Retry subscription up to 3 times
+                for attempt in range(3):
+                    success = await self._send_subscribe(streams_to_resubscribe)
+                    if success:
+                        logger.info(f"Successfully resubscribed to {len(streams_to_resubscribe)} streams")
+                        break
+                    logger.warning(f"Resubscription attempt {attempt + 1}/3 failed")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error("Failed to resubscribe after 3 attempts")
             return True
 
         return await self.reconnect()
@@ -565,7 +588,15 @@ class BinanceWebSocket:
             self._connected = False
             # Only attempt reconnection if not intentionally closed
             if self._running and not self._intentional_close:
-                asyncio.create_task(self.reconnect())
+                # Cancel any existing reconnect task to prevent task accumulation
+                if self._reconnect_task and not self._reconnect_task.done():
+                    self._reconnect_task.cancel()
+                    try:
+                        await self._reconnect_task
+                    except asyncio.CancelledError:
+                        pass
+                # Track the reconnect task to prevent leak
+                self._reconnect_task = asyncio.create_task(self.reconnect())
 
     async def _handle_message(self, raw_message: str) -> None:
         """
@@ -587,7 +618,30 @@ class BinanceWebSocket:
             return
 
         # Update pong time for any valid message
-        self._last_pong_time = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        self._last_pong_time = now
+
+        # Message deduplication - create unique ID from event time + stream
+        if isinstance(data, dict):
+            event_time = data.get("E", 0)  # Event time from Binance
+            stream = data.get("stream") or self._get_stream_from_data(data) or ""
+            msg_id = f"{stream}:{event_time}"
+
+            # Check for duplicate
+            current_time = now.timestamp()
+            if msg_id in self._recent_msg_ids:
+                logger.debug(f"Duplicate message filtered: {msg_id}")
+                return
+
+            # Store message ID
+            self._recent_msg_ids[msg_id] = current_time
+
+            # Cleanup old message IDs (every 100 messages)
+            if len(self._recent_msg_ids) > 100:
+                cutoff = current_time - self._dedup_window
+                self._recent_msg_ids = {
+                    k: v for k, v in self._recent_msg_ids.items() if v > cutoff
+                }
 
         # Call global message handler if set
         if self._on_message:
