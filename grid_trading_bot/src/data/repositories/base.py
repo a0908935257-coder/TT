@@ -141,7 +141,10 @@ class BaseRepository(ABC, Generic[T, M]):
 
     async def _add_all(self, orm_models: list[M]) -> list[M]:
         """
-        Add multiple ORM models to database.
+        Add multiple ORM models to database atomically.
+
+        All models are added in a single transaction - if any fails,
+        all changes are rolled back.
 
         Args:
             orm_models: List of ORM models to add
@@ -149,12 +152,22 @@ class BaseRepository(ABC, Generic[T, M]):
         Returns:
             List of added ORM models
         """
+        if not orm_models:
+            return []
+
         async with self._db.get_session() as session:
-            session.add_all(orm_models)
-            await session.flush()
-            for model in orm_models:
-                await session.refresh(model)
-            return orm_models
+            try:
+                session.add_all(orm_models)
+                await session.flush()
+                # Refresh all models to get generated fields
+                for model in orm_models:
+                    await session.refresh(model)
+                # Commit is handled by the context manager
+                return orm_models
+            except Exception as e:
+                # Rollback is handled by the context manager on exception
+                logger.error(f"Batch add failed, rolling back: {e}")
+                raise
 
     async def _update(self, orm_model: M) -> M:
         """
@@ -164,11 +177,13 @@ class BaseRepository(ABC, Generic[T, M]):
             orm_model: ORM model to update
 
         Returns:
-            Updated ORM model
+            Updated ORM model (refreshed to prevent detachment)
         """
         async with self._db.get_session() as session:
             merged = await session.merge(orm_model)
             await session.flush()
+            # Refresh to prevent detached object issues
+            await session.refresh(merged)
             return merged
 
     async def _delete(self, orm_model: M) -> bool:

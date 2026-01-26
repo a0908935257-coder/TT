@@ -92,6 +92,7 @@ class BinanceWebSocket:
 
         # Subscription tracking
         self._subscriptions: dict[str, Callable] = {}  # stream -> callback
+        self._subscriptions_lock: Optional[asyncio.Lock] = None  # Lazy init to avoid event loop issues
         self._request_id = 0
 
         # Reconnection settings
@@ -104,7 +105,7 @@ class BinanceWebSocket:
 
         # Heartbeat settings
         self._heartbeat_interval = 30  # seconds
-        self._heartbeat_timeout = 180  # seconds (increased for streams with infrequent updates)
+        self._heartbeat_timeout = 60  # seconds (60s is sufficient for detecting dead connections)
         self._last_pong_time: Optional[datetime] = None
 
         # Timeout tracking (reduce warning frequency)
@@ -165,6 +166,10 @@ class BinanceWebSocket:
             self._current_delay = self.reconnect_delay
             self._last_pong_time = datetime.now(timezone.utc)
             self._consecutive_timeouts = 0  # Reset timeout counter on new connection
+
+            # Initialize subscription lock (in event loop context)
+            if self._subscriptions_lock is None:
+                self._subscriptions_lock = asyncio.Lock()
 
             # Start background tasks
             self._message_task = asyncio.create_task(self._message_loop())
@@ -250,11 +255,18 @@ class BinanceWebSocket:
 
         # Attempt connection
         if await self.connect():
-            # Resubscribe to all streams
-            if self._subscriptions:
-                streams = list(self._subscriptions.keys())
-                logger.info(f"Resubscribing to {len(streams)} streams")
-                await self._send_subscribe(streams)
+            # Resubscribe to all streams with lock protection
+            streams_to_resubscribe = []
+            if self._subscriptions_lock:
+                async with self._subscriptions_lock:
+                    if self._subscriptions:
+                        streams_to_resubscribe = list(self._subscriptions.keys())
+            elif self._subscriptions:
+                streams_to_resubscribe = list(self._subscriptions.keys())
+
+            if streams_to_resubscribe:
+                logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams")
+                await self._send_subscribe(streams_to_resubscribe)
             return True
 
         return await self.reconnect()
@@ -278,9 +290,14 @@ class BinanceWebSocket:
             logger.error("Not connected, cannot subscribe")
             return False
 
-        # Store callbacks
-        for stream in streams:
-            self._subscriptions[stream.lower()] = callback
+        # Store callbacks with lock protection
+        if self._subscriptions_lock:
+            async with self._subscriptions_lock:
+                for stream in streams:
+                    self._subscriptions[stream.lower()] = callback
+        else:
+            for stream in streams:
+                self._subscriptions[stream.lower()] = callback
 
         return await self._send_subscribe(streams)
 
@@ -298,9 +315,14 @@ class BinanceWebSocket:
             logger.error("Not connected, cannot unsubscribe")
             return False
 
-        # Remove callbacks
-        for stream in streams:
-            self._subscriptions.pop(stream.lower(), None)
+        # Remove callbacks with lock protection
+        if self._subscriptions_lock:
+            async with self._subscriptions_lock:
+                for stream in streams:
+                    self._subscriptions.pop(stream.lower(), None)
+        else:
+            for stream in streams:
+                self._subscriptions.pop(stream.lower(), None)
 
         return await self._send_unsubscribe(streams)
 
@@ -574,8 +596,16 @@ class BinanceWebSocket:
         # Determine stream type and call appropriate callback
         stream = data.get("stream") or self._get_stream_from_data(data)
 
-        if stream and stream in self._subscriptions:
-            callback = self._subscriptions[stream]
+        # Get callback with lock protection (minimize lock time)
+        callback = None
+        if stream:
+            if self._subscriptions_lock:
+                async with self._subscriptions_lock:
+                    callback = self._subscriptions.get(stream)
+            else:
+                callback = self._subscriptions.get(stream)
+
+        if callback:
             try:
                 await callback(data)
             except Exception as e:

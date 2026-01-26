@@ -5,6 +5,7 @@ Provides async interface to Binance Spot trading API with support for
 both public and private (authenticated) endpoints.
 """
 
+import asyncio
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -69,6 +70,8 @@ class BinanceSpotAPI:
         api_secret: str = "",
         testnet: bool = False,
         timeout: int = 30,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
     ):
         """
         Initialize BinanceSpotAPI.
@@ -78,6 +81,8 @@ class BinanceSpotAPI:
             api_secret: Binance API secret (optional for public endpoints)
             testnet: Use testnet URL if True
             timeout: Request timeout in seconds
+            max_retries: Maximum number of retries for transient errors
+            retry_delay: Initial delay between retries (exponential backoff)
         """
         self._base_url = SPOT_TESTNET_URL if testnet else SPOT_REST_URL
         self._timeout = aiohttp.ClientTimeout(total=timeout)
@@ -88,6 +93,10 @@ class BinanceSpotAPI:
             self._auth = BinanceAuth(api_key, api_secret)
 
         self._testnet = testnet
+
+        # Retry configuration
+        self._max_retries = max_retries
+        self._retry_delay = retry_delay
 
     # =========================================================================
     # Lifecycle Management
@@ -139,7 +148,7 @@ class BinanceSpotAPI:
         api_key_required: bool = False,
     ) -> dict:
         """
-        Send HTTP request to Binance API.
+        Send HTTP request to Binance API with retry logic.
 
         Args:
             method: HTTP method (GET, POST, PUT, DELETE)
@@ -152,9 +161,9 @@ class BinanceSpotAPI:
             JSON response as dict
 
         Raises:
-            ConnectionError: Connection failed
+            ConnectionError: Connection failed after retries
             AuthenticationError: Authentication failed
-            RateLimitError: Rate limit exceeded
+            RateLimitError: Rate limit exceeded after retries
             InsufficientBalanceError: Insufficient balance
             OrderError: Order-related error
             ExchangeError: Other exchange errors
@@ -163,44 +172,77 @@ class BinanceSpotAPI:
             await self.connect()
 
         url = f"{self._base_url}{endpoint}"
-        headers = {}
+        original_params = params.copy() if params else {}
 
-        if params is None:
-            params = {}
+        last_exception = None
+        for attempt in range(self._max_retries + 1):
+            headers = {}
+            params = original_params.copy()
 
-        # Sign request if needed
-        if signed:
-            if self._auth is None:
-                raise AuthenticationError("API key and secret required for signed requests")
-            params = self._auth.sign_params(params)
-            headers = self._auth.get_headers()
-        elif api_key_required:
-            # Some endpoints require API key but not signature
-            if self._auth is None:
-                raise AuthenticationError("API key required for this request")
-            headers = self._auth.get_headers()
+            # Sign request if needed (must re-sign on each attempt due to timestamp)
+            if signed:
+                if self._auth is None:
+                    raise AuthenticationError("API key and secret required for signed requests")
+                params = self._auth.sign_params(params)
+                headers = self._auth.get_headers()
+            elif api_key_required:
+                # Some endpoints require API key but not signature
+                if self._auth is None:
+                    raise AuthenticationError("API key required for this request")
+                headers = self._auth.get_headers()
 
-        logger.debug(f"Request: {method} {endpoint}")
+            logger.debug(f"Request: {method} {endpoint} (attempt {attempt + 1}/{self._max_retries + 1})")
 
-        try:
-            if method == "GET":
-                async with self._session.get(url, params=params, headers=headers) as resp:
-                    return await self._handle_response(resp)
-            elif method == "POST":
-                async with self._session.post(url, params=params, headers=headers) as resp:
-                    return await self._handle_response(resp)
-            elif method == "PUT":
-                async with self._session.put(url, params=params, headers=headers) as resp:
-                    return await self._handle_response(resp)
-            elif method == "DELETE":
-                async with self._session.delete(url, params=params, headers=headers) as resp:
-                    return await self._handle_response(resp)
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
+            try:
+                if method == "GET":
+                    async with self._session.get(url, params=params, headers=headers) as resp:
+                        return await self._handle_response(resp)
+                elif method == "POST":
+                    async with self._session.post(url, params=params, headers=headers) as resp:
+                        return await self._handle_response(resp)
+                elif method == "PUT":
+                    async with self._session.put(url, params=params, headers=headers) as resp:
+                        return await self._handle_response(resp)
+                elif method == "DELETE":
+                    async with self._session.delete(url, params=params, headers=headers) as resp:
+                        return await self._handle_response(resp)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
 
-        except aiohttp.ClientError as e:
-            logger.error(f"Connection error: {e}")
-            raise ConnectionError(f"Failed to connect to Binance: {e}")
+            except (RateLimitError, ConnectionError) as e:
+                # Retry on rate limit and connection errors
+                last_exception = e
+                if attempt < self._max_retries:
+                    delay = self._retry_delay * (2 ** attempt)
+                    # For rate limits, use retry-after header if available
+                    if isinstance(e, RateLimitError):
+                        delay = max(delay, 1.0)  # Minimum 1 second for rate limits
+                    logger.warning(
+                        f"Retryable error on {endpoint}: {e}. "
+                        f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self._max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+            except aiohttp.ClientError as e:
+                # Retry on transient network errors
+                last_exception = e
+                if attempt < self._max_retries:
+                    delay = self._retry_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Network error on {endpoint}: {e}. "
+                        f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self._max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"Connection error after {self._max_retries + 1} attempts: {e}")
+                raise ConnectionError(f"Failed to connect to Binance: {e}")
+
+        # Should not reach here, but handle it just in case
+        if last_exception:
+            raise last_exception
+        raise ExchangeError(f"Request failed after {self._max_retries + 1} attempts")
 
     async def _handle_response(self, response: aiohttp.ClientResponse) -> dict:
         """
@@ -217,6 +259,14 @@ class BinanceSpotAPI:
         """
         status = response.status
         logger.debug(f"Response status: {status}")
+
+        # Handle HTTP 429 Rate Limit (before parsing JSON)
+        if status == 429:
+            retry_after = response.headers.get("Retry-After", "1")
+            raise RateLimitError(
+                f"Rate limited (HTTP 429). Retry after: {retry_after}s",
+                code="429"
+            )
 
         # Try to parse JSON
         try:
