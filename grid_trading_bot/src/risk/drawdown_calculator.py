@@ -382,7 +382,8 @@ class DrawdownCalculator:
 
         dd_pct = self._current_drawdown.drawdown_pct
         if dd_pct >= Decimal("1"):
-            return Decimal("inf")
+            # Return large but finite number (inf is not JSON serializable)
+            return Decimal("9999")
 
         return dd_pct / (Decimal("1") - dd_pct)
 

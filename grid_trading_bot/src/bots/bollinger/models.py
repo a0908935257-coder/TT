@@ -409,9 +409,11 @@ class BollingerBotStats:
 
     @property
     def profit_factor(self) -> Decimal:
-        if self._total_loss_pnl == 0:
+        # Use abs() to handle potential negative loss values
+        loss_pnl = abs(self._total_loss_pnl)
+        if loss_pnl == 0:
             return Decimal("999") if self._total_win_pnl > 0 else Decimal("0")
-        return self._total_win_pnl / self._total_loss_pnl
+        return abs(self._total_win_pnl) / loss_pnl
 
     @property
     def avg_win(self) -> Decimal:

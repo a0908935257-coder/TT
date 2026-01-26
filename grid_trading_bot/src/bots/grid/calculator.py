@@ -256,7 +256,13 @@ class SmartGridCalculator:
 
         Returns:
             Tuple of (upper_price, lower_price)
+
+        Raises:
+            GridCalculationError: If ATR data is not available
         """
+        if self._atr_data is None:
+            raise GridCalculationError("ATR data not calculated - call calculate() first")
+
         multiplier = self._config.atr_config.multiplier
         range_width = self._atr_data.value * multiplier
 

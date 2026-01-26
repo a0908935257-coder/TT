@@ -828,6 +828,10 @@ class GridSetup:
         Returns:
             GridLevel if found within tolerance, else None
         """
+        # Protect against division by zero
+        if price <= 0:
+            return None
+
         for level in self.levels:
             diff_percent = abs((level.price - price) / price) * Decimal("100")
             if diff_percent <= tolerance_percent:

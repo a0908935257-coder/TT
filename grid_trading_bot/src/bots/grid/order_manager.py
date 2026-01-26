@@ -304,7 +304,10 @@ class GridOrderManager:
             else:
                 side = OrderSide.BUY
 
-            # Calculate quantity from allocated amount
+            # Calculate quantity from allocated amount (with zero-division protection)
+            if level.price <= 0:
+                logger.error(f"Invalid level price at index {level.index}: {level.price}")
+                continue
             quantity = level.allocated_amount / level.price
 
             # Round quantity for validation
@@ -436,7 +439,9 @@ class GridOrderManager:
             logger.debug(f"Cancelling existing order at level {level_index}")
             await self.cancel_order_at_level(level_index)
 
-        # Calculate quantity from allocated amount
+        # Calculate quantity from allocated amount (with zero-division protection)
+        if level.price <= 0:
+            raise ValueError(f"Invalid level price at index {level_index}: {level.price}")
         quantity = level.allocated_amount / level.price
 
         # Round to exchange precision

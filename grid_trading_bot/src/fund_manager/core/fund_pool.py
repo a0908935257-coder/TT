@@ -103,8 +103,21 @@ class FundPool:
 
     @property
     def allocated_balance(self) -> Decimal:
-        """Get total allocated balance."""
-        return sum(self._allocations.values())
+        """Get total allocated balance.
+
+        Note: This is a snapshot and may be inconsistent during concurrent
+        modifications. For thread-safe access, use get_allocated_balance_safe().
+        """
+        # Create a copy of values to avoid iteration errors during modification
+        return sum(list(self._allocations.values()))
+
+    async def get_allocated_balance_safe(self) -> Decimal:
+        """Get total allocated balance with lock protection.
+
+        Use this method when accurate balance is critical during concurrent operations.
+        """
+        async with self._allocation_lock:
+            return sum(self._allocations.values())
 
     @property
     def reserved_balance(self) -> Decimal:

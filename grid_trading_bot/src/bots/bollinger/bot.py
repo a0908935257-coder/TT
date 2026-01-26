@@ -1256,7 +1256,9 @@ class BollingerBot(BaseBot):
                 else:
                     pnl = (entry_price - exit_price) * quantity
 
-                pnl_pct = pnl / (entry_price * quantity) * Decimal("100")
+                # Calculate PnL percentage with zero-division protection
+                denominator = entry_price * quantity
+                pnl_pct = (pnl / denominator * Decimal("100")) if denominator > 0 else Decimal("0")
 
                 # Record trade
                 trade = TradeRecord(

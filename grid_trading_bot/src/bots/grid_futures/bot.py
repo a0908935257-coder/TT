@@ -1239,6 +1239,7 @@ class GridFuturesBot(BaseBot):
         - 使用 grid level 價格進場
 
         Includes hysteresis to prevent oscillation around grid levels.
+        Uses state lock to prevent concurrent grid level modifications.
 
         Args:
             kline_low: K 線最低價
@@ -1248,90 +1249,92 @@ class GridFuturesBot(BaseBot):
         if not self._grid:
             return
 
-        for i, level in enumerate(self._grid.levels):
-            grid_price = level.price
+        # Acquire state lock to prevent concurrent modifications
+        async with self._state_lock:
+            for i, level in enumerate(self._grid.levels):
+                grid_price = level.price
 
-            # Long entry: K 線低點觸及 grid level (買跌，與回測一致)
-            if level.state == GridLevelState.EMPTY and kline_low <= grid_price:
-                # Check signal cooldown to prevent signal stacking (if enabled)
-                if self._config.use_signal_cooldown and self._signal_cooldown > 0:
-                    logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping long entry")
-                    continue
+                # Long entry: K 線低點觸及 grid level (買跌，與回測一致)
+                if level.state == GridLevelState.EMPTY and kline_low <= grid_price:
+                    # Check signal cooldown to prevent signal stacking (if enabled)
+                    if self._config.use_signal_cooldown and self._signal_cooldown > 0:
+                        logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping long entry")
+                        continue
 
-                # Check hysteresis to prevent oscillation (if enabled)
-                if self._config.use_hysteresis and not self._check_hysteresis(i, "long", grid_price, current_price):
-                    continue
+                    # Check hysteresis to prevent oscillation (if enabled)
+                    if self._config.use_hysteresis and not self._check_hysteresis(i, "long", grid_price, current_price):
+                        continue
 
-                if self._should_trade_direction("long"):
-                    # 使用 grid level 價格進場（與回測一致）
-                    success = await self._open_position(PositionSide.LONG, grid_price)
-                    if success:
-                        level.state = GridLevelState.LONG_FILLED
-                        level.filled_at = datetime.now(timezone.utc)
-                        if self._config.use_signal_cooldown:
-                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
-                        self._last_triggered_level = i  # Track for hysteresis
-                        logger.info(f"Long entry at grid level {i}: {grid_price}")
+                    if self._should_trade_direction("long"):
+                        # 使用 grid level 價格進場（與回測一致）
+                        success = await self._open_position(PositionSide.LONG, grid_price)
+                        if success:
+                            level.state = GridLevelState.LONG_FILLED
+                            level.filled_at = datetime.now(timezone.utc)
+                            if self._config.use_signal_cooldown:
+                                self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                            self._last_triggered_level = i  # Track for hysteresis
+                            logger.info(f"Long entry at grid level {i}: {grid_price}")
 
-            # Long exit: K 線高點觸及 grid level
-            elif level.state == GridLevelState.LONG_FILLED and kline_high >= grid_price:
-                if self._position and self._position.side == PositionSide.LONG:
-                    filled_long_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.LONG_FILLED)
-                    if filled_long_count > 0:
-                        partial_qty = self._position.quantity / Decimal(filled_long_count)
+                # Long exit: K 線高點觸及 grid level
+                elif level.state == GridLevelState.LONG_FILLED and kline_high >= grid_price:
+                    if self._position and self._position.side == PositionSide.LONG:
+                        filled_long_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.LONG_FILLED)
+                        if filled_long_count > 0:
+                            partial_qty = self._position.quantity / Decimal(filled_long_count)
+                        else:
+                            partial_qty = self._position.quantity
+                        close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
+                        # Only update state if close was successful
+                        if close_success:
+                            level.state = GridLevelState.EMPTY
+                            # Clear hysteresis on exit to allow fresh entry
+                            if self._last_triggered_level == i:
+                                self._last_triggered_level = None
                     else:
-                        partial_qty = self._position.quantity
-                    close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
-                    # Only update state if close was successful
-                    if close_success:
+                        # No position but level marked as filled - reset state
                         level.state = GridLevelState.EMPTY
-                        # Clear hysteresis on exit to allow fresh entry
-                        if self._last_triggered_level == i:
-                            self._last_triggered_level = None
-                else:
-                    # No position but level marked as filled - reset state
-                    level.state = GridLevelState.EMPTY
 
-            # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
-            if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
-                # Check signal cooldown to prevent signal stacking (if enabled)
-                if self._config.use_signal_cooldown and self._signal_cooldown > 0:
-                    logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
-                    continue
+                # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
+                if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
+                    # Check signal cooldown to prevent signal stacking (if enabled)
+                    if self._config.use_signal_cooldown and self._signal_cooldown > 0:
+                        logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
+                        continue
 
-                # Check hysteresis to prevent oscillation (if enabled)
-                if self._config.use_hysteresis and not self._check_hysteresis(i, "short", grid_price, current_price):
-                    continue
+                    # Check hysteresis to prevent oscillation (if enabled)
+                    if self._config.use_hysteresis and not self._check_hysteresis(i, "short", grid_price, current_price):
+                        continue
 
-                if self._should_trade_direction("short"):
-                    # 使用 grid level 價格進場（與回測一致）
-                    success = await self._open_position(PositionSide.SHORT, grid_price)
-                    if success:
-                        level.state = GridLevelState.SHORT_FILLED
-                        level.filled_at = datetime.now(timezone.utc)
-                        if self._config.use_signal_cooldown:
-                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
-                        self._last_triggered_level = i  # Track for hysteresis
-                        logger.info(f"Short entry at grid level {i}: {grid_price}")
+                    if self._should_trade_direction("short"):
+                        # 使用 grid level 價格進場（與回測一致）
+                        success = await self._open_position(PositionSide.SHORT, grid_price)
+                        if success:
+                            level.state = GridLevelState.SHORT_FILLED
+                            level.filled_at = datetime.now(timezone.utc)
+                            if self._config.use_signal_cooldown:
+                                self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                            self._last_triggered_level = i  # Track for hysteresis
+                            logger.info(f"Short entry at grid level {i}: {grid_price}")
 
-            # Short exit: K 線低點觸及 grid level
-            elif level.state == GridLevelState.SHORT_FILLED and kline_low <= grid_price:
-                if self._position and self._position.side == PositionSide.SHORT:
-                    filled_short_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.SHORT_FILLED)
-                    if filled_short_count > 0:
-                        partial_qty = self._position.quantity / Decimal(filled_short_count)
+                # Short exit: K 線低點觸及 grid level
+                elif level.state == GridLevelState.SHORT_FILLED and kline_low <= grid_price:
+                    if self._position and self._position.side == PositionSide.SHORT:
+                        filled_short_count = sum(1 for lv in self._grid.levels if lv.state == GridLevelState.SHORT_FILLED)
+                        if filled_short_count > 0:
+                            partial_qty = self._position.quantity / Decimal(filled_short_count)
+                        else:
+                            partial_qty = self._position.quantity
+                        close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
+                        # Only update state if close was successful
+                        if close_success:
+                            level.state = GridLevelState.EMPTY
+                            # Clear hysteresis on exit to allow fresh entry
+                            if self._last_triggered_level == i:
+                                self._last_triggered_level = None
                     else:
-                        partial_qty = self._position.quantity
-                    close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
-                    # Only update state if close was successful
-                    if close_success:
+                        # No position but level marked as filled - reset state
                         level.state = GridLevelState.EMPTY
-                        # Clear hysteresis on exit to allow fresh entry
-                        if self._last_triggered_level == i:
-                            self._last_triggered_level = None
-                else:
-                    # No position but level marked as filled - reset state
-                    level.state = GridLevelState.EMPTY
 
     # =========================================================================
     # Stop Loss Check
@@ -1356,6 +1359,11 @@ class GridFuturesBot(BaseBot):
             True if position was closed due to stop loss
         """
         if not self._position:
+            return False
+
+        # Protect against division by zero
+        if self._position.entry_price <= 0:
+            logger.warning("Cannot check stop loss: entry_price is zero or negative")
             return False
 
         # Calculate PnL percentage
