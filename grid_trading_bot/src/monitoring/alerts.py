@@ -511,6 +511,8 @@ class WebhookChannelHandler(AlertChannelHandler):
 class AlertRetryQueue:
     """
     Manages failed alerts for retry with exponential backoff.
+
+    Integrates with dead letter queue for alerts that exhaust all retries.
     """
 
     def __init__(
@@ -518,6 +520,9 @@ class AlertRetryQueue:
         max_retries: int = 3,
         base_delay_seconds: float = 5.0,
         max_delay_seconds: float = 60.0,
+        dead_letter_callback: Optional[
+            Callable[[PersistedAlert, AlertChannel, int, List[str]], Coroutine[Any, Any, None]]
+        ] = None,
     ):
         """
         Initialize retry queue.
@@ -526,14 +531,16 @@ class AlertRetryQueue:
             max_retries: Maximum retry attempts
             base_delay_seconds: Initial retry delay
             max_delay_seconds: Maximum retry delay
+            dead_letter_callback: Callback when alert exhausts retries
         """
         self._max_retries = max_retries
         self._base_delay = base_delay_seconds
         self._max_delay = max_delay_seconds
+        self._dead_letter_callback = dead_letter_callback
 
-        # Queue: (alert, channel, attempt, next_retry_time)
+        # Queue: (alert, channel, attempt, next_retry_time, errors)
         self._queue: Deque[
-            Tuple[PersistedAlert, AlertChannel, int, datetime]
+            Tuple[PersistedAlert, AlertChannel, int, datetime, List[str]]
         ] = deque()
         self._lock = asyncio.Lock()
         self._running = False
@@ -544,19 +551,22 @@ class AlertRetryQueue:
             "total_retried": 0,
             "total_success_after_retry": 0,
             "total_exhausted": 0,
+            "total_dead_lettered": 0,
         }
 
     async def add(
         self,
         alert: PersistedAlert,
         channel: AlertChannel,
+        error_message: str = "",
     ) -> None:
         """Add failed alert to retry queue."""
         async with self._lock:
             next_retry = datetime.now(timezone.utc) + timedelta(
                 seconds=self._base_delay
             )
-            self._queue.append((alert, channel, 1, next_retry))
+            errors = [error_message] if error_message else []
+            self._queue.append((alert, channel, 1, next_retry, errors))
             logger.debug(f"Added alert {alert.alert_id} to retry queue for {channel}")
 
     async def process_due(
@@ -576,15 +586,15 @@ class AlertRetryQueue:
             now = datetime.now(timezone.utc)
             success_count = 0
             remaining: Deque[
-                Tuple[PersistedAlert, AlertChannel, int, datetime]
+                Tuple[PersistedAlert, AlertChannel, int, datetime, List[str]]
             ] = deque()
 
             while self._queue:
-                alert, channel, attempt, next_retry = self._queue.popleft()
+                alert, channel, attempt, next_retry, errors = self._queue.popleft()
 
                 if next_retry > now:
                     # Not due yet, put back
-                    remaining.append((alert, channel, attempt, next_retry))
+                    remaining.append((alert, channel, attempt, next_retry, errors))
                     continue
 
                 self._stats["total_retried"] += 1
@@ -598,6 +608,8 @@ class AlertRetryQueue:
                             f"Retry success for alert {alert.alert_id} on {channel}"
                         )
                     else:
+                        error_msg = "Send returned False"
+                        errors.append(error_msg)
                         # Retry failed, schedule next attempt
                         if attempt < self._max_retries:
                             delay = min(
@@ -605,14 +617,25 @@ class AlertRetryQueue:
                                 self._max_delay,
                             )
                             next_time = now + timedelta(seconds=delay)
-                            remaining.append((alert, channel, attempt + 1, next_time))
+                            remaining.append((alert, channel, attempt + 1, next_time, errors))
                         else:
                             self._stats["total_exhausted"] += 1
+                            self._stats["total_dead_lettered"] += 1
                             logger.error(
                                 f"Alert {alert.alert_id} exhausted retries for {channel}"
                             )
+                            # Send to dead letter queue
+                            if self._dead_letter_callback:
+                                try:
+                                    await self._dead_letter_callback(
+                                        alert, channel, attempt, errors
+                                    )
+                                except Exception as cb_err:
+                                    logger.error(f"Dead letter callback error: {cb_err}")
 
                 except Exception as e:
+                    error_msg = str(e)
+                    errors.append(error_msg)
                     logger.error(f"Retry error for {alert.alert_id}: {e}")
                     if attempt < self._max_retries:
                         delay = min(
@@ -620,7 +643,18 @@ class AlertRetryQueue:
                             self._max_delay,
                         )
                         next_time = now + timedelta(seconds=delay)
-                        remaining.append((alert, channel, attempt + 1, next_time))
+                        remaining.append((alert, channel, attempt + 1, next_time, errors))
+                    else:
+                        self._stats["total_exhausted"] += 1
+                        self._stats["total_dead_lettered"] += 1
+                        # Send to dead letter queue
+                        if self._dead_letter_callback:
+                            try:
+                                await self._dead_letter_callback(
+                                    alert, channel, attempt, errors
+                                )
+                            except Exception as cb_err:
+                                logger.error(f"Dead letter callback error: {cb_err}")
 
             self._queue = remaining
             return success_count
