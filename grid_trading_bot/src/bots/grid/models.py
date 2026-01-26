@@ -75,6 +75,7 @@ class LevelState(str, Enum):
     EMPTY = "empty"              # No order
     PENDING_BUY = "pending_buy"   # Buy order pending
     PENDING_SELL = "pending_sell" # Sell order pending
+    PARTIAL = "partial"          # Order partially filled
     FILLED = "filled"            # Order filled, waiting for opposite
 
 

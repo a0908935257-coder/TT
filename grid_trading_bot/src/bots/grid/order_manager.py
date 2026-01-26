@@ -614,7 +614,7 @@ class GridOrderManager:
         """
         restored = 0
         for order_id, level_index in mapping.items():
-            if level_index < len(self._setup.levels) if self._setup else False:
+            if self._setup and level_index < len(self._setup.levels):
                 self._order_level_map[order_id] = level_index
                 self._level_order_map[level_index] = order_id
                 restored += 1
@@ -695,21 +695,25 @@ class GridOrderManager:
                     # Update level state based on order status
                     level = self._setup.levels[level_index]
                     if order.status == OrderStatus.FILLED:
-                        level.state = LevelState.FILLED
-                        level.filled_quantity = order.filled_qty
-                        level.filled_price = order.avg_price
+                        # Process as filled order to place reverse orders
+                        # This handles orders that filled while bot was offline
+                        await self.on_order_filled(order)
+                        logger.info(
+                            f"Processed filled order during sync: {order_id} at level {level_index}"
+                        )
                     else:
                         # Cancelled or other status
                         level.state = LevelState.EMPTY
+                        level.order_id = None
 
-                    level.order_id = None
+                        # Remove from mappings
+                        if level_index in self._level_order_map:
+                            del self._level_order_map[level_index]
+                        if order_id in self._order_level_map:
+                            del self._order_level_map[order_id]
 
-                    # Remove from mappings
-                    del self._level_order_map[level_index]
-                    del self._order_level_map[order_id]
-
-                    # Update in database
-                    await self._data_manager.update_order(order, bot_id=self._bot_id)
+                        # Update in database
+                        await self._data_manager.update_order(order, bot_id=self._bot_id)
 
                 except Exception as e:
                     logger.warning(f"Failed to get order status for {order_id}: {e}")
@@ -964,15 +968,12 @@ class GridOrderManager:
         elif filled_side == OrderSide.SELL:
             # Check if we have a matching buy fill to calculate profit
             # Look for buy fills at lower levels
-            matching_buy = self._find_matching_buy_fill(level_index)
+            # Note: _find_matching_buy_fill atomically pairs the records to prevent race conditions
+            matching_buy = self._find_matching_buy_fill(level_index, fill_record)
             if matching_buy:
                 profit = self.calculate_profit(matching_buy, fill_record)
                 self._total_profit += profit
                 self._trade_count += 1
-
-                # Link records
-                fill_record.paired_record = matching_buy
-                matching_buy.paired_record = fill_record
 
                 logger.info(
                     f"Trade completed: profit={profit:.4f}, "
@@ -1170,7 +1171,17 @@ class GridOrderManager:
         elif order.status == OrderStatus.CANCELED:
             await self._handle_order_canceled(order)
         elif order.status == OrderStatus.PARTIALLY_FILLED:
-            logger.debug(f"Order {order.order_id} partially filled: {order.filled_qty}")
+            # Update order state for partial fills
+            level_index = self.get_level_by_order_id(order.order_id)
+            if level_index is not None and self._setup:
+                level = self._setup.levels[level_index]
+                level.filled_quantity = order.filled_qty
+                level.filled_price = order.avg_price if order.avg_price else order.price
+                level.state = LevelState.PARTIAL
+            logger.info(
+                f"Order {order.order_id} partially filled: {order.filled_qty}/{order.quantity} "
+                f"at level {level_index}"
+            )
 
     async def _handle_order_canceled(self, order: Order) -> None:
         """
@@ -1204,15 +1215,19 @@ class GridOrderManager:
     # Fill Handling Helpers
     # =========================================================================
 
-    def _find_matching_buy_fill(self, sell_level_index: int) -> Optional[FilledRecord]:
+    def _find_matching_buy_fill(self, sell_level_index: int, sell_record: FilledRecord) -> Optional[FilledRecord]:
         """
         Find a matching buy fill for profit calculation.
 
         When a SELL is filled at level N, look for a BUY fill at level N-1
         (the level below, where buy should have been placed).
 
+        This method atomically pairs the matched buy with the sell to prevent
+        race conditions where multiple sells match the same buy.
+
         Args:
             sell_level_index: Level index where sell was filled
+            sell_record: The sell FilledRecord to pair with
 
         Returns:
             Matching buy FilledRecord if found, None otherwise
@@ -1221,6 +1236,9 @@ class GridOrderManager:
         buy_level_index = sell_level_index - 1
         if buy_level_index in self._pending_buy_fills:
             buy_record = self._pending_buy_fills.pop(buy_level_index)
+            # Atomically pair both records
+            buy_record.paired_record = sell_record
+            sell_record.paired_record = buy_record
             return buy_record
 
         # Fallback: find any unpaired buy fill at a lower price
@@ -1230,6 +1248,9 @@ class GridOrderManager:
                 and record.paired_record is None
                 and record.level_index < sell_level_index
             ):
+                # Atomically pair to prevent race condition
+                record.paired_record = sell_record
+                sell_record.paired_record = record
                 return record
 
         return None

@@ -101,7 +101,14 @@ class NotificationConfig(BaseConfig):
 
         try:
             min_index = level_order.index(self.min_level)
-            level_index = level_order.index(level.lower())
-            return level_index >= min_index
         except ValueError:
-            return True
+            # Invalid min_level configured, default to info
+            min_index = level_order.index("info")
+
+        try:
+            level_index = level_order.index(level.lower())
+        except ValueError:
+            # Invalid level requested, reject unknown levels
+            return False
+
+        return level_index >= min_index

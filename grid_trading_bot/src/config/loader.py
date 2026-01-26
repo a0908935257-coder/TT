@@ -238,15 +238,13 @@ class ConfigLoader:
         if value.lower() in ("false", "no", "0", "off"):
             return False
 
-        # Handle integer
+        # Handle numeric values - try float first to preserve decimals
         try:
-            return int(value)
-        except ValueError:
-            pass
-
-        # Handle float
-        try:
-            return float(value)
+            float_val = float(value)
+            # Check if it's actually an integer (no decimal part)
+            if float_val.is_integer() and "." not in value and "e" not in value.lower():
+                return int(float_val)
+            return float_val
         except ValueError:
             pass
 

@@ -197,23 +197,31 @@ class MarketDataManager:
             if not db_ok:
                 raise RuntimeError("Database connection failed")
 
-            # Initialize and connect Redis
+            # Initialize and connect Redis (optional - system can run in degraded mode)
             self._redis = RedisManager(**self._redis_config)
             redis_ok = await self._redis.connect()
             if not redis_ok:
-                raise RuntimeError("Redis connection failed")
+                logger.warning(
+                    "Redis connection failed - running in degraded mode without caching. "
+                    "Some features may be unavailable or slower."
+                )
+                self._redis = None
+                self._market_cache = None
+                self._account_cache = None
+            else:
+                # Initialize caches only if Redis is available
+                self._market_cache = MarketCache(self._redis)
+                self._account_cache = AccountCache(self._redis)
 
-            # Initialize caches
-            self._market_cache = MarketCache(self._redis)
-            self._account_cache = AccountCache(self._redis)
-
-            # Initialize KlineManager
-            if self._exchange:
+            # Initialize KlineManager (requires Redis for caching)
+            if self._exchange and self._redis:
                 self._kline_manager = KlineManager(
                     self._redis,
                     self._db,
                     self._exchange,
                 )
+            elif self._exchange and not self._redis:
+                logger.warning("KlineManager not initialized - requires Redis")
 
             # Initialize repositories
             self._orders = OrderRepository(self._db)

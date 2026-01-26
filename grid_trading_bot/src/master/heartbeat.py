@@ -463,6 +463,7 @@ class HeartbeatMonitor:
         self._missed_counts: dict[str, int] = {}
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._lock: Optional[asyncio.Lock] = None  # Initialized in start()
 
         # Timeout callback registration
         self._timeout_callbacks: List[Callable[[str], Any]] = []
@@ -507,6 +508,8 @@ class HeartbeatMonitor:
             logger.warning("HeartbeatMonitor already running")
             return
 
+        # Initialize lock in event loop context
+        self._lock = asyncio.Lock()
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
         logger.info(
@@ -547,7 +550,7 @@ class HeartbeatMonitor:
     # Core Methods
     # =========================================================================
 
-    def receive(self, heartbeat: HeartbeatData) -> None:
+    async def receive(self, heartbeat: HeartbeatData) -> None:
         """
         Receive a heartbeat from a bot.
 
@@ -556,21 +559,29 @@ class HeartbeatMonitor:
         """
         bot_id = heartbeat.bot_id
 
-        # Check if this was a previously timed out bot
-        was_timed_out = self._missed_counts.get(bot_id, 0) >= self._config.max_missed
+        # Use lock to protect shared state from race conditions with check_all()
+        if self._lock:
+            async with self._lock:
+                # Check if this was a previously timed out bot
+                was_timed_out = self._missed_counts.get(bot_id, 0) >= self._config.max_missed
 
-        # Update heartbeat record
-        self._heartbeats[bot_id] = heartbeat
+                # Update heartbeat record
+                self._heartbeats[bot_id] = heartbeat
 
-        # Reset missed count
-        self._missed_counts[bot_id] = 0
+                # Reset missed count
+                self._missed_counts[bot_id] = 0
+        else:
+            # Fallback if called before start()
+            was_timed_out = self._missed_counts.get(bot_id, 0) >= self._config.max_missed
+            self._heartbeats[bot_id] = heartbeat
+            self._missed_counts[bot_id] = 0
 
-        # Update registry heartbeat timestamp
-        asyncio.create_task(self._registry.update_heartbeat(bot_id))
+        # Update registry heartbeat timestamp (outside lock to avoid deadlock)
+        await self._registry.update_heartbeat(bot_id)
 
         # Notify recovery if bot was timed out
         if was_timed_out and self._notifier:
-            asyncio.create_task(self._notify_recovered(bot_id))
+            await self._notify_recovered(bot_id)
 
         logger.debug(
             f"Heartbeat received: {bot_id} "
@@ -586,35 +597,61 @@ class HeartbeatMonitor:
         """
         results: dict[str, bool] = {}
         now = datetime.now(timezone.utc)
+        timed_out_bots: list[str] = []
 
         # Get all running bots
         running_bots = self._registry.get_by_state(BotState.RUNNING)
 
-        for bot_info in running_bots:
-            bot_id = bot_info.bot_id
-            last_heartbeat = self._heartbeats.get(bot_id)
+        # Acquire lock for reading/writing shared state
+        if self._lock:
+            async with self._lock:
+                for bot_info in running_bots:
+                    bot_id = bot_info.bot_id
+                    last_heartbeat = self._heartbeats.get(bot_id)
 
-            if last_heartbeat is None:
-                # Never received heartbeat
-                self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
-                results[bot_id] = False
-                logger.warning(f"Bot {bot_id}: no heartbeat received")
+                    if last_heartbeat is None:
+                        # Never received heartbeat
+                        self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
+                        results[bot_id] = False
+                        logger.warning(f"Bot {bot_id}: no heartbeat received")
 
-            elif (now - last_heartbeat.timestamp).total_seconds() > self._config.timeout:
-                # Heartbeat timed out
-                self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
-                results[bot_id] = False
-                elapsed = (now - last_heartbeat.timestamp).total_seconds()
-                logger.warning(f"Bot {bot_id}: heartbeat timeout ({elapsed:.1f}s)")
+                    elif (now - last_heartbeat.timestamp).total_seconds() > self._config.timeout:
+                        # Heartbeat timed out
+                        self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
+                        results[bot_id] = False
+                        elapsed = (now - last_heartbeat.timestamp).total_seconds()
+                        logger.warning(f"Bot {bot_id}: heartbeat timeout ({elapsed:.1f}s)")
 
-            else:
-                # Normal
-                results[bot_id] = True
-                continue
+                    else:
+                        # Normal
+                        results[bot_id] = True
+                        continue
 
-            # Check if max missed reached
-            if self._missed_counts[bot_id] >= self._config.max_missed:
-                await self._handle_timeout(bot_id)
+                    # Check if max missed reached - collect for processing outside lock
+                    if self._missed_counts[bot_id] >= self._config.max_missed:
+                        timed_out_bots.append(bot_id)
+        else:
+            # Fallback without lock
+            for bot_info in running_bots:
+                bot_id = bot_info.bot_id
+                last_heartbeat = self._heartbeats.get(bot_id)
+
+                if last_heartbeat is None:
+                    self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
+                    results[bot_id] = False
+                elif (now - last_heartbeat.timestamp).total_seconds() > self._config.timeout:
+                    self._missed_counts[bot_id] = self._missed_counts.get(bot_id, 0) + 1
+                    results[bot_id] = False
+                else:
+                    results[bot_id] = True
+                    continue
+
+                if self._missed_counts[bot_id] >= self._config.max_missed:
+                    timed_out_bots.append(bot_id)
+
+        # Handle timeouts outside lock to avoid holding lock during async operations
+        for bot_id in timed_out_bots:
+            await self._handle_timeout(bot_id)
 
         return results
 

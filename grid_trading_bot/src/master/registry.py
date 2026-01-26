@@ -68,7 +68,7 @@ class BotRegistry:
     """
 
     _instance: Optional["BotRegistry"] = None
-    _lock: asyncio.Lock = asyncio.Lock()
+    _lock: Optional[asyncio.Lock] = None  # Lazy-initialized in event loop context
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "BotRegistry":
         """Ensure singleton pattern."""

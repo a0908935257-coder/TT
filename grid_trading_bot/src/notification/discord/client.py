@@ -146,6 +146,8 @@ class DiscordNotifier(BaseNotifier):
                         # Rate limited by Discord
                         data = await response.json()
                         retry_after = data.get("retry_after", 1)
+                        # Ensure minimum wait time to prevent infinite fast retry loop
+                        retry_after = max(float(retry_after), 1.0)
                         logger.warning(
                             f"Discord rate limited, retry after {retry_after}s"
                         )

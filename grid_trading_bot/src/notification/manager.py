@@ -206,7 +206,17 @@ class NotificationManager:
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
         enabled = os.environ.get("NOTIFICATION_ENABLED", "true").lower() == "true"
         min_level_str = os.environ.get("NOTIFICATION_MIN_LEVEL", "info").lower()
-        dedup_window = int(os.environ.get("NOTIFICATION_DEDUP_WINDOW", "60"))
+
+        # Parse dedup window with validation
+        dedup_window_str = os.environ.get("NOTIFICATION_DEDUP_WINDOW", "60")
+        try:
+            dedup_window = int(dedup_window_str)
+            if dedup_window < 0:
+                logger.warning(f"Invalid NOTIFICATION_DEDUP_WINDOW '{dedup_window_str}', using default 60")
+                dedup_window = 60
+        except ValueError:
+            logger.warning(f"Invalid NOTIFICATION_DEDUP_WINDOW '{dedup_window_str}', using default 60")
+            dedup_window = 60
 
         # Parse min level
         try:

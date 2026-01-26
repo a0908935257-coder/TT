@@ -533,6 +533,13 @@ class SmartGridCalculator:
 
         # Normalize weights
         total_weight = sum(weights)
+        if total_weight == 0:
+            # Fallback: equal allocation if weights sum to zero (should not happen)
+            equal_alloc = (total_investment / Decimal(n)).quantize(
+                Decimal("0.01"), rounding=ROUND_DOWN
+            )
+            return [equal_alloc] * n
+
         allocations = [
             (w / total_weight * total_investment).quantize(
                 Decimal("0.01"), rounding=ROUND_DOWN

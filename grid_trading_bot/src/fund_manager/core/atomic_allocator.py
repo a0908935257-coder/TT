@@ -138,14 +138,39 @@ class AtomicAllocationManager:
 
         logger.info(f"Executing transaction {tx.transaction_id[:8]}")
 
-        try:
-            # Execute allocations with timeout
-            async with asyncio.timeout(effective_timeout):
-                for bot_id, amount in tx.planned_allocations.items():
+        async def _execute_all_allocations():
+            """Execute all planned allocations with atomicity guarantees."""
+            for bot_id, amount in tx.planned_allocations.items():
+                record = None
+                try:
                     record = await self._execute_single_allocation(
                         bot_id, amount, tx.trigger, tx.pre_state_snapshot
                     )
+                except Exception as e:
+                    # Allocation execution failed - create failure record
+                    logger.error(f"Allocation to {bot_id} failed: {e}")
+                    record = AllocationRecord(
+                        bot_id=bot_id,
+                        previous_allocation=tx.pre_state_snapshot.get(bot_id, Decimal("0")),
+                        new_allocation=amount,
+                        trigger=tx.trigger,
+                        success=False,
+                        error_message=str(e),
+                    )
+
+                # Record tracking is critical - if this fails, log and re-raise
+                try:
                     tx.add_executed(record)
+                except Exception as record_err:
+                    logger.critical(
+                        f"Failed to record allocation for {bot_id}: {record_err}. "
+                        f"Allocation was {'successful' if record.success else 'failed'}."
+                    )
+                    raise
+
+        try:
+            # Execute allocations with timeout (using wait_for for Python 3.10 compatibility)
+            await asyncio.wait_for(_execute_all_allocations(), timeout=effective_timeout)
 
         except asyncio.TimeoutError:
             logger.error(

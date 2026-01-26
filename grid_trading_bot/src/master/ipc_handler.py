@@ -110,10 +110,14 @@ class MasterIPCHandler:
         logger.info("Stopping Master IPC handler")
         self._running = False
 
-        # Cancel pending commands
-        for cmd_id, future in self._pending.items():
-            if not future.done():
-                future.set_exception(asyncio.CancelledError("IPC handler stopped"))
+        # Cancel pending commands safely
+        for cmd_id, future in list(self._pending.items()):
+            try:
+                if not future.done():
+                    future.set_exception(asyncio.CancelledError("IPC handler stopped"))
+            except asyncio.InvalidStateError:
+                # Future was already completed or cancelled
+                pass
         self._pending.clear()
 
         # Stop subscriber
@@ -243,10 +247,15 @@ class MasterIPCHandler:
 
             # Find and complete the pending Future
             future = self._pending.pop(response.command_id, None)
-            if future and not future.done():
-                future.set_result(response)
-            else:
+            if future is None:
                 logger.warning(f"No pending Future for command {response.command_id}")
+            else:
+                try:
+                    if not future.done():
+                        future.set_result(response)
+                except asyncio.InvalidStateError:
+                    # Future was cancelled or already completed between check and set
+                    logger.debug(f"Future for command {response.command_id} already completed or cancelled")
 
         except Exception as e:
             logger.error(f"Error processing response: {e}")
@@ -271,13 +280,23 @@ class MasterIPCHandler:
 
             # Notify heartbeat monitor
             # Convert IPC Heartbeat to master heartbeat format
+            # Use the heartbeat's state directly (not from registry) to avoid stale state
             from src.master.heartbeat import HeartbeatData
+            from src.master.models import BotState
+            try:
+                bot_state = BotState(heartbeat.state)
+            except ValueError:
+                # Unknown state string, default to UNKNOWN or use registry state as fallback
+                bot_info = self._registry.get(heartbeat.bot_id)
+                bot_state = bot_info.state if bot_info else BotState.UNKNOWN
+                logger.warning(f"Unknown state '{heartbeat.state}' from bot {heartbeat.bot_id}")
+
             hb_data = HeartbeatData(
                 bot_id=heartbeat.bot_id,
-                state=self._registry.get(heartbeat.bot_id).state if self._registry.get(heartbeat.bot_id) else None,
+                state=bot_state,
                 metrics=heartbeat.metrics,
             )
-            self._heartbeat_monitor.receive(hb_data)
+            await self._heartbeat_monitor.receive(hb_data)
 
         except Exception as e:
             logger.error(f"Error processing heartbeat: {e}")

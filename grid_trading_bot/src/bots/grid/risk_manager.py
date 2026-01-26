@@ -976,7 +976,7 @@ class GridRiskManager:
             current_price: Current market price
 
         Returns:
-            True if trading resumed
+            True if trading resumed successfully
         """
         if self._state not in (RiskState.PAUSED, RiskState.BREAKOUT_UPPER, RiskState.BREAKOUT_LOWER):
             return False
@@ -986,11 +986,18 @@ class GridRiskManager:
 
         logger.info(f"Price returned to grid range at {current_price}")
 
-        # Resume trading
-        self._state = RiskState.NORMAL
-
         # Re-place orders at empty levels
-        placed = await self._order_manager.place_initial_orders()
+        try:
+            placed = await self._order_manager.place_initial_orders()
+            if placed == 0:
+                logger.warning("Price returned but no orders were placed - check grid state")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to place orders on price return: {e}")
+            return False
+
+        # Resume trading only after successful order placement
+        self._state = RiskState.NORMAL
 
         # Notify
         await self._notify_price_return(current_price, placed)
@@ -1009,7 +1016,7 @@ class GridRiskManager:
             return True
 
         elapsed = datetime.now(timezone.utc) - self._last_reset_time
-        cooldown_seconds = self._config.reset_cooldown_minutes * 60
+        cooldown_seconds = self._config.cooldown_days * 24 * 60 * 60
 
         return elapsed.total_seconds() >= cooldown_seconds
 

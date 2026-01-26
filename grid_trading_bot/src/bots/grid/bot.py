@@ -457,15 +457,21 @@ class GridBot(BaseBot):
 
     def _get_heartbeat_metrics(self) -> Dict[str, Any]:
         """Get metrics to include in heartbeat."""
-        metrics = super()._get_heartbeat_metrics()
+        metrics = {
+            "uptime_seconds": self._get_uptime_seconds(),
+            "total_trades": self._stats.total_trades,
+        }
 
-        # Add grid-specific metrics
+        # Use order_manager as single source of truth for profit (avoid double counting)
         if self._order_manager:
             stats = self._order_manager.get_statistics()
             metrics.update({
+                "total_profit": float(stats.get("total_profit", 0)),
                 "pending_buy_orders": stats.get("pending_buy_count", 0),
                 "pending_sell_orders": stats.get("pending_sell_count", 0),
             })
+        else:
+            metrics["total_profit"] = 0.0
 
         return metrics
 
