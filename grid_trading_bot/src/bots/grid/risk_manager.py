@@ -1001,7 +1001,10 @@ class GridRiskManager:
         Returns:
             True if trading resumed successfully
         """
-        if self._state not in (RiskState.PAUSED, RiskState.BREAKOUT_UPPER, RiskState.BREAKOUT_LOWER):
+        # Store initial state for verification
+        initial_state = self._state
+
+        if initial_state not in (RiskState.PAUSED, RiskState.BREAKOUT_UPPER, RiskState.BREAKOUT_LOWER):
             return False
 
         if not self.check_price_return(current_price):
@@ -1019,7 +1022,15 @@ class GridRiskManager:
             logger.error(f"Failed to place orders on price return: {e}")
             return False
 
-        # Resume trading only after successful order placement
+        # Verify state hasn't changed during order placement (e.g., stop loss triggered)
+        if self._state != initial_state:
+            logger.warning(
+                f"State changed during order placement: {initial_state} -> {self._state}, "
+                "not resuming to NORMAL"
+            )
+            return False
+
+        # Resume trading only after successful order placement and state verification
         self._state = RiskState.NORMAL
 
         # Notify

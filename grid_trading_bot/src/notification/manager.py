@@ -11,6 +11,7 @@ Enhanced with:
 
 import hashlib
 import os
+import re
 import time
 from collections import deque
 from decimal import Decimal
@@ -23,6 +24,13 @@ from .discord import DiscordNotifier
 from .templates import NotificationTemplates
 
 logger = get_logger(__name__)
+
+# Discord webhook URL pattern
+# Format: https://discord.com/api/webhooks/{webhook_id}/{webhook_token}
+# or: https://discordapp.com/api/webhooks/{webhook_id}/{webhook_token}
+DISCORD_WEBHOOK_PATTERN = re.compile(
+    r'^https://(discord\.com|discordapp\.com)/api/webhooks/\d+/[\w-]+$'
+)
 
 
 class NotificationRateLimiter:
@@ -224,10 +232,18 @@ class NotificationManager:
         except ValueError:
             min_level = NotificationLevel.INFO
 
-        # Create Discord notifier if webhook URL provided
+        # Create Discord notifier if webhook URL provided and valid
         discord = None
         if webhook_url:
-            discord = DiscordNotifier(webhook_url=webhook_url)
+            # Validate Discord webhook URL format
+            if DISCORD_WEBHOOK_PATTERN.match(webhook_url):
+                discord = DiscordNotifier(webhook_url=webhook_url)
+            else:
+                logger.warning(
+                    f"Invalid DISCORD_WEBHOOK_URL format. Expected: "
+                    "https://discord.com/api/webhooks/{{id}}/{{token}}"
+                )
+                # Don't create Discord notifier with invalid URL
 
         return cls(
             discord=discord,
