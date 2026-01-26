@@ -353,7 +353,11 @@ class BinanceSpotAPI:
         data = await self._request("GET", PUBLIC_ENDPOINTS["EXCHANGE_INFO"]["path"], params)
 
         if symbol and data.get("symbols"):
-            return SymbolInfo.from_binance(data["symbols"][0])
+            symbols = data["symbols"]
+            if symbols:  # Check list is not empty
+                return SymbolInfo.from_binance(symbols[0])
+            else:
+                raise ExchangeError(f"Symbol {symbol} not found in exchange info")
 
         return data
 

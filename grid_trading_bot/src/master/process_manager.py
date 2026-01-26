@@ -131,10 +131,12 @@ class ProcessManager:
             logger.debug(f"Command: {' '.join(cmd)}")
 
             # Spawn process
+            # Use DEVNULL to prevent buffer overflow hang
+            # Bot logs are handled by the bot's own logging system
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 # Don't inherit signal handlers
                 start_new_session=True,
             )

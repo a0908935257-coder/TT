@@ -137,6 +137,9 @@ class RSIGridBot(BaseBot):
         # Kline subscription callback
         self._kline_callback: Optional[Callable] = None
 
+        # Kline callback tasks tracking (prevent memory leak)
+        self._kline_tasks: set[asyncio.Task] = set()
+
         # State persistence
         self._save_task: Optional[asyncio.Task] = None
         self._save_interval_minutes: int = 5
@@ -234,7 +237,9 @@ class RSIGridBot(BaseBot):
 
         # Subscribe to kline updates (WebSocket, 與回測一致)
         def on_kline_sync(kline: Kline) -> None:
-            asyncio.create_task(self._on_kline(kline))
+            task = asyncio.create_task(self._on_kline(kline))
+            self._kline_tasks.add(task)
+            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
 
         self._kline_callback = on_kline_sync
         await self._data_manager.klines.subscribe_kline(
@@ -293,6 +298,16 @@ class RSIGridBot(BaseBot):
 
         # Stop position reconciliation
         self._stop_position_reconciliation()
+
+        # Cancel and cleanup kline callback tasks
+        for task in list(self._kline_tasks):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._kline_tasks.clear()
 
         # Stop periodic save task and save final state
         await self._stop_save_task()

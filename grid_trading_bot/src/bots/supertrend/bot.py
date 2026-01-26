@@ -148,6 +148,9 @@ class SupertrendBot(BaseBot):
         # Kline callback reference for unsubscribe
         self._kline_callback = None
 
+        # Kline callback tasks tracking (prevent memory leak)
+        self._kline_tasks: set[asyncio.Task] = set()
+
         # Background monitor task
         self._monitor_task: Optional[asyncio.Task] = None
 
@@ -253,7 +256,9 @@ class SupertrendBot(BaseBot):
 
         # Subscribe to kline updates (sync wrapper for async callback)
         def on_kline_sync(kline: Kline) -> None:
-            asyncio.create_task(self._on_kline(kline))
+            task = asyncio.create_task(self._on_kline(kline))
+            self._kline_tasks.add(task)
+            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
 
         self._kline_callback = on_kline_sync  # Store reference for unsubscribe
         await self._data_manager.klines.subscribe_kline(
@@ -323,6 +328,16 @@ class SupertrendBot(BaseBot):
 
         # Stop position reconciliation
         self._stop_position_reconciliation()
+
+        # Cancel and cleanup kline callback tasks
+        for task in list(self._kline_tasks):
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._kline_tasks.clear()
 
         # Stop periodic save task and save final state
         await self._stop_save_task()

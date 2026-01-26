@@ -760,6 +760,8 @@ class OrderRouter:
         """
         if plan.algorithm == ExecutionAlgorithm.DIRECT:
             # Execute single order immediately
+            if not plan.child_orders:
+                raise ValueError("No child orders to execute in DIRECT algorithm")
             await self._execute_child(plan.child_orders[0])
 
         elif plan.algorithm in (ExecutionAlgorithm.TWAP, ExecutionAlgorithm.VWAP):

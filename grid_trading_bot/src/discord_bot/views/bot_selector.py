@@ -91,6 +91,13 @@ class BotSelector(discord.ui.Select):
             )
             return
 
+        if not self.values:
+            await interaction.response.send_message(
+                "No selection made.",
+                ephemeral=True,
+            )
+            return
+
         if self._on_select:
             await self._on_select(interaction, self.values[0])
         else:
@@ -150,6 +157,13 @@ class BotSelectorByState(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         """Handle selection."""
+        if not self.values:
+            await interaction.response.send_message(
+                "No selection made.",
+                ephemeral=True,
+            )
+            return
+
         if self.values[0] == "none":
             await interaction.response.send_message(
                 "No bots available with the required state.",
