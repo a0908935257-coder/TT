@@ -416,8 +416,9 @@ class CircuitBreaker:
     # =========================================================================
 
     def _reset_daily_count_if_needed(self) -> None:
-        """Reset daily trigger count if it's a new day."""
-        today = date.today()
+        """Reset daily trigger count if it's a new day (UTC)."""
+        # Use UTC date for consistency with the rest of the system
+        today = datetime.now(timezone.utc).date()
 
         if self._last_reset_date != today:
             self._trigger_count_today = 0

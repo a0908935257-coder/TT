@@ -256,8 +256,8 @@ class RiskEngine:
         """Daily reset loop - resets at midnight UTC."""
         while self._running:
             try:
-                # Check if we need to reset
-                today = date.today()
+                # Check if we need to reset - use UTC date for consistency
+                today = datetime.now(timezone.utc).date()
                 if self._last_daily_reset != today:
                     await self._perform_daily_reset()
                     self._last_daily_reset = today
