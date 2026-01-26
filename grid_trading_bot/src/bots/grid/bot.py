@@ -572,10 +572,17 @@ class GridBot(BaseBot):
         """
         Rebuild grid around new center price.
 
+        Uses transactional approach: saves old state before rebuild,
+        and rolls back if rebuild fails.
+
         Args:
             new_center_price: New center price for grid calculation
         """
         logger.info(f"Rebuilding grid around {new_center_price}")
+
+        # Save old state for rollback
+        old_setup = self._setup
+        old_calculator = self._calculator
 
         try:
             klines = await self._fetch_klines()
@@ -583,26 +590,51 @@ class GridBot(BaseBot):
                 raise RuntimeError("Failed to fetch kline data for rebuild")
 
             grid_config = self._create_grid_config()
-            self._calculator = SmartGridCalculator(
+            new_calculator = SmartGridCalculator(
                 config=grid_config,
                 klines=klines,
                 current_price=new_center_price,
             )
 
-            self._setup = self._calculator.calculate()
+            new_setup = new_calculator.calculate()
             logger.info(
-                f"Grid rebuilt: {self._setup.grid_count} levels, "
-                f"range {self._setup.lower_price}-{self._setup.upper_price}"
+                f"Grid calculated: {new_setup.grid_count} levels, "
+                f"range {new_setup.lower_price}-{new_setup.upper_price}"
             )
 
-            self._order_manager.initialize(self._setup)
+            # Initialize order manager with new setup
+            self._order_manager.initialize(new_setup)
+
+            # Try to place orders - this is the critical step
             placed = await self._order_manager.place_initial_orders()
+
+            if placed == 0:
+                # No orders placed - this is a failure, rollback
+                raise RuntimeError("No orders were placed after grid rebuild")
+
+            # Success - commit the new state
+            self._setup = new_setup
+            self._calculator = new_calculator
             logger.info(f"Placed {placed} orders after grid rebuild")
 
             await self._save_state()
 
         except Exception as e:
             logger.error(f"Failed to rebuild grid: {e}")
+
+            # Rollback to old state
+            if old_setup is not None:
+                logger.info("Rolling back to previous grid state")
+                self._setup = old_setup
+                self._calculator = old_calculator
+                self._order_manager.initialize(old_setup)
+                # Note: old orders were cancelled, need to re-place them
+                try:
+                    restored = await self._order_manager.place_initial_orders()
+                    logger.info(f"Restored {restored} orders after rollback")
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore orders after rollback: {restore_error}")
+
             await self._notify_error(f"Grid rebuild failed: {e}")
             raise
 

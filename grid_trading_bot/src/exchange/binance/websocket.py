@@ -269,27 +269,38 @@ class BinanceWebSocket:
 
         # Attempt connection
         if await self.connect():
-            # Resubscribe to all streams with lock protection
-            streams_to_resubscribe = []
+            # Resubscribe to all streams with lock protection for entire operation
+            # This prevents race conditions where subscriptions are modified during resubscription
             if self._subscriptions_lock:
                 async with self._subscriptions_lock:
                     if self._subscriptions:
                         streams_to_resubscribe = list(self._subscriptions.keys())
+                        if streams_to_resubscribe:
+                            logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams")
+                            # Retry subscription up to 3 times (within lock to ensure consistency)
+                            for attempt in range(3):
+                                success = await self._send_subscribe(streams_to_resubscribe)
+                                if success:
+                                    logger.info(f"Successfully resubscribed to {len(streams_to_resubscribe)} streams")
+                                    break
+                                logger.warning(f"Resubscription attempt {attempt + 1}/3 failed")
+                                await asyncio.sleep(1)
+                            else:
+                                logger.error("Failed to resubscribe after 3 attempts")
             elif self._subscriptions:
+                # Fallback without lock (for backwards compatibility)
                 streams_to_resubscribe = list(self._subscriptions.keys())
-
-            if streams_to_resubscribe:
-                logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams")
-                # Retry subscription up to 3 times
-                for attempt in range(3):
-                    success = await self._send_subscribe(streams_to_resubscribe)
-                    if success:
-                        logger.info(f"Successfully resubscribed to {len(streams_to_resubscribe)} streams")
-                        break
-                    logger.warning(f"Resubscription attempt {attempt + 1}/3 failed")
-                    await asyncio.sleep(1)
-                else:
-                    logger.error("Failed to resubscribe after 3 attempts")
+                if streams_to_resubscribe:
+                    logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams (no lock)")
+                    for attempt in range(3):
+                        success = await self._send_subscribe(streams_to_resubscribe)
+                        if success:
+                            logger.info(f"Successfully resubscribed to {len(streams_to_resubscribe)} streams")
+                            break
+                        logger.warning(f"Resubscription attempt {attempt + 1}/3 failed")
+                        await asyncio.sleep(1)
+                    else:
+                        logger.error("Failed to resubscribe after 3 attempts")
             return True
 
         return await self.reconnect()

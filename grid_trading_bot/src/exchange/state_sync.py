@@ -782,10 +782,23 @@ class StateSynchronizer:
                 order_id = order_state.order_id
                 exchange_order_ids.add(order_id)
 
-                # Check for conflicts
+                # Check for conflicts and timestamp
                 cached_entry = await self._order_cache.get_entry(order_id)
                 if cached_entry:
-                    self._check_order_conflict(cached_entry.data, order_state)
+                    cached_order = cached_entry.data
+                    self._check_order_conflict(cached_order, order_state)
+
+                    # Don't overwrite with older data (compare updated_at timestamps)
+                    if (
+                        cached_order.updated_at
+                        and order_state.updated_at
+                        and cached_order.updated_at > order_state.updated_at
+                    ):
+                        logger.debug(
+                            f"Skipping REST sync for {order_id}: "
+                            f"cached={cached_order.updated_at} > incoming={order_state.updated_at}"
+                        )
+                        continue
 
                 await self._order_cache.set(
                     order_id,
@@ -892,10 +905,23 @@ class StateSynchronizer:
         try:
             order = self._parse_order(order_data)
 
-            # Check for conflict
+            # Check for conflict and timestamp
             cached_entry = await self._order_cache.get_entry(order.order_id)
             if cached_entry:
-                self._check_order_conflict(cached_entry.data, order)
+                cached_order = cached_entry.data
+                self._check_order_conflict(cached_order, order)
+
+                # Don't overwrite with older data (compare updated_at timestamps)
+                if (
+                    cached_order.updated_at
+                    and order.updated_at
+                    and cached_order.updated_at > order.updated_at
+                ):
+                    logger.debug(
+                        f"Skipping WS update for {order.order_id}: "
+                        f"cached={cached_order.updated_at} > incoming={order.updated_at}"
+                    )
+                    return
 
             await self._order_cache.set(
                 order.order_id,

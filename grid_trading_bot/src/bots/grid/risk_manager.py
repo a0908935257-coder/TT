@@ -260,6 +260,9 @@ class GridRiskManager:
         # Background tasks tracking (fire-and-forget tasks that need cleanup)
         self._pending_tasks: set[asyncio.Task] = set()
 
+        # Lock for state transitions to prevent TOCTOU vulnerabilities
+        self._state_lock: asyncio.Lock = asyncio.Lock()
+
         # State change callbacks
         self._state_change_callbacks: list[Callable[[BotState, BotState, str], Any]] = []
 
@@ -1048,45 +1051,39 @@ class GridRiskManager:
         """
         Handle price returning to grid range after breakout.
 
+        Uses state lock to prevent TOCTOU vulnerabilities during state transition.
+
         Args:
             current_price: Current market price
 
         Returns:
             True if trading resumed successfully
         """
-        # Store initial state for verification
-        initial_state = self._state
-
-        if initial_state not in (RiskState.PAUSED, RiskState.BREAKOUT_UPPER, RiskState.BREAKOUT_LOWER):
-            return False
-
-        if not self.check_price_return(current_price):
-            return False
-
-        logger.info(f"Price returned to grid range at {current_price}")
-
-        # Re-place orders at empty levels
-        try:
-            placed = await self._order_manager.place_initial_orders()
-            if placed == 0:
-                logger.warning("Price returned but no orders were placed - check grid state")
+        async with self._state_lock:
+            # Check state under lock
+            if self._state not in (RiskState.PAUSED, RiskState.BREAKOUT_UPPER, RiskState.BREAKOUT_LOWER):
                 return False
-        except Exception as e:
-            logger.error(f"Failed to place orders on price return: {e}")
-            return False
 
-        # Verify state hasn't changed during order placement (e.g., stop loss triggered)
-        if self._state != initial_state:
-            logger.warning(
-                f"State changed during order placement: {initial_state} -> {self._state}, "
-                "not resuming to NORMAL"
-            )
-            return False
+            if not self.check_price_return(current_price):
+                return False
 
-        # Resume trading only after successful order placement and state verification
-        self._state = RiskState.NORMAL
+            logger.info(f"Price returned to grid range at {current_price}")
 
-        # Notify
+            # Re-place orders at empty levels
+            try:
+                placed = await self._order_manager.place_initial_orders()
+                if placed == 0:
+                    logger.warning("Price returned but no orders were placed - check grid state")
+                    return False
+            except Exception as e:
+                logger.error(f"Failed to place orders on price return: {e}")
+                return False
+
+            # State is protected by lock, so no need for separate verification
+            # Resume trading after successful order placement
+            self._state = RiskState.NORMAL
+
+        # Notify outside of lock to avoid holding lock during I/O
         await self._notify_price_return(current_price, placed)
 
         logger.info(f"Trading resumed: {placed} orders placed")
@@ -1673,6 +1670,7 @@ class GridRiskManager:
         Pause the bot.
 
         Cancels all pending orders but keeps positions.
+        Uses state lock to ensure consistent state updates.
 
         Args:
             reason: Pause reason
@@ -1680,20 +1678,22 @@ class GridRiskManager:
         Returns:
             True if paused successfully
         """
-        if self._bot_state not in (BotState.RUNNING, BotState.ERROR):
-            logger.warning(f"Cannot pause from state: {self._bot_state.value}")
-            return False
+        async with self._state_lock:
+            if self._bot_state not in (BotState.RUNNING, BotState.ERROR):
+                logger.warning(f"Cannot pause from state: {self._bot_state.value}")
+                return False
 
-        # Update states FIRST before canceling orders (atomic state transition)
-        # This ensures we don't cancel orders and then fail to change state
-        if not await self.change_state(BotState.PAUSED, reason):
-            logger.error("Failed to change BotState to PAUSED")
-            return False
+            # Update RiskState FIRST to ensure consistency when callbacks are triggered
+            self._state = RiskState.PAUSED
 
-        # Update RiskState after BotState change succeeds
-        self._state = RiskState.PAUSED
+            # Update BotState (this triggers callbacks/notifications)
+            if not await self.change_state(BotState.PAUSED, reason):
+                # Rollback RiskState on failure
+                self._state = RiskState.NORMAL
+                logger.error("Failed to change BotState to PAUSED")
+                return False
 
-        # Cancel all orders AFTER state change succeeds
+        # Cancel all orders OUTSIDE of lock to avoid holding lock during I/O
         # If cancel fails, we're already in PAUSED state which is correct
         cancelled = await self._order_manager.cancel_all_orders()
 
@@ -1705,14 +1705,12 @@ class GridRiskManager:
         """
         Resume the bot from paused state.
 
+        Uses state lock to ensure consistent state updates.
+
         Returns:
             True if resumed successfully
         """
-        if self._bot_state != BotState.PAUSED:
-            logger.warning(f"Cannot resume from state: {self._bot_state.value}")
-            return False
-
-        # Check if risk conditions cleared
+        # Check price outside of lock to avoid holding lock during I/O
         setup = self._order_manager.setup
         if setup:
             current_price = await self._order_manager._data_manager.get_price(
@@ -1727,15 +1725,22 @@ class GridRiskManager:
                     logger.warning(f"Cannot resume: still in {direction.value} breakout")
                     return False
 
-        # Update states - BotState first to ensure sync
-        if not await self.change_state(BotState.RUNNING, "Resumed"):
-            logger.error("Failed to change BotState to RUNNING")
-            return False
+        async with self._state_lock:
+            if self._bot_state != BotState.PAUSED:
+                logger.warning(f"Cannot resume from state: {self._bot_state.value}")
+                return False
 
-        # Only update RiskState after BotState change succeeds
-        self._state = RiskState.NORMAL
+            # Update RiskState FIRST to ensure consistency when callbacks are triggered
+            self._state = RiskState.NORMAL
 
-        # Re-place orders
+            # Update BotState (this triggers callbacks/notifications)
+            if not await self.change_state(BotState.RUNNING, "Resumed"):
+                # Rollback RiskState on failure
+                self._state = RiskState.PAUSED
+                logger.error("Failed to change BotState to RUNNING")
+                return False
+
+        # Re-place orders outside of lock
         placed = await self._order_manager.place_initial_orders()
 
         logger.info(f"Bot resumed. Placed {placed} orders.")
