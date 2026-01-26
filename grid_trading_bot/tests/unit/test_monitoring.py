@@ -263,8 +263,8 @@ class TestAlertManager:
 
     @pytest.fixture
     def manager(self):
-        """Create test alert manager."""
-        return AlertManager()
+        """Create test alert manager with aggregation disabled for deterministic tests."""
+        return AlertManager(enable_aggregation=False, enable_rate_limiting=False)
 
     @pytest.mark.asyncio
     async def test_fire_simple_alert(self, manager):
@@ -675,7 +675,7 @@ class TestMonitoringIntegration:
     @pytest.mark.asyncio
     async def test_alert_with_callback(self):
         """Test alert manager with callback."""
-        manager = AlertManager()
+        manager = AlertManager(enable_aggregation=False, enable_rate_limiting=False)
         alerts_received = []
 
         async def on_alert(alert):

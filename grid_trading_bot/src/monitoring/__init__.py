@@ -18,6 +18,9 @@ from .alerts import (
     PersistedAlert,
     AlertDeduplicator,
     AlertRouter,
+    AlertRateLimiter,
+    AlertAggregator,
+    AlertRetryQueue,
 )
 from .exporter import (
     MetricsExporter,
@@ -105,6 +108,9 @@ __all__ = [
     "PersistedAlert",
     "AlertDeduplicator",
     "AlertRouter",
+    "AlertRateLimiter",
+    "AlertAggregator",
+    "AlertRetryQueue",
     # Exporter
     "MetricsExporter",
     "MetricType",

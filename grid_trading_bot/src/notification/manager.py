@@ -2,14 +2,19 @@
 Notification Manager.
 
 Provides a unified notification manager with deduplication, muting,
-and business-level notification methods.
+rate limiting, and business-level notification methods.
+
+Enhanced with:
+- Rate limiting to prevent notification storms
+- Critical notification bypass for urgent alerts
 """
 
 import hashlib
 import os
 import time
+from collections import deque
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Deque, Optional, Tuple
 
 from src.core import get_logger
 
@@ -18,6 +23,92 @@ from .discord import DiscordNotifier
 from .templates import NotificationTemplates
 
 logger = get_logger(__name__)
+
+
+class NotificationRateLimiter:
+    """
+    Rate limiter for notifications with critical bypass.
+
+    Prevents notification storms while ensuring critical notifications
+    are never blocked.
+    """
+
+    def __init__(
+        self,
+        max_per_minute: int = 25,
+        burst_limit: int = 10,
+        burst_window_seconds: int = 5,
+    ):
+        """
+        Initialize rate limiter.
+
+        Args:
+            max_per_minute: Maximum notifications per minute
+            burst_limit: Maximum notifications in burst window
+            burst_window_seconds: Burst detection window
+        """
+        self._max_per_minute = max_per_minute
+        self._burst_limit = burst_limit
+        self._burst_window = burst_window_seconds
+
+        # Sliding window: (timestamp, level)
+        self._window: Deque[Tuple[float, str]] = deque()
+
+        # Statistics
+        self._stats = {
+            "total_allowed": 0,
+            "total_rate_limited": 0,
+            "total_burst_limited": 0,
+            "critical_bypassed": 0,
+        }
+
+    def should_allow(self, level: NotificationLevel) -> bool:
+        """
+        Check if notification should be allowed.
+
+        Args:
+            level: Notification level
+
+        Returns:
+            True if notification should be sent
+        """
+        now = time.time()
+        minute_ago = now - 60
+        burst_ago = now - self._burst_window
+
+        # Clean old entries
+        while self._window and self._window[0][0] < minute_ago:
+            self._window.popleft()
+
+        # Critical notifications always bypass
+        if level == NotificationLevel.CRITICAL:
+            self._window.append((now, level.value))
+            self._stats["critical_bypassed"] += 1
+            self._stats["total_allowed"] += 1
+            return True
+
+        # Check burst limit
+        burst_count = sum(1 for t, _ in self._window if t >= burst_ago)
+        if burst_count >= self._burst_limit:
+            self._stats["total_burst_limited"] += 1
+            return False
+
+        # Check per-minute limit
+        if len(self._window) >= self._max_per_minute:
+            self._stats["total_rate_limited"] += 1
+            return False
+
+        self._window.append((now, level.value))
+        self._stats["total_allowed"] += 1
+        return True
+
+    def get_stats(self) -> dict[str, int]:
+        """Get rate limiter statistics."""
+        return self._stats.copy()
+
+    def reset(self) -> None:
+        """Reset rate limiter state."""
+        self._window.clear()
 
 
 class NotificationManager:
@@ -44,6 +135,8 @@ class NotificationManager:
         enabled: bool = True,
         min_level: NotificationLevel = NotificationLevel.INFO,
         dedup_window: int = 60,
+        rate_limit: int = 25,
+        enable_rate_limiting: bool = True,
     ):
         """
         Initialize NotificationManager.
@@ -53,12 +146,22 @@ class NotificationManager:
             enabled: Enable/disable notifications
             min_level: Minimum notification level to send
             dedup_window: Deduplication time window in seconds
+            rate_limit: Maximum notifications per minute
+            enable_rate_limiting: Enable rate limiting
         """
         self._discord = discord
         self._enabled = enabled
         self._min_level = min_level
         self._dedup_window = dedup_window
         self._muted = False
+        self._enable_rate_limiting = enable_rate_limiting
+
+        # Rate limiter
+        self._rate_limiter = NotificationRateLimiter(
+            max_per_minute=rate_limit,
+            burst_limit=10,
+            burst_window_seconds=5,
+        )
 
         # Deduplication cache: hash -> timestamp
         self._dedup_cache: dict[str, float] = {}
@@ -68,6 +171,7 @@ class NotificationManager:
             "total_sent": 0,
             "total_deduplicated": 0,
             "total_muted": 0,
+            "total_rate_limited": 0,
             "by_level": {level.value: 0 for level in NotificationLevel},
         }
 
@@ -133,7 +237,7 @@ class NotificationManager:
                    - enabled: bool
                    - discord_webhook_url: str
                    - min_level: str
-                   - rate_limit: int (used as dedup_window)
+                   - rate_limit: int (max notifications per minute)
 
         Returns:
             NotificationManager instance
@@ -144,7 +248,8 @@ class NotificationManager:
         webhook_url = getattr(notif_config, "discord_webhook_url", None)
         enabled = getattr(notif_config, "enabled", True)
         min_level_str = getattr(notif_config, "min_level", "info")
-        dedup_window = getattr(notif_config, "rate_limit", 60)
+        rate_limit = getattr(notif_config, "rate_limit", 25)
+        dedup_window = getattr(notif_config, "dedup_window", 60)
 
         # Parse min level
         try:
@@ -162,6 +267,7 @@ class NotificationManager:
             enabled=enabled,
             min_level=min_level,
             dedup_window=dedup_window,
+            rate_limit=rate_limit,
         )
 
     # =========================================================================
@@ -209,10 +315,12 @@ class NotificationManager:
             "total_sent": self._stats["total_sent"],
             "total_deduplicated": self._stats["total_deduplicated"],
             "total_muted": self._stats["total_muted"],
+            "total_rate_limited": self._stats["total_rate_limited"],
             "by_level": self._stats["by_level"].copy(),
             "enabled": self._enabled,
             "muted": self._muted,
             "min_level": self._min_level.value,
+            "rate_limiter": self._rate_limiter.get_stats(),
         }
 
     # =========================================================================
@@ -283,7 +391,7 @@ class NotificationManager:
         dedup_key: Optional[str] = None,
     ) -> bool:
         """
-        Send embed notification with deduplication.
+        Send embed notification with deduplication and rate limiting.
 
         Args:
             embed: DiscordEmbed or dict
@@ -302,6 +410,15 @@ class NotificationManager:
         if dedup_key and self._is_duplicate(dedup_key):
             self._stats["total_deduplicated"] += 1
             logger.debug(f"Notification deduplicated: {dedup_key[:16]}...")
+            return False
+
+        # Check rate limiting (CRITICAL always bypasses)
+        if self._enable_rate_limiting and not self._rate_limiter.should_allow(level):
+            self._stats["total_rate_limited"] += 1
+            logger.warning(
+                f"Notification rate limited (level={level.value}). "
+                f"Stats: {self._rate_limiter.get_stats()}"
+            )
             return False
 
         # Get embed dict
