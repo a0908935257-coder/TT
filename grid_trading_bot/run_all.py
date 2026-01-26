@@ -263,32 +263,41 @@ def create_notifier() -> NotificationManager:
 
 def get_bollinger_config() -> dict:
     """
-    Get Bollinger Trend Bot config from settings.yaml.
+    Get Bollinger BB_TREND_GRID Bot config from settings.yaml.
 
-    ✅ Walk-Forward 驗證通過 (75% 一致性, OOS 96%, Sharpe 1.81):
-    - BOLLINGER_TREND 策略 (Supertrend + BB)
-    - BB_PERIOD=20, BB_STD=3.0
-    - ST_ATR_PERIOD=20, ST_ATR_MULTIPLIER=3.5
+    ✅ Walk-Forward 驗證通過 (80% 一致性, OOS Sharpe 6.56):
+    - BB_TREND_GRID 策略 (BB 中軌趨勢 + 網格交易)
+    - BB_PERIOD=20, BB_STD=2.0
+    - Grid: 10 格, 4% 範圍
     - leverage: 2x
-    - 報酬: +35.1%, 最大回撤: 6.7%
+    - 止損: 5%
     """
     params = _get_bot_strategy_params("bollinger_*")
     return {
         "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "15m"),
+        "timeframe": params.get("timeframe", "1h"),
         "leverage": params.get("leverage", 2),
+        "margin_type": params.get("margin_type", "ISOLATED"),
         "position_size_pct": params.get("position_size_pct", 0.1),
+        "max_position_pct": params.get("max_position_pct", 0.5),
         # Bollinger Bands (Walk-Forward validated)
         "bb_period": params.get("bb_period", 20),
-        "bb_std": params.get("bb_std", 3.0),
-        # Supertrend (Walk-Forward validated)
-        "st_atr_period": params.get("st_atr_period", 20),
-        "st_atr_multiplier": params.get("st_atr_multiplier", 3.5),
-        # ATR Stop Loss
-        "atr_stop_multiplier": params.get("atr_stop_multiplier", 2.0),
+        "bb_std": params.get("bb_std", 2.0),
+        # Grid parameters
+        "grid_count": params.get("grid_count", 10),
+        "grid_range_pct": params.get("grid_range_pct", 0.04),  # 4% range
+        "take_profit_grids": params.get("take_profit_grids", 1),
+        # Risk management
+        "stop_loss_pct": params.get("stop_loss_pct", 0.05),
+        "rebuild_threshold_pct": params.get("rebuild_threshold_pct", 0.02),
         # BBW filter
         "bbw_lookback": params.get("bbw_lookback", 200),
         "bbw_threshold_pct": params.get("bbw_threshold_pct", 20),
+        # Protective features (disabled by default for Bollinger)
+        "use_hysteresis": params.get("use_hysteresis", False),
+        "hysteresis_pct": params.get("hysteresis_pct", 0.002),
+        "use_signal_cooldown": params.get("use_signal_cooldown", False),
+        "cooldown_bars": params.get("cooldown_bars", 2),
         # max_capital is managed by FundManager
     }
 
@@ -687,8 +696,8 @@ async def main():
         dispatch_result = await _fund_manager.dispatch_funds(trigger="startup")
         if dispatch_result.success:
             print(f"  ✓ 資金分配成功")
-            for bot_id, amount in dispatch_result.allocations.items():
-                print(f"    • {bot_id}: {amount:.2f} USDT")
+            for allocation in dispatch_result.allocations:
+                print(f"    • {allocation.bot_id}: {allocation.amount:.2f} USDT")
         else:
             print(f"  ⚠️ 資金分配警告: {dispatch_result.errors}")
 

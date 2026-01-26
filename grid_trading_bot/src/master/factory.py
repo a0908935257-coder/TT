@@ -228,12 +228,11 @@ class BotFactory:
         """
         Create a BollingerBot instance.
 
-        Walk-Forward 驗證通過的參數 (75% 一致性, Sharpe 1.81):
-        - bb_period: 20, bb_std: 3.0
-        - st_atr_period: 20, st_atr_multiplier: 3.5
-        - atr_stop_multiplier: 2.0
+        Walk-Forward 驗證通過的參數 (80% 一致性, OOS Sharpe 6.56):
+        - bb_period: 20, bb_std: 2.0
+        - grid_count: 10, grid_range_pct: 4%
         - leverage: 2x
-        - 報酬: +35.1%, 最大回撤: 6.7%
+        - 平均 OOS 報酬: 10.39%
 
         Args:
             bot_id: Bot identifier
@@ -251,22 +250,31 @@ class BotFactory:
         # Build BollingerConfig from dict with walk-forward validated defaults
         bollinger_config = BollingerConfig(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", "15m"),
-            # Bollinger Bands (Walk-Forward validated: BB(20, 3.0))
+            timeframe=config.get("timeframe", "1h"),
+            # Bollinger Bands (Walk-Forward validated)
             bb_period=int(config.get("bb_period", 20)),
-            bb_std=Decimal(str(config.get("bb_std", "3.0"))),
-            # Supertrend (Walk-Forward validated: ST(20, 3.5))
-            st_atr_period=int(config.get("st_atr_period", 20)),
-            st_atr_multiplier=Decimal(str(config.get("st_atr_multiplier", "3.5"))),
-            # ATR Stop Loss (Walk-Forward validated: 2.0x ATR)
-            atr_stop_multiplier=Decimal(str(config.get("atr_stop_multiplier", "2.0"))),
+            bb_std=Decimal(str(config.get("bb_std", "2.0"))),
+            # Grid parameters (BB_TREND_GRID strategy)
+            grid_count=int(config.get("grid_count", 10)),
+            grid_range_pct=Decimal(str(config.get("grid_range_pct", "0.04"))),
+            take_profit_grids=int(config.get("take_profit_grids", 1)),
             # Position settings
             leverage=int(config.get("leverage", 2)),
+            margin_type=config.get("margin_type", "ISOLATED"),
             max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
             position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
+            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
+            # Risk management
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),
+            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", "0.02"))),
             # BBW filter
             bbw_lookback=int(config.get("bbw_lookback", 200)),
             bbw_threshold_pct=int(config.get("bbw_threshold_pct", 20)),
+            # Protective features
+            use_hysteresis=config.get("use_hysteresis", False),
+            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.002"))),
+            use_signal_cooldown=config.get("use_signal_cooldown", False),
+            cooldown_bars=int(config.get("cooldown_bars", 2)),
         )
 
         # Create bot instance

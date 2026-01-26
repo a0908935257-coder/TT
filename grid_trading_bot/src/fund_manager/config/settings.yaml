@@ -75,13 +75,13 @@ strategy:
 bots:
 
   # ===========================================================================
-  # Bollinger Bot (布林通道 + Supertrend 趨勢策略)
+  # Bollinger Bot (BB_TREND_GRID 策略: BB 中軌趨勢 + 網格交易)
   # ===========================================================================
-  # Walk-Forward 驗證: 75% 一致性, Sharpe 1.81, OOS 96%
-  # 報酬: +35.1%, 最大回撤: 6.7%
+  # Walk-Forward 驗證: 80% 一致性 (8/10 時段獲利), OOS Sharpe 6.56
+  # 平均 OOS 報酬: 10.39%, 穩健性: ROBUST
   # ===========================================================================
   - bot_id: bollinger_*
-    name: "Bollinger Strategy"
+    name: "Bollinger BB_TREND_GRID Strategy"
     status: active
 
     # --- 資金分配 ---
@@ -93,28 +93,31 @@ bots:
     # --- 策略參數 (Walk-Forward validated) ---
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 15m
+      timeframe: 1h                       # 優化後使用 1h
       leverage: 2
       margin_type: ISOLATED
       position_size_pct: 0.1
+      max_position_pct: 0.5
 
-      # Bollinger Bands
+      # Bollinger Bands (用於趨勢判斷)
       bb_period: 20
-      bb_std: 3.0
+      bb_std: 2.0                         # 標準 2.0 (不是 3.0)
 
-      # Supertrend Filter
-      st_atr_period: 20
-      st_atr_multiplier: 3.5
+      # Grid Parameters (網格交易)
+      grid_count: 10                      # 網格數量
+      grid_range_pct: 0.04                # 4% 範圍
+      take_profit_grids: 1                # 止盈網格數
 
-      # ATR Stop Loss
-      atr_stop_multiplier: 2.0
+      # Risk Management
+      stop_loss_pct: 0.05                 # 5% 止損
+      rebuild_threshold_pct: 0.02         # 2% 網格重建閾值
 
-      # BBW Filter
+      # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
       # Protective Features (disabled for maximum returns)
-      # 回測顯示關閉可提升收益 1.45%，Sharpe 差異極小 (4.39 vs 4.36)
+      # 回測顯示關閉可提升收益 1.45%，Sharpe 差異極小
       use_hysteresis: false              # 遲滯緩衝區 (已禁用)
       hysteresis_pct: 0.002              # 0.2% (如需啟用)
       use_signal_cooldown: false         # 訊號冷卻 (已禁用)
