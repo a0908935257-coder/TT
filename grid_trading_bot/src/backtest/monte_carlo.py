@@ -598,7 +598,11 @@ class MonteCarloSimulator:
             for _ in range(periods):
                 # Random return from normal distribution
                 random_return = random.gauss(mu, sigma)
+                # Limit loss to -100% to prevent negative equity
+                random_return = max(random_return, -1.0)
                 equity *= (1 + random_return)
+                # Ensure equity doesn't go negative due to floating point errors
+                equity = max(equity, 0.0)
                 path.append(equity)
 
                 # Track drawdown
@@ -732,12 +736,15 @@ class MonteCarloSimulator:
         result = []
         n = len(data)
 
+        # Ensure block_size doesn't exceed data length to avoid excessive wrapping
+        effective_block_size = min(block_size, n)
+
         while len(result) < n_samples:
             # Random start position
             start = random.randint(0, n - 1)
 
             # Extract block (wrap around if needed)
-            for i in range(block_size):
+            for i in range(effective_block_size):
                 if len(result) >= n_samples:
                     break
                 idx = (start + i) % n

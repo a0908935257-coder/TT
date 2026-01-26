@@ -220,6 +220,10 @@ class SLTPCalculator:
         if not config.enabled:
             return None
 
+        # Guard against division by zero (entry_price should never be 0 in practice)
+        if entry_price <= 0:
+            return None
+
         # Check if trailing should be activated
         if is_long:
             profit_pct = (current_price - entry_price) / entry_price

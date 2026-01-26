@@ -531,8 +531,12 @@ class GeneticAlgorithmOptimizer(Optimizer):
                 if p.high is not None:
                     high = min(high, p.high)
 
-                c1 = random.uniform(low, high)
-                c2 = random.uniform(low, high)
+                # Ensure high > low for random.uniform (can happen with tight bounds)
+                if high <= low:
+                    c1 = c2 = low if p.low is not None else (v1 + v2) / 2
+                else:
+                    c1 = random.uniform(low, high)
+                    c2 = random.uniform(low, high)
 
                 if p.param_type == "int":
                     c1 = int(round(c1))

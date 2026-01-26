@@ -340,7 +340,8 @@ class TechnicalIndicators:
 
         # Calculate RSI
         if avg_loss == 0:
-            return Decimal(100)
+            # No losses: RSI is 100 if there are gains, 50 if no movement
+            return Decimal(100) if avg_gain > 0 else Decimal(50)
 
         rs = avg_gain / avg_loss
         rsi_value = Decimal(100) - (Decimal(100) / (Decimal(1) + rs))
@@ -379,7 +380,8 @@ class TechnicalIndicators:
 
         # First RSI value
         if avg_loss == 0:
-            result.append(Decimal(100))
+            # No losses: RSI is 100 if there are gains, 50 if no movement
+            result.append(Decimal(100) if avg_gain > 0 else Decimal(50))
         else:
             rs = avg_gain / avg_loss
             result.append(Decimal(100) - (Decimal(100) / (Decimal(1) + rs)))
@@ -390,7 +392,8 @@ class TechnicalIndicators:
             avg_loss = (avg_loss * Decimal(period - 1) + losses[i]) / Decimal(period)
 
             if avg_loss == 0:
-                result.append(Decimal(100))
+                # No losses: RSI is 100 if there are gains, 50 if no movement
+                result.append(Decimal(100) if avg_gain > 0 else Decimal(50))
             else:
                 rs = avg_gain / avg_loss
                 result.append(Decimal(100) - (Decimal(100) / (Decimal(1) + rs)))

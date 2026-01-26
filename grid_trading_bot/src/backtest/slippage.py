@@ -248,11 +248,12 @@ class VolatilityBasedSlippage(SlippageModel):
             atr_ratio = context.atr / target_price
             atr_slippage = target_price * atr_ratio * self._atr_multiplier
         elif context and context.recent_klines:
-            # Calculate ATR from recent klines
-            atr = self.calculate_atr(context.recent_klines[-self._atr_period - 1 :])
-            if atr > 0:
-                atr_ratio = atr / target_price
-                atr_slippage = target_price * atr_ratio * self._atr_multiplier
+            # Calculate ATR from recent klines (need at least atr_period + 1 klines)
+            if len(context.recent_klines) >= self._atr_period + 1:
+                atr = self.calculate_atr(context.recent_klines[-self._atr_period - 1 :])
+                if atr > 0:
+                    atr_ratio = atr / target_price
+                    atr_slippage = target_price * atr_ratio * self._atr_multiplier
 
         return base_slippage + atr_slippage
 
