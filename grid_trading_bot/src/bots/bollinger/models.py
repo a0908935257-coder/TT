@@ -129,6 +129,13 @@ class BollingerConfig:
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
 
+    # Protective features (disabled by default for maximum returns)
+    # 回測顯示關閉保護機制可提升收益 1.45%，Sharpe 差異極小
+    use_hysteresis: bool = False  # 遲滯緩衝區 (已禁用)
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))  # 0.2%
+    use_signal_cooldown: bool = False  # 訊號冷卻 (已禁用)
+    cooldown_bars: int = 2
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.bb_std, Decimal):
@@ -143,6 +150,8 @@ class BollingerConfig:
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
         if not isinstance(self.rebuild_threshold_pct, Decimal):
             self.rebuild_threshold_pct = Decimal(str(self.rebuild_threshold_pct))
+        if not isinstance(self.hysteresis_pct, Decimal):
+            self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
 

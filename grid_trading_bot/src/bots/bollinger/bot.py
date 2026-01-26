@@ -114,13 +114,13 @@ class BollingerBot(BaseBot):
         # Statistics
         self._stats = BollingerBotStats()
 
-        # Hysteresis: track last triggered level to prevent oscillation
+        # Hysteresis: track last triggered level to prevent oscillation (configurable)
         self._last_triggered_level: Optional[int] = None
-        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+        self._hysteresis_pct: Decimal = config.hysteresis_pct  # Use config value
 
-        # Signal cooldown to prevent signal stacking
+        # Signal cooldown to prevent signal stacking (configurable)
         self._signal_cooldown: int = 0
-        self._cooldown_bars: int = 2
+        self._cooldown_bars: int = config.cooldown_bars  # Use config value
 
         # Background tasks
         self._monitor_task: Optional[asyncio.Task] = None
@@ -705,7 +705,14 @@ class BollingerBot(BaseBot):
 
         Prevents oscillation around grid levels by requiring price to move
         away by a minimum percentage before retriggering the same level.
+
+        Note: This feature is disabled by default based on backtest results
+        showing it slightly reduces returns while marginally improving drawdown.
         """
+        # Check if hysteresis is enabled in config
+        if not self._config.use_hysteresis:
+            return True
+
         if self._last_triggered_level is None:
             return True
         if self._last_triggered_level != level_index:
@@ -778,8 +785,8 @@ class BollingerBot(BaseBot):
             await self._check_position_exit(current_price, kline_high, kline_low)
             return  # Don't open new position while holding one
 
-        # Check signal cooldown
-        if self._signal_cooldown > 0:
+        # Check signal cooldown (if enabled)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
             return
 
@@ -800,8 +807,10 @@ class BollingerBot(BaseBot):
 
                     success = await self._open_position(PositionSide.LONG, grid_price, level.index)
                     if success:
-                        self._signal_cooldown = self._cooldown_bars
-                        self._last_triggered_level = level.index
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars
+                        if self._config.use_hysteresis:
+                            self._last_triggered_level = level.index
                     break
 
             # Bearish trend: SHORT only (sell rallies)
@@ -814,8 +823,10 @@ class BollingerBot(BaseBot):
 
                     success = await self._open_position(PositionSide.SHORT, grid_price, level.index)
                     if success:
-                        self._signal_cooldown = self._cooldown_bars
-                        self._last_triggered_level = level.index
+                        if self._config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars
+                        if self._config.use_hysteresis:
+                            self._last_triggered_level = level.index
                     break
 
     async def _check_position_exit(

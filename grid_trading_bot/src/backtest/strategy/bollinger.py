@@ -69,6 +69,10 @@ class BollingerStrategyConfig:
         grid_range_pct: Grid range as percentage of price
         take_profit_grids: Grids for take profit
         stop_loss_pct: Stop loss percentage
+        use_hysteresis: Enable hysteresis buffer zone (like live bot)
+        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
+        use_signal_cooldown: Enable signal cooldown (like live bot)
+        cooldown_bars: Minimum bars between signals
     """
 
     mode: BollingerMode = BollingerMode.BB_TREND_GRID
@@ -78,6 +82,11 @@ class BollingerStrategyConfig:
     grid_range_pct: Decimal = Decimal("0.04")  # 4% range
     take_profit_grids: int = 1
     stop_loss_pct: Decimal = Decimal("0.05")
+    # Protective features (like live bot)
+    use_hysteresis: bool = False
+    hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 2
 
 
 @dataclass
@@ -124,6 +133,13 @@ class BollingerBacktestStrategy(BacktestStrategy):
         # Trend state
         self._current_trend: int = 0  # 1=bullish, -1=bearish
         self._current_sma: Optional[Decimal] = None
+
+        # Hysteresis state (like live bot)
+        self._last_triggered_level: Optional[int] = None
+        self._last_triggered_side: Optional[str] = None
+
+        # Signal cooldown state (like live bot)
+        self._signal_cooldown: int = 0
 
     @property
     def config(self) -> BollingerStrategyConfig:
@@ -175,6 +191,43 @@ class BollingerBacktestStrategy(BacktestStrategy):
 
         return False
 
+    def _check_hysteresis(self, level_idx: int, side: str, level_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if hysteresis allows entry (like live bot).
+
+        Prevents oscillation by requiring price to move beyond the buffer zone
+        before re-triggering the same level.
+
+        Args:
+            level_idx: Grid level index
+            side: "long" or "short"
+            level_price: The grid level price
+            current_price: Current market price
+
+        Returns:
+            True if entry is allowed, False if blocked by hysteresis
+        """
+        if not self._config.use_hysteresis:
+            return True
+
+        # Different level or different side - always allow
+        if self._last_triggered_level != level_idx or self._last_triggered_side != side:
+            return True
+
+        # Same level and side - check if price moved beyond hysteresis buffer
+        buffer = level_price * self._config.hysteresis_pct
+
+        if side == "long":
+            # For long, price must have moved UP beyond buffer before coming back down
+            if current_price > level_price + buffer:
+                return True
+        else:  # short
+            # For short, price must have moved DOWN beyond buffer before coming back up
+            if current_price < level_price - buffer:
+                return True
+
+        return False
+
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
         Process kline and generate signal.
@@ -182,8 +235,13 @@ class BollingerBacktestStrategy(BacktestStrategy):
         BB_TREND_GRID Logic:
         - Bullish (price > SMA): Buy dips at grid levels (LONG only)
         - Bearish (price < SMA): Sell rallies at grid levels (SHORT only)
+        - Optional hysteresis and cooldown (like live bot)
         """
         klines = context.klines
+
+        # Decrement signal cooldown (like live bot)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
 
         # Calculate Bollinger Bands
         try:
@@ -206,6 +264,10 @@ class BollingerBacktestStrategy(BacktestStrategy):
         if context.has_position:
             return None
 
+        # Check signal cooldown (like live bot)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
+            return None
+
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             self._initialize_grid(current_price)
@@ -225,7 +287,19 @@ class BollingerBacktestStrategy(BacktestStrategy):
             entry_level = self._grid_levels[level_idx]
             # Check if current kline low touched the grid level
             if not entry_level.is_filled and kline.low <= entry_level.price:
+                # Check hysteresis before entry (like live bot)
+                if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx
+                self._last_triggered_side = "long"
+
+                # Set signal cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 # Take profit at next grid level up
                 tp_level = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
@@ -244,7 +318,19 @@ class BollingerBacktestStrategy(BacktestStrategy):
             entry_level = self._grid_levels[level_idx + 1]
             # Check if current kline high touched the grid level
             if not entry_level.is_filled and kline.high >= entry_level.price:
+                # Check hysteresis before entry (like live bot)
+                if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx + 1
+                self._last_triggered_side = "short"
+
+                # Set signal cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 # Take profit at next grid level down
                 tp_level = max(level_idx + 1 - self._config.take_profit_grids, 0)
@@ -295,3 +381,8 @@ class BollingerBacktestStrategy(BacktestStrategy):
         self._grid_initialized = False
         self._current_trend = 0
         self._current_sma = None
+        # Reset hysteresis state
+        self._last_triggered_level = None
+        self._last_triggered_side = None
+        # Reset cooldown state
+        self._signal_cooldown = 0

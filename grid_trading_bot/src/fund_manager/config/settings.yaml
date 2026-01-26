@@ -113,6 +113,13 @@ bots:
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
+      # Protective Features (disabled for maximum returns)
+      # 回測顯示關閉可提升收益 1.45%，Sharpe 差異極小 (4.39 vs 4.36)
+      use_hysteresis: false              # 遲滯緩衝區 (已禁用)
+      hysteresis_pct: 0.002              # 0.2% (如需啟用)
+      use_signal_cooldown: false         # 訊號冷卻 (已禁用)
+      cooldown_bars: 2                   # 2 bars (如需啟用)
+
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
   # ===========================================================================
