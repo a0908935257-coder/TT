@@ -164,6 +164,9 @@ class GridBot(BaseBot):
         self._last_trade_profit: Decimal = Decimal("0")
         self._previous_profit: Decimal = Decimal("0")
 
+        # Lock for profit tracking to prevent race conditions
+        self._profit_lock: asyncio.Lock = asyncio.Lock()
+
     # =========================================================================
     # Abstract Properties Implementation
     # =========================================================================
@@ -494,24 +497,26 @@ class GridBot(BaseBot):
         # Delegate to order manager
         await self._order_manager.on_order_filled(order)
 
-        # Get profit from last trade (if completed)
-        stats = self._order_manager.get_statistics()
-        current_profit = stats.get("total_profit", Decimal("0"))
+        # Use lock to prevent race conditions in profit tracking
+        async with self._profit_lock:
+            # Get profit from last trade (if completed)
+            stats = self._order_manager.get_statistics()
+            current_profit = stats.get("total_profit", Decimal("0"))
 
-        # Calculate profit from this trade
-        trade_profit = current_profit - self._previous_profit
-        self._last_trade_profit = trade_profit
+            # Calculate profit from this trade
+            trade_profit = current_profit - self._previous_profit
+            self._last_trade_profit = trade_profit
 
-        # Record trade in stats
-        if trade_profit != 0:
-            fee = stats.get("last_fee", Decimal("0"))
-            self._stats.record_trade(trade_profit, fee)
+            # Record trade in stats
+            if trade_profit != 0:
+                fee = stats.get("last_fee", Decimal("0"))
+                self._stats.record_trade(trade_profit, fee)
 
-        # Notify risk manager
-        if self._risk_manager and trade_profit != 0:
-            self._risk_manager.on_trade_completed(trade_profit)
+            # Notify risk manager
+            if self._risk_manager and trade_profit != 0:
+                self._risk_manager.on_trade_completed(trade_profit)
 
-        self._previous_profit = current_profit
+            self._previous_profit = current_profit
 
     async def on_price_update(self, price: Decimal) -> None:
         """

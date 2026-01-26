@@ -525,7 +525,11 @@ class SmartGridCalculator:
         # Prices are sorted low to high, so index 0 is lowest price
         weights = []
         n = buy_levels_count
-        # Note: n <= 1 cases are already handled above
+
+        # Defensive check: n must be >= 2 to avoid division by zero
+        # (n <= 1 cases are already handled above, but guard anyway)
+        if n < 2:
+            return [total_investment] if n == 1 else []
 
         for i in range(n):
             # Index 0 (lowest price) gets highest weight

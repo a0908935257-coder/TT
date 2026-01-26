@@ -74,6 +74,7 @@ VALID_STATE_TRANSITIONS: dict[BotState, set[BotState]] = {
     BotState.STOPPING: {BotState.STOPPED},
     BotState.STOPPED: set(),  # Terminal state
     BotState.ERROR: {BotState.STOPPED, BotState.PAUSED},
+    BotState.UNKNOWN: {BotState.STOPPED, BotState.ERROR},  # UNKNOWN can transition to recovery states
 }
 
 
@@ -951,12 +952,22 @@ class GridRiskManager:
 
         total_pnl = Decimal("0")
 
+        # Get fee rate from order manager for estimating sell fee
+        fee_rate = getattr(
+            self._order_manager, 'DEFAULT_FEE_RATE', Decimal("0.001")
+        )
+
         # Calculate from filled history
         for record in self._order_manager._filled_history:
             if record.side == OrderSide.BUY and record.paired_record is None:
                 # Unpaired buy = open position
-                # Include fees paid when buying
-                pnl = (current_price - record.price) * record.quantity - record.fee
+                # Include buy fee paid and estimate sell fee
+                estimated_sell_fee = current_price * record.quantity * fee_rate
+                pnl = (
+                    (current_price - record.price) * record.quantity
+                    - record.fee  # Buy fee (already paid)
+                    - estimated_sell_fee  # Sell fee (estimated)
+                )
                 total_pnl += pnl
 
         return total_pnl
@@ -1283,7 +1294,9 @@ class GridRiskManager:
         """Run health check if interval has passed."""
         now = datetime.now(timezone.utc)
 
+        # Run health check on first call or when interval has passed
         if self._last_health_check is None:
+            await self.run_health_check()
             self._last_health_check = now
             return
 
