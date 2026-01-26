@@ -633,7 +633,8 @@ class GridOrderManager:
         """
         restored = 0
         for order_id, level_index in mapping.items():
-            if self._setup and level_index < len(self._setup.levels):
+            # Validate level index bounds
+            if self._setup and 0 <= level_index < len(self._setup.levels):
                 # Check if level already has a different order mapped
                 if level_index in self._level_order_map:
                     old_order_id = self._level_order_map[level_index]
@@ -642,8 +643,9 @@ class GridOrderManager:
                             f"Level {level_index} already has order {old_order_id[:8]}..., "
                             f"replacing with {order_id[:8]}..."
                         )
-                        # Remove old mapping
+                        # Remove old mapping and cached order
                         self._order_level_map.pop(old_order_id, None)
+                        self._orders.pop(old_order_id, None)
 
                 self._order_level_map[order_id] = level_index
                 self._level_order_map[level_index] = order_id
@@ -965,11 +967,24 @@ class GridOrderManager:
             logger.warning(f"Order {order.order_id} not found in level mappings")
             return None
 
+        # Validate level index bounds
+        if level_index < 0 or level_index >= len(self._setup.levels):
+            logger.error(f"Invalid level index {level_index} for order {order.order_id}")
+            return None
+
         level = self._setup.levels[level_index]
 
-        # Determine fill price and quantity
+        # Determine fill price and quantity with validation
         fill_price = order.avg_price if order.avg_price else order.price
+        if fill_price is None or fill_price <= 0:
+            logger.error(f"Order {order.order_id} has invalid fill price: {fill_price}")
+            return None
+
         fill_qty = order.filled_qty
+        if fill_qty is None or fill_qty <= 0:
+            logger.error(f"Order {order.order_id} has invalid fill quantity: {fill_qty}")
+            return None
+
         fee = order.fee if order.fee else fill_price * fill_qty * self.DEFAULT_FEE_RATE
 
         # Create fill record

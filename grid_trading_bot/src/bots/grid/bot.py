@@ -623,12 +623,9 @@ class GridBot(BaseBot):
         orders = []
         # Use setup levels instead of directly accessing private _level_order_map
         for i, level in enumerate(self._setup.levels):
-            try:
-                order = self._order_manager.get_order_by_level(i)
-                if order:
-                    orders.append(order)
-            except (IndexError, KeyError):
-                continue
+            order = self._order_manager.get_order_by_level(i)
+            if order:
+                orders.append(order)
         return orders
 
     def get_levels(self) -> List[GridLevel]:
