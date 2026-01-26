@@ -504,3 +504,58 @@ class FundPool:
             List of snapshots since the given time
         """
         return [s for s in self._snapshots if s.timestamp >= since]
+
+    # =========================================================================
+    # State Snapshot Methods (for Atomic Transactions)
+    # =========================================================================
+
+    def create_allocation_snapshot(self) -> Dict[str, Decimal]:
+        """
+        Create a snapshot of current allocations.
+
+        Used for transaction rollback support.
+
+        Returns:
+            Copy of current allocations
+        """
+        return self._allocations.copy()
+
+    def restore_allocation_snapshot(self, snapshot: Dict[str, Decimal]) -> None:
+        """
+        Restore allocations from a snapshot.
+
+        Used for transaction rollback.
+
+        Args:
+            snapshot: Allocation snapshot to restore
+        """
+        self._allocations = snapshot.copy()
+        logger.info(f"Restored allocation snapshot with {len(snapshot)} bots")
+
+    def get_allocation_diff(
+        self,
+        snapshot: Dict[str, Decimal],
+    ) -> Dict[str, tuple[Decimal, Decimal]]:
+        """
+        Get differences between current state and snapshot.
+
+        Args:
+            snapshot: Previous allocation snapshot
+
+        Returns:
+            Dict mapping bot_id to (old_value, new_value) for changed allocations
+        """
+        diff: Dict[str, tuple[Decimal, Decimal]] = {}
+
+        # Check for changes and additions
+        for bot_id, current in self._allocations.items():
+            previous = snapshot.get(bot_id, Decimal("0"))
+            if current != previous:
+                diff[bot_id] = (previous, current)
+
+        # Check for removals
+        for bot_id, previous in snapshot.items():
+            if bot_id not in self._allocations:
+                diff[bot_id] = (previous, Decimal("0"))
+
+        return diff

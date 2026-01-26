@@ -2,13 +2,29 @@
 Fund Manager Record Models.
 
 Data models for tracking allocations and balance snapshots.
+Includes transaction models for atomic allocation operations.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Dict, List, Optional
 import uuid
+
+
+class TransactionStatus(Enum):
+    """
+    Status of an allocation transaction.
+
+    Lifecycle: PENDING -> EXECUTING -> COMMITTED or ROLLED_BACK or FAILED
+    """
+
+    PENDING = "pending"          # Transaction created, not started
+    EXECUTING = "executing"      # Transaction in progress
+    COMMITTED = "committed"      # Transaction completed successfully
+    ROLLED_BACK = "rolled_back"  # Transaction rolled back
+    FAILED = "failed"            # Transaction failed (cannot rollback)
 
 
 @dataclass
@@ -203,3 +219,163 @@ class DispatchResult:
             "allocations": [a.to_dict() for a in self.allocations],
             "errors": self.errors,
         }
+
+
+@dataclass
+class AllocationTransaction:
+    """
+    Atomic allocation transaction.
+
+    Tracks a batch allocation operation with pre-state snapshot for rollback.
+    Ensures all-or-nothing semantics for fund distribution.
+
+    Attributes:
+        transaction_id: Unique transaction identifier
+        status: Current transaction status
+        trigger: What triggered the allocation
+        created_at: When transaction was created
+        completed_at: When transaction completed (success or failure)
+        planned_allocations: Bot allocations planned for this transaction
+        pre_state_snapshot: State snapshot before transaction (for rollback)
+        executed_allocations: Actually executed allocations
+        error_message: Error message if failed
+    """
+
+    transaction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    status: TransactionStatus = TransactionStatus.PENDING
+    trigger: str = "manual"
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    planned_allocations: Dict[str, Decimal] = field(default_factory=dict)
+    pre_state_snapshot: Dict[str, Decimal] = field(default_factory=dict)
+    executed_allocations: List[AllocationRecord] = field(default_factory=list)
+    error_message: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Convert values if necessary."""
+        # Convert planned allocations to Decimal
+        self.planned_allocations = {
+            k: Decimal(str(v)) if not isinstance(v, Decimal) else v
+            for k, v in self.planned_allocations.items()
+        }
+        # Convert snapshot to Decimal
+        self.pre_state_snapshot = {
+            k: Decimal(str(v)) if not isinstance(v, Decimal) else v
+            for k, v in self.pre_state_snapshot.items()
+        }
+
+    @property
+    def is_pending(self) -> bool:
+        """Check if transaction is pending."""
+        return self.status == TransactionStatus.PENDING
+
+    @property
+    def is_executing(self) -> bool:
+        """Check if transaction is executing."""
+        return self.status == TransactionStatus.EXECUTING
+
+    @property
+    def is_completed(self) -> bool:
+        """Check if transaction is completed (success or failure)."""
+        return self.status in (
+            TransactionStatus.COMMITTED,
+            TransactionStatus.ROLLED_BACK,
+            TransactionStatus.FAILED,
+        )
+
+    @property
+    def is_successful(self) -> bool:
+        """Check if transaction completed successfully."""
+        return self.status == TransactionStatus.COMMITTED
+
+    @property
+    def successful_count(self) -> int:
+        """Get count of successful allocations."""
+        return sum(1 for a in self.executed_allocations if a.success)
+
+    @property
+    def failed_count(self) -> int:
+        """Get count of failed allocations."""
+        return sum(1 for a in self.executed_allocations if not a.success)
+
+    @property
+    def total_allocated(self) -> Decimal:
+        """Get total amount successfully allocated."""
+        return sum(
+            a.amount for a in self.executed_allocations if a.success
+        )
+
+    def mark_executing(self) -> None:
+        """Mark transaction as executing."""
+        self.status = TransactionStatus.EXECUTING
+
+    def mark_committed(self) -> None:
+        """Mark transaction as committed."""
+        self.status = TransactionStatus.COMMITTED
+        self.completed_at = datetime.now(timezone.utc)
+
+    def mark_rolled_back(self, error: Optional[str] = None) -> None:
+        """Mark transaction as rolled back."""
+        self.status = TransactionStatus.ROLLED_BACK
+        self.completed_at = datetime.now(timezone.utc)
+        if error:
+            self.error_message = error
+
+    def mark_failed(self, error: str) -> None:
+        """Mark transaction as failed."""
+        self.status = TransactionStatus.FAILED
+        self.completed_at = datetime.now(timezone.utc)
+        self.error_message = error
+
+    def add_executed(self, record: AllocationRecord) -> None:
+        """Add an executed allocation record."""
+        self.executed_allocations.append(record)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "transaction_id": self.transaction_id,
+            "status": self.status.value,
+            "trigger": self.trigger,
+            "created_at": self.created_at.isoformat(),
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "planned_allocations": {k: str(v) for k, v in self.planned_allocations.items()},
+            "pre_state_snapshot": {k: str(v) for k, v in self.pre_state_snapshot.items()},
+            "executed_allocations": [a.to_dict() for a in self.executed_allocations],
+            "successful_count": self.successful_count,
+            "failed_count": self.failed_count,
+            "total_allocated": str(self.total_allocated),
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AllocationTransaction":
+        """Create from dictionary."""
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+
+        completed_at = data.get("completed_at")
+        if isinstance(completed_at, str):
+            completed_at = datetime.fromisoformat(completed_at)
+
+        return cls(
+            transaction_id=data.get("transaction_id", str(uuid.uuid4())),
+            status=TransactionStatus(data.get("status", "pending")),
+            trigger=data.get("trigger", "manual"),
+            created_at=created_at or datetime.now(timezone.utc),
+            completed_at=completed_at,
+            planned_allocations={
+                k: Decimal(str(v))
+                for k, v in data.get("planned_allocations", {}).items()
+            },
+            pre_state_snapshot={
+                k: Decimal(str(v))
+                for k, v in data.get("pre_state_snapshot", {}).items()
+            },
+            executed_allocations=[
+                AllocationRecord.from_dict(a)
+                for a in data.get("executed_allocations", [])
+            ],
+            error_message=data.get("error_message"),
+        )

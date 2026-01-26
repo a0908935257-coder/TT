@@ -1,7 +1,7 @@
 """
 Core module for Trading Master.
 
-Provides logging utilities.
+Provides logging utilities and timeout mechanisms.
 """
 
 from .logger import setup_logger, get_logger
@@ -28,6 +28,19 @@ from .structured_logging import (
     clear_request_context,
     with_correlation_id,
 )
+from .timeout import (
+    TimeoutError,
+    TimeoutConfig,
+    TimeoutContext,
+    get_timeout_config,
+    set_timeout_config,
+    with_timeout,
+    with_timeout_and_cancel,
+    with_retry_timeout,
+    command_timeout,
+    fund_timeout,
+    notification_timeout,
+)
 
 __all__ = [
     # Basic logging
@@ -51,4 +64,16 @@ __all__ = [
     "set_request_context",
     "clear_request_context",
     "with_correlation_id",
+    # Timeout utilities
+    "TimeoutError",
+    "TimeoutConfig",
+    "TimeoutContext",
+    "get_timeout_config",
+    "set_timeout_config",
+    "with_timeout",
+    "with_timeout_and_cancel",
+    "with_retry_timeout",
+    "command_timeout",
+    "fund_timeout",
+    "notification_timeout",
 ]

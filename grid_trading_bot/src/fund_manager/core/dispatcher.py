@@ -8,7 +8,8 @@ Supports multiple notification methods: direct API call, IPC, and file-based.
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Protocol, TYPE_CHECKING
 
-from src.core import get_logger
+from src.core import get_logger, get_timeout_config, with_timeout
+from src.core.timeout import TimeoutError as OperationTimeout
 from src.ipc.messages import Command, CommandType
 
 from ..models.records import AllocationRecord
@@ -319,7 +320,7 @@ class Dispatcher:
         amount: Decimal,
     ) -> bool:
         """
-        Notify bot directly via method call.
+        Notify bot directly via method call with timeout protection.
 
         Args:
             instance: Bot instance
@@ -328,8 +329,18 @@ class Dispatcher:
         Returns:
             True if successful
         """
+        timeout_config = get_timeout_config()
         try:
-            return await instance.update_capital(amount)
+            return await with_timeout(
+                instance.update_capital(amount),
+                timeout=timeout_config.bot_notification,
+                operation_name=f"notify_bot_{instance.bot_id}",
+                raise_on_timeout=False,
+                default_result=False,
+            )
+        except OperationTimeout:
+            logger.error(f"Bot notification timed out for {instance.bot_id}")
+            return False
         except Exception as e:
             logger.error(f"Direct notification failed: {e}")
             return False

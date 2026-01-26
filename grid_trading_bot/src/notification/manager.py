@@ -1057,6 +1057,51 @@ class NotificationManager:
         }
         await self._send_embed(embed, NotificationLevel.SUCCESS)
 
+    async def notify_circuit_breaker_open(
+        self,
+        bot_id: str,
+        consecutive_failures: int,
+        duration: int,
+    ) -> None:
+        """
+        Send circuit breaker open notification.
+
+        Args:
+            bot_id: Bot identifier
+            consecutive_failures: Number of consecutive failures
+            duration: Duration circuit will stay open (seconds)
+        """
+        embed = {
+            "title": "🔴 熔斷器開啟",
+            "description": f"機器人 {bot_id} 自動重啟已暫停",
+            "color": 0xE74C3C,  # Red
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "連續失敗次數", "value": str(consecutive_failures), "inline": True},
+                {"name": "熔斷時間", "value": f"{duration // 60} 分鐘", "inline": True},
+            ],
+        }
+        # Circuit breaker is critical - always send
+        await self._send_embed(embed, NotificationLevel.CRITICAL)
+
+    async def notify_circuit_breaker_closed(self, bot_id: str) -> None:
+        """
+        Send circuit breaker closed notification.
+
+        Args:
+            bot_id: Bot identifier
+        """
+        embed = {
+            "title": "🟢 熔斷器關閉",
+            "description": f"機器人 {bot_id} 自動重啟已恢復",
+            "color": 0x2ECC71,  # Green
+            "fields": [
+                {"name": "Bot ID", "value": bot_id, "inline": True},
+                {"name": "狀態", "value": "可重啟", "inline": True},
+            ],
+        }
+        await self._send_embed(embed, NotificationLevel.SUCCESS)
+
     # =========================================================================
     # Fund Manager Notifications
     # =========================================================================

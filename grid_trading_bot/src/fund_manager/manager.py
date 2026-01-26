@@ -9,14 +9,16 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
 
-from src.core import get_logger
+from src.core import get_logger, get_timeout_config, with_timeout
 from src.core.models import MarketType
+from src.core.timeout import TimeoutError as OperationTimeout
 
 from .core.allocator import BaseAllocator, create_allocator
+from .core.atomic_allocator import AtomicAllocationManager
 from .core.dispatcher import Dispatcher
 from .core.fund_pool import FundPool
 from .models.config import FundManagerConfig
-from .models.records import AllocationRecord, DispatchResult
+from .models.records import AllocationRecord, AllocationTransaction, DispatchResult
 
 if TYPE_CHECKING:
     from src.master.registry import BotRegistry
@@ -127,6 +129,14 @@ class FundManager:
         self._allocator: BaseAllocator = create_allocator(self._config)
         self._dispatcher = Dispatcher(registry, notifier)
 
+        # Atomic allocation manager for transactional dispatch
+        self._atomic_allocator = AtomicAllocationManager(
+            fund_pool=self._fund_pool,
+            dispatcher=self._dispatcher,
+            notifier=notifier,
+            rollback_threshold=0.5,  # Rollback if > 50% fail
+        )
+
         # State
         self._running = False
         self._monitor_task: Optional[asyncio.Task] = None
@@ -174,6 +184,11 @@ class FundManager:
     def dispatcher(self) -> Dispatcher:
         """Get dispatcher."""
         return self._dispatcher
+
+    @property
+    def atomic_allocator(self) -> AtomicAllocationManager:
+        """Get atomic allocation manager."""
+        return self._atomic_allocator
 
     # =========================================================================
     # Lifecycle Methods
@@ -281,7 +296,8 @@ class FundManager:
         Execute fund allocation and dispatch to bots.
 
         Thread-safe: Uses allocation lock to prevent race conditions
-        when multiple triggers occur simultaneously.
+        when multiple triggers occur simultaneously. Protected by timeout
+        to prevent infinite hangs.
 
         Args:
             trigger: What triggered the dispatch (manual, deposit, rebalance)
@@ -290,60 +306,158 @@ class FundManager:
             DispatchResult with allocation details
         """
         result = DispatchResult(trigger=trigger)
+        timeout_config = get_timeout_config()
 
         # Use allocation lock to prevent concurrent dispatches
-        async with self._fund_pool.allocation_lock:
-            try:
-                # Get active bots
-                bot_ids = self._get_active_bot_ids()
-                if not bot_ids:
-                    logger.warning("No active bots to dispatch funds to")
-                    result.errors.append("No active bots found")
-                    return result
+        # Wrap entire dispatch operation with timeout
+        try:
+            async with asyncio.timeout(timeout_config.fund_allocation):
+                async with self._fund_pool.allocation_lock:
+                    try:
+                        # Get active bots
+                        bot_ids = self._get_active_bot_ids()
+                        if not bot_ids:
+                            logger.warning("No active bots to dispatch funds to")
+                            result.errors.append("No active bots found")
+                            return result
 
-                # Get available funds (inside lock to ensure consistency)
-                available = self._fund_pool.get_unallocated()
-                if available <= 0:
-                    logger.info("No unallocated funds available for dispatch")
-                    return result
+                        # Get available funds (inside lock to ensure consistency)
+                        available = self._fund_pool.get_unallocated()
+                        if available <= 0:
+                            logger.info("No unallocated funds available for dispatch")
+                            return result
 
-                # Calculate allocations
-                current_allocations = self._fund_pool.allocations
-                allocations = self._allocator.calculate(
-                    available_funds=available,
-                    bot_allocations=self._config.allocations,
-                    current_allocations=current_allocations,
-                    bot_ids=bot_ids,
-                )
+                        # Calculate allocations
+                        current_allocations = self._fund_pool.allocations
+                        allocations = self._allocator.calculate(
+                            available_funds=available,
+                            bot_allocations=self._config.allocations,
+                            current_allocations=current_allocations,
+                            bot_ids=bot_ids,
+                        )
 
-                if not allocations:
-                    logger.info("No allocations calculated")
-                    return result
+                        if not allocations:
+                            logger.info("No allocations calculated")
+                            return result
 
-                # Execute allocations (still inside lock)
-                for bot_id, amount in allocations.items():
-                    record = await self._allocate_to_bot(bot_id, amount, trigger)
-                    result.add_allocation(record)
+                        # Execute allocations (still inside lock)
+                        for bot_id, amount in allocations.items():
+                            record = await self._allocate_to_bot(bot_id, amount, trigger)
+                            result.add_allocation(record)
 
-                # Update overall success status
-                result.success = result.failed_count == 0
+                        # Update overall success status
+                        result.success = result.failed_count == 0
 
-                # Log summary
-                logger.info(
-                    f"Dispatch complete: {result.successful_count} successful, "
-                    f"{result.failed_count} failed, "
-                    f"total dispatched: {result.total_dispatched}"
-                )
+                        # Log summary
+                        logger.info(
+                            f"Dispatch complete: {result.successful_count} successful, "
+                            f"{result.failed_count} failed, "
+                            f"total dispatched: {result.total_dispatched}"
+                        )
 
-            except Exception as e:
-                logger.error(f"Error during dispatch: {e}")
-                result.success = False
-                result.errors.append(str(e))
+                    except Exception as e:
+                        logger.error(f"Error during dispatch: {e}")
+                        result.success = False
+                        result.errors.append(str(e))
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Fund dispatch timed out after {timeout_config.fund_allocation}s"
+            )
+            result.success = False
+            result.errors.append(
+                f"Dispatch operation timed out after {timeout_config.fund_allocation}s"
+            )
+            return result
 
         # Notify dispatch (outside lock to avoid blocking)
         await self._notify_dispatch(result)
 
         return result
+
+    async def dispatch_funds_atomic(
+        self,
+        trigger: str = "manual",
+        auto_rollback: bool = True,
+    ) -> AllocationTransaction:
+        """
+        Execute fund allocation with atomic transaction semantics.
+
+        Provides all-or-nothing allocation with automatic rollback
+        on high failure rate.
+
+        Args:
+            trigger: What triggered the dispatch (manual, deposit, rebalance)
+            auto_rollback: Whether to auto-rollback on high failure rate
+
+        Returns:
+            AllocationTransaction with complete transaction details
+        """
+        timeout_config = get_timeout_config()
+
+        try:
+            async with asyncio.timeout(timeout_config.fund_allocation):
+                async with self._fund_pool.allocation_lock:
+                    # Get active bots
+                    bot_ids = self._get_active_bot_ids()
+                    if not bot_ids:
+                        logger.warning("No active bots to dispatch funds to")
+                        tx = AllocationTransaction(trigger=trigger)
+                        tx.mark_failed("No active bots found")
+                        return tx
+
+                    # Get available funds
+                    available = self._fund_pool.get_unallocated()
+                    if available <= 0:
+                        logger.info("No unallocated funds available for dispatch")
+                        tx = AllocationTransaction(trigger=trigger)
+                        tx.mark_committed()  # Not a failure, just nothing to do
+                        return tx
+
+                    # Calculate allocations
+                    current_allocations = self._fund_pool.allocations
+                    allocations = self._allocator.calculate(
+                        available_funds=available,
+                        bot_allocations=self._config.allocations,
+                        current_allocations=current_allocations,
+                        bot_ids=bot_ids,
+                    )
+
+                    if not allocations:
+                        logger.info("No allocations calculated")
+                        tx = AllocationTransaction(trigger=trigger)
+                        tx.mark_committed()
+                        return tx
+
+                    # Execute atomically with potential rollback
+                    tx = await self._atomic_allocator.execute_atomic(
+                        planned_allocations=allocations,
+                        trigger=trigger,
+                        auto_rollback=auto_rollback,
+                    )
+
+                    # Store executed records
+                    for record in tx.executed_allocations:
+                        self._allocation_records.append(record)
+                    if len(self._allocation_records) > self._max_records:
+                        self._allocation_records = self._allocation_records[-self._max_records:]
+
+                    # Log summary
+                    logger.info(
+                        f"Atomic dispatch {tx.status.value}: "
+                        f"{tx.successful_count} successful, {tx.failed_count} failed, "
+                        f"total allocated: {tx.total_allocated}"
+                    )
+
+                    return tx
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Atomic dispatch timed out after {timeout_config.fund_allocation}s"
+            )
+            tx = AllocationTransaction(trigger=trigger)
+            tx.mark_failed(f"Timed out after {timeout_config.fund_allocation}s")
+            return tx
 
     async def _allocate_to_bot(
         self,

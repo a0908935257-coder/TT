@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional, Protocol, Tuple
 
-from src.core import get_logger
+from src.core import get_logger, get_timeout_config, with_timeout
+from src.core.timeout import TimeoutError as OperationTimeout
 from src.master.factory import BotFactory, InvalidBotConfigError, UnsupportedBotTypeError
 from src.master.models import BotNotFoundError, BotState, BotType
 
@@ -196,8 +197,24 @@ class BotCommander:
                 # Update state to INITIALIZING
                 await self._registry.update_state(bot_id, BotState.INITIALIZING)
 
-                # Start the bot
-                success = await instance.start()
+                # Start the bot with timeout protection
+                timeout_config = get_timeout_config()
+                try:
+                    success = await with_timeout(
+                        instance.start(),
+                        timeout=timeout_config.command_execution,
+                        operation_name=f"start_bot_{bot_id}",
+                    )
+                except OperationTimeout:
+                    logger.error(f"Bot {bot_id} start timed out")
+                    await self._registry.update_state(
+                        bot_id, BotState.ERROR, "Start operation timed out"
+                    )
+                    return CommandResult(
+                        success=False,
+                        message=f"Bot {bot_id} start timed out",
+                        bot_id=bot_id,
+                    )
 
                 if success:
                     # Update state to RUNNING
@@ -280,12 +297,29 @@ class BotCommander:
                 # Update state to STOPPING
                 await self._registry.update_state(bot_id, BotState.STOPPING)
 
-                # Stop the bot
+                # Stop the bot with timeout protection
                 reason = "Manual stop"
                 if clear_position:
                     reason += " (clearing positions)"
 
-                success = await instance.stop(reason, clear_position)
+                timeout_config = get_timeout_config()
+                try:
+                    success = await with_timeout(
+                        instance.stop(reason, clear_position),
+                        timeout=timeout_config.command_execution,
+                        operation_name=f"stop_bot_{bot_id}",
+                    )
+                except OperationTimeout:
+                    logger.error(f"Bot {bot_id} stop timed out")
+                    # Force state to STOPPED even on timeout
+                    await self._registry.update_state(
+                        bot_id, BotState.STOPPED, "Stop operation timed out"
+                    )
+                    return CommandResult(
+                        success=False,
+                        message=f"Bot {bot_id} stop timed out (state set to STOPPED)",
+                        bot_id=bot_id,
+                    )
 
                 if success:
                     # Update state to STOPPED
@@ -354,8 +388,21 @@ class BotCommander:
                         bot_id=bot_id,
                     )
 
-                # Pause the bot
-                success = await instance.pause(reason="Manual pause")
+                # Pause the bot with timeout protection
+                timeout_config = get_timeout_config()
+                try:
+                    success = await with_timeout(
+                        instance.pause(reason="Manual pause"),
+                        timeout=timeout_config.command_execution,
+                        operation_name=f"pause_bot_{bot_id}",
+                    )
+                except OperationTimeout:
+                    logger.error(f"Bot {bot_id} pause timed out")
+                    return CommandResult(
+                        success=False,
+                        message=f"Bot {bot_id} pause timed out",
+                        bot_id=bot_id,
+                    )
 
                 if success:
                     # Update state to PAUSED
@@ -414,8 +461,21 @@ class BotCommander:
                         bot_id=bot_id,
                     )
 
-                # Resume the bot
-                success = await instance.resume()
+                # Resume the bot with timeout protection
+                timeout_config = get_timeout_config()
+                try:
+                    success = await with_timeout(
+                        instance.resume(),
+                        timeout=timeout_config.command_execution,
+                        operation_name=f"resume_bot_{bot_id}",
+                    )
+                except OperationTimeout:
+                    logger.error(f"Bot {bot_id} resume timed out")
+                    return CommandResult(
+                        success=False,
+                        message=f"Bot {bot_id} resume timed out",
+                        bot_id=bot_id,
+                    )
 
                 if success:
                     # Update state to RUNNING
