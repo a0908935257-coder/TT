@@ -82,6 +82,56 @@ _discord_bot = None
 _shutdown_event: asyncio.Event | None = None
 
 
+async def ensure_hedge_mode(exchange: ExchangeClient) -> bool:
+    """
+    Ensure Binance Futures is in Hedge Mode (dual side position).
+
+    Hedge Mode allows holding both LONG and SHORT positions simultaneously
+    on the same symbol, which is required for multi-bot trading.
+
+    Returns:
+        True if hedge mode is enabled, False otherwise
+    """
+    try:
+        # Check current position mode
+        mode_info = await exchange.futures.get_position_mode()
+        is_hedge_mode = mode_info.get("dual_side_position", False)
+
+        if is_hedge_mode:
+            logger.info("Position mode: Hedge Mode (已啟用雙向持倉)")
+            return True
+
+        # Need to enable hedge mode
+        logger.info("Position mode: One-Way Mode - 正在切換到 Hedge Mode...")
+
+        # Note: Cannot change position mode if there are open positions
+        success = await exchange.futures.set_position_mode(dual_side=True)
+
+        if success:
+            logger.info("Successfully enabled Hedge Mode (雙向持倉)")
+            return True
+        else:
+            logger.error("Failed to enable Hedge Mode")
+            return False
+
+    except Exception as e:
+        error_msg = str(e)
+        if "-4059" in error_msg:
+            # Already in target mode
+            logger.info("Position mode already set to Hedge Mode")
+            return True
+        elif "-4068" in error_msg:
+            # Cannot change mode with open positions
+            logger.error(
+                "無法切換倉位模式：有未平倉位！\n"
+                "請先在 Binance 手動平倉，或在網頁版設定中切換到「雙向持倉」模式"
+            )
+            return False
+        else:
+            logger.error(f"Error checking/setting position mode: {e}")
+            return False
+
+
 def initialize_signal_coordinator() -> SignalCoordinator:
     """
     Initialize SignalCoordinator from settings.yaml configuration.
@@ -569,6 +619,16 @@ async def main():
         print("正在連接交易所...")
         _exchange = await create_exchange_client()
         print("  ✓ 交易所連接成功")
+
+        # 1.5. Ensure Hedge Mode is enabled (required for multi-bot trading)
+        print("正在檢查倉位模式...")
+        hedge_ok = await ensure_hedge_mode(_exchange)
+        if hedge_ok:
+            print("  ✓ 雙向持倉模式已啟用 (Hedge Mode)")
+        else:
+            print("  ⚠️ 警告: 無法啟用雙向持倉模式")
+            print("     多機器人可能無法同時做多做空")
+            print("     請手動在 Binance Futures 設定中啟用「雙向持倉」")
 
         # 2. Connect to data sources
         print("正在連接數據庫...")
