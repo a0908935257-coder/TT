@@ -108,8 +108,12 @@ class FundPool:
 
     @property
     def reserved_balance(self) -> Decimal:
-        """Get reserved balance (not for allocation)."""
-        return self.total_balance * self._config.reserve_ratio
+        """Get reserved balance (not for allocation).
+
+        Based on available_balance to prevent over-allocation when
+        funds are tied up in open orders.
+        """
+        return self.available_balance * self._config.reserve_ratio
 
     @property
     def allocations(self) -> Dict[str, Decimal]:

@@ -5524,9 +5524,10 @@ class BaseBot(ABC):
             # Call subclass implementation
             await self._do_start()
 
-            # Update state
-            self._state = BotState.RUNNING
+            # Update state - set _running first to avoid race condition
+            # where heartbeat checks see RUNNING state but _running is False
             self._running = True
+            self._state = BotState.RUNNING
 
             # Start heartbeat
             self._start_heartbeat()
@@ -5561,16 +5562,21 @@ class BaseBot(ABC):
 
         try:
             logger.info(f"Stopping bot {self._bot_id}: {reason}")
+            # Set state to STOPPING first, but keep _running = True
+            # to allow ongoing operations to complete gracefully
             self._state = BotState.STOPPING
-            self._running = False
 
-            # Stop heartbeat
+            # Stop heartbeat first to prevent stale heartbeats
             self._stop_heartbeat()
 
-            # Call subclass implementation
+            # Call subclass implementation (may have cleanup operations)
             await self._do_stop(clear_position)
 
-            # Update state
+            # Only set _running = False after cleanup is complete
+            # This ensures order manager and other components can finish their work
+            self._running = False
+
+            # Update state to STOPPED
             self._state = BotState.STOPPED
 
             logger.info(f"Bot {self._bot_id} stopped")
@@ -5709,7 +5715,9 @@ class BaseBot(ABC):
         while self._running:
             try:
                 await asyncio.sleep(10)
-                if self._running and self._heartbeat_callback:
+                # Check all state conditions to avoid sending stale heartbeat
+                # during state transitions (e.g., when bot is stopping)
+                if self._running and self._state == BotState.RUNNING and self._heartbeat_callback:
                     self._send_heartbeat()
             except asyncio.CancelledError:
                 break

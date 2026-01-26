@@ -251,8 +251,8 @@ class BotCommander:
                     await self._registry.update_state(
                         bot_id, BotState.ERROR, str(e)
                     )
-                except Exception:
-                    pass
+                except Exception as update_err:
+                    logger.warning(f"Failed to update bot {bot_id} state to ERROR: {update_err}")
                 return CommandResult(
                     success=False,
                     message=f"Error starting bot: {e}",

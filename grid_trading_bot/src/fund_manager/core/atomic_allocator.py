@@ -151,7 +151,30 @@ class AtomicAllocationManager:
             logger.error(
                 f"Transaction {tx.transaction_id[:8]} timed out after {effective_timeout}s"
             )
-            tx.mark_failed(f"Transaction timed out after {effective_timeout}s")
+            # Check if there are any executed allocations before timeout
+            if tx.executed_allocations:
+                total = len(tx.planned_allocations)
+                executed = len(tx.executed_allocations)
+                logger.warning(
+                    f"Partial execution: {executed}/{total} allocations completed before timeout"
+                )
+                # Check failure ratio of executed allocations
+                if executed > 0:
+                    failure_ratio = tx.failed_count / executed
+                    if failure_ratio >= self._rollback_threshold:
+                        # High failure rate even among executed, mark for rollback
+                        tx.mark_failed(
+                            f"Timeout after {executed}/{total} allocations with "
+                            f"{failure_ratio:.1%} failure rate"
+                        )
+                    else:
+                        # Some succeeded, mark as partially completed
+                        tx.mark_failed(
+                            f"Timeout after {executed}/{total} allocations "
+                            f"({tx.successful_count} successful, {tx.failed_count} failed)"
+                        )
+            else:
+                tx.mark_failed(f"Timeout before any allocation executed")
             return tx
 
         except Exception as e:
@@ -284,22 +307,24 @@ class AtomicAllocationManager:
             # Restore fund pool state
             self._fund_pool.restore_allocation_snapshot(tx.pre_state_snapshot)
 
-            # Notify bots of rollback (restore previous allocations)
+            # Notify ALL bots that were attempted (not just successful ones)
+            # to ensure Dispatcher and FundPool states are synchronized
             for record in tx.executed_allocations:
-                if record.success:
-                    # This bot received allocation, notify it of rollback
-                    try:
-                        previous = tx.pre_state_snapshot.get(record.bot_id, Decimal("0"))
-                        await self._dispatcher.notify_bot(
-                            bot_id=record.bot_id,
-                            amount=previous,  # Restore to previous amount
-                            trigger="rollback",
-                            previous_allocation=record.new_allocation,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to notify {record.bot_id} of rollback: {e}"
-                        )
+                try:
+                    previous = tx.pre_state_snapshot.get(record.bot_id, Decimal("0"))
+                    # For successful allocations: restore to previous amount
+                    # For failed allocations: confirm the previous amount
+                    # (bot may have received partial notification before failure)
+                    await self._dispatcher.notify_bot(
+                        bot_id=record.bot_id,
+                        amount=previous,  # Restore to previous amount
+                        trigger="rollback",
+                        previous_allocation=record.new_allocation if record.success else record.previous_allocation,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to notify {record.bot_id} of rollback: {e}"
+                    )
 
             tx.mark_rolled_back(reason)
 

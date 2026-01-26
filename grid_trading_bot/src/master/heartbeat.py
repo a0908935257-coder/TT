@@ -23,7 +23,7 @@ class NotifierProtocol(Protocol):
     """Protocol for notification manager."""
 
     async def notify_bot_timeout(
-        self, bot_id: str, missed_count: int, last_heartbeat: Optional[datetime]
+        self, bot_id: str, message: str = ""
     ) -> None: ...
 
     async def notify_bot_recovered(self, bot_id: str) -> None: ...
@@ -178,12 +178,12 @@ class RestartManager:
 
         # Check circuit breaker
         if tracker.is_circuit_open():
-            remaining = (tracker.circuit_open_until - datetime.now(timezone.utc)).seconds
+            remaining = int((tracker.circuit_open_until - datetime.now(timezone.utc)).total_seconds())
             return False, f"Circuit breaker open, {remaining}s remaining"
 
         # Check backoff
         if tracker.is_in_backoff():
-            remaining = (tracker.backoff_until - datetime.now(timezone.utc)).seconds
+            remaining = int((tracker.backoff_until - datetime.now(timezone.utc)).total_seconds())
             return False, f"In backoff period, {remaining}s remaining"
 
         # Clean old timestamps and check rate limit
@@ -270,13 +270,6 @@ class RestartManager:
                 tracker.current_backoff * self._config.backoff_multiplier,
                 self._config.max_backoff,
             )
-
-        tracker.backoff_until = datetime.now(timezone.utc) + \
-            asyncio.get_event_loop().time().__class__(
-                seconds=tracker.current_backoff
-            ).__class__.__bases__[0].__call__(
-                seconds=tracker.current_backoff
-            ) if False else None
 
         # Use timedelta for backoff calculation
         from datetime import timedelta
@@ -732,11 +725,11 @@ class HeartbeatMonitor:
             last_heartbeat = self._heartbeats.get(bot_id)
             last_time = last_heartbeat.timestamp if last_heartbeat else None
             try:
-                await self._notifier.notify_bot_timeout(
-                    bot_id=bot_id,
-                    missed_count=self._missed_counts.get(bot_id, 0),
-                    last_heartbeat=last_time,
+                message = (
+                    f"錯過 {self._missed_counts.get(bot_id, 0)} 次心跳, "
+                    f"最後收到: {last_time.isoformat() if last_time else 'N/A'}"
                 )
+                await self._notifier.notify_bot_timeout(bot_id=bot_id, message=message)
             except Exception as e:
                 logger.warning(f"Failed to send timeout notification: {e}")
 

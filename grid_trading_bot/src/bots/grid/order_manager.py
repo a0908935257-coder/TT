@@ -332,7 +332,7 @@ class GridOrderManager:
             if side == OrderSide.BUY and self._market_type == MarketType.SPOT:
                 order_cost = rounded_quantity * level.price
                 if cumulative_buy_cost + order_cost > quote_asset_balance:
-                    logger.debug(
+                    logger.warning(
                         f"Skipping BUY at level {level.index} - "
                         f"insufficient {symbol_info.quote_asset} balance "
                         f"(need {cumulative_buy_cost + order_cost:.2f}, have {quote_asset_balance:.2f})"

@@ -132,6 +132,7 @@ class Dispatcher:
         self,
         allocations: Dict[str, Decimal],
         trigger: str = "manual",
+        current_allocations: Optional[Dict[str, Decimal]] = None,
     ) -> List[AllocationRecord]:
         """
         Dispatch fund allocations to bots.
@@ -139,6 +140,7 @@ class Dispatcher:
         Args:
             allocations: Dictionary mapping bot_id to allocation amount
             trigger: What triggered the dispatch
+            current_allocations: Current allocations for calculating previous_allocation
 
         Returns:
             List of AllocationRecord for each dispatch attempt
@@ -146,7 +148,8 @@ class Dispatcher:
         records: List[AllocationRecord] = []
 
         for bot_id, amount in allocations.items():
-            record = await self.notify_bot(bot_id, amount, trigger)
+            previous = (current_allocations or {}).get(bot_id, Decimal("0"))
+            record = await self.notify_bot(bot_id, amount, trigger, previous_allocation=previous)
             records.append(record)
 
         # Log summary

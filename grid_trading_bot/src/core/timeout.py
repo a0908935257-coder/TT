@@ -308,13 +308,29 @@ async def notification_timeout(
     coro: Any,
     operation_name: str,
     default_result: Optional[T] = None,
+    raise_on_timeout: bool = True,
 ) -> T:
-    """Execute with bot_notification timeout, optionally returning default on timeout."""
+    """
+    Execute with bot_notification timeout, optionally returning default on timeout.
+
+    Args:
+        coro: Coroutine to execute
+        operation_name: Name for logging/error messages
+        default_result: Optional default result if timeout
+        raise_on_timeout: Whether to raise TimeoutError on timeout.
+                         If False and default_result is provided, returns default_result.
+                         If True (default), raises TimeoutError on timeout.
+
+    Returns:
+        Result of the coroutine or default_result on timeout (if not raising)
+    """
     config = get_timeout_config()
+    # Only suppress exception if both raise_on_timeout=False AND default_result is provided
+    should_raise = raise_on_timeout and default_result is None
     return await with_timeout(
         coro,
         config.bot_notification,
         operation_name,
         default_result=default_result,
-        raise_on_timeout=default_result is None,
+        raise_on_timeout=should_raise,
     )

@@ -488,27 +488,37 @@ class FundManager:
         )
 
         try:
-            # Notify bot via dispatcher (sends update_capital to bot)
-            dispatch_record = await self._dispatcher.notify_bot(
-                bot_id=bot_id,
-                amount=new_total,  # Send total allocation, not just increment
-                trigger=trigger,
-            )
+            # Optimistic update: Update fund pool first, then notify
+            # This ensures FundPool and bot state remain consistent
+            self._fund_pool.add_allocation(bot_id, amount)
 
-            if dispatch_record.success:
-                # Update fund pool allocation tracking
-                self._fund_pool.add_allocation(bot_id, amount)
-                record.success = True
-                logger.info(
-                    f"Allocated {amount} to {bot_id} "
-                    f"(previous: {previous}, new: {new_total})"
+            try:
+                # Notify bot via dispatcher (sends update_capital to bot)
+                dispatch_record = await self._dispatcher.notify_bot(
+                    bot_id=bot_id,
+                    amount=new_total,  # Send total allocation, not just increment
+                    trigger=trigger,
+                    previous_allocation=previous,
                 )
-            else:
-                record.success = False
-                record.error_message = dispatch_record.error_message
-                logger.warning(
-                    f"Bot {bot_id} rejected allocation: {record.error_message}"
-                )
+
+                if dispatch_record.success:
+                    record.success = True
+                    logger.info(
+                        f"Allocated {amount} to {bot_id} "
+                        f"(previous: {previous}, new: {new_total})"
+                    )
+                else:
+                    # Notification failed, rollback FundPool
+                    self._fund_pool.set_allocation(bot_id, previous)
+                    record.success = False
+                    record.error_message = dispatch_record.error_message
+                    logger.warning(
+                        f"Bot {bot_id} rejected allocation: {record.error_message}"
+                    )
+            except Exception as notify_err:
+                # Notification exception, rollback FundPool
+                self._fund_pool.set_allocation(bot_id, previous)
+                raise notify_err
 
             # Store record
             self._allocation_records.append(record)
