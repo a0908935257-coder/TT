@@ -382,6 +382,11 @@ class RSIGridStats:
     def net_pnl(self) -> Decimal:
         return self.total_pnl - self.total_fees
 
+    @property
+    def total_profit(self) -> Decimal:
+        """Alias for total_pnl (required by base heartbeat)."""
+        return self.total_pnl
+
     def record_trade(self, trade: RSIGridTrade) -> None:
         """Record a completed trade."""
         self.total_trades += 1
