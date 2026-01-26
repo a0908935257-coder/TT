@@ -623,16 +623,16 @@ class GridBot(BaseBot):
         return orders
 
     def get_levels(self) -> List[GridLevel]:
-        """Get all grid levels."""
+        """Get all grid levels (returns a copy to prevent mutation)."""
         if not self._setup:
             return []
-        return self._setup.levels
+        return list(self._setup.levels)
 
     def get_history(self) -> List[FilledRecord]:
-        """Get fill history."""
+        """Get fill history (returns a copy to prevent mutation)."""
         if not self._order_manager:
             return []
-        return self._order_manager._filled_history
+        return list(self._order_manager._filled_history)
 
     # =========================================================================
     # Persistence

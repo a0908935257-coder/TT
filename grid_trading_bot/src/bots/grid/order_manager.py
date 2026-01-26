@@ -104,6 +104,9 @@ class GridOrderManager:
     # Default fee rate (0.1%)
     DEFAULT_FEE_RATE = Decimal("0.001")
 
+    # Default max order age in seconds (24 hours)
+    DEFAULT_MAX_ORDER_AGE = 86400
+
     def __init__(
         self,
         exchange: ExchangeClient,
@@ -149,6 +152,16 @@ class GridOrderManager:
         # Track pending buy fills waiting for sell (for profit calculation)
         # Key: level_index, Value: FilledRecord
         self._pending_buy_fills: dict[int, FilledRecord] = {}
+
+        # Lock for atomic buy-sell matching (prevents race conditions)
+        self._match_lock: Optional[asyncio.Lock] = None
+
+        # Track order creation times for timeout handling
+        # Key: order_id, Value: creation timestamp
+        self._order_created_times: dict[str, datetime] = {}
+
+        # Max order age for timeout (can be configured)
+        self._max_order_age: int = self.DEFAULT_MAX_ORDER_AGE
 
     # =========================================================================
     # Properties
@@ -461,6 +474,7 @@ class GridOrderManager:
             self._level_order_map[level_index] = order.order_id
             self._order_level_map[order.order_id] = level_index
             self._orders[order.order_id] = order
+            self._order_created_times[order.order_id] = datetime.now(timezone.utc)
 
             # Update level state
             if side == OrderSide.BUY:
@@ -830,6 +844,7 @@ class GridOrderManager:
                 self._level_order_map[level_index] = order.order_id
                 self._order_level_map[order.order_id] = level_index
                 self._orders[order.order_id] = order
+                self._order_created_times[order.order_id] = datetime.now(timezone.utc)
 
                 # Update level state
                 level = self._setup.levels[level_index]
@@ -966,8 +981,8 @@ class GridOrderManager:
         elif filled_side == OrderSide.SELL:
             # Check if we have a matching buy fill to calculate profit
             # Look for buy fills at lower levels
-            # Note: _find_matching_buy_fill atomically pairs the records to prevent race conditions
-            matching_buy = self._find_matching_buy_fill(level_index, fill_record)
+            # Note: _find_matching_buy_fill uses lock to atomically pair records
+            matching_buy = await self._find_matching_buy_fill(level_index, fill_record)
             if matching_buy:
                 profit = self.calculate_profit(matching_buy, fill_record)
                 self._total_profit += profit
@@ -1219,15 +1234,15 @@ class GridOrderManager:
     # Fill Handling Helpers
     # =========================================================================
 
-    def _find_matching_buy_fill(self, sell_level_index: int, sell_record: FilledRecord) -> Optional[FilledRecord]:
+    async def _find_matching_buy_fill(self, sell_level_index: int, sell_record: FilledRecord) -> Optional[FilledRecord]:
         """
         Find a matching buy fill for profit calculation.
 
         When a SELL is filled at level N, look for a BUY fill at level N-1
         (the level below, where buy should have been placed).
 
-        This method atomically pairs the matched buy with the sell to prevent
-        race conditions where multiple sells match the same buy.
+        This method uses a lock to atomically pair the matched buy with the sell,
+        preventing race conditions where multiple sells match the same buy.
 
         Args:
             sell_level_index: Level index where sell was filled
@@ -1236,28 +1251,33 @@ class GridOrderManager:
         Returns:
             Matching buy FilledRecord if found, None otherwise
         """
-        # Look for pending buy fill at the level below
-        buy_level_index = sell_level_index - 1
-        if buy_level_index in self._pending_buy_fills:
-            buy_record = self._pending_buy_fills.pop(buy_level_index)
-            # Atomically pair both records
-            buy_record.paired_record = sell_record
-            sell_record.paired_record = buy_record
-            return buy_record
+        # Initialize lock lazily (to avoid event loop issues at construction time)
+        if self._match_lock is None:
+            self._match_lock = asyncio.Lock()
 
-        # Fallback: find any unpaired buy fill at a lower price
-        for record in reversed(self._filled_history):
-            if (
-                record.side == OrderSide.BUY
-                and record.paired_record is None
-                and record.level_index < sell_level_index
-            ):
-                # Atomically pair to prevent race condition
-                record.paired_record = sell_record
-                sell_record.paired_record = record
-                return record
+        async with self._match_lock:
+            # Look for pending buy fill at the level below
+            buy_level_index = sell_level_index - 1
+            if buy_level_index in self._pending_buy_fills:
+                buy_record = self._pending_buy_fills.pop(buy_level_index)
+                # Atomically pair both records (under lock protection)
+                buy_record.paired_record = sell_record
+                sell_record.paired_record = buy_record
+                return buy_record
 
-        return None
+            # Fallback: find any unpaired buy fill at a lower price
+            for record in reversed(self._filled_history):
+                if (
+                    record.side == OrderSide.BUY
+                    and record.paired_record is None
+                    and record.level_index < sell_level_index
+                ):
+                    # Atomically pair (under lock protection)
+                    record.paired_record = sell_record
+                    sell_record.paired_record = record
+                    return record
+
+            return None
 
     async def _notify_order_filled(
         self,
@@ -1296,3 +1316,75 @@ class GridOrderManager:
             )
         except Exception as e:
             logger.warning(f"Failed to send fill notification: {e}")
+
+    # =========================================================================
+    # Order Timeout Handling
+    # =========================================================================
+
+    async def check_stale_orders(self, max_age_seconds: Optional[int] = None) -> int:
+        """
+        Check for and cancel stale orders that have exceeded the maximum age.
+
+        This helps prevent old orders from executing at outdated prices
+        after significant market movements.
+
+        Args:
+            max_age_seconds: Maximum order age in seconds (uses default if None)
+
+        Returns:
+            Number of stale orders cancelled
+        """
+        if not self._setup:
+            return 0
+
+        max_age = max_age_seconds or self._max_order_age
+        now = datetime.now(timezone.utc)
+        cancelled_count = 0
+        stale_orders: list[tuple[int, str]] = []
+
+        # Find stale orders
+        for order_id, created_time in list(self._order_created_times.items()):
+            age_seconds = (now - created_time).total_seconds()
+            if age_seconds > max_age:
+                level_index = self._order_level_map.get(order_id)
+                if level_index is not None:
+                    stale_orders.append((level_index, order_id))
+                    logger.warning(
+                        f"Order {order_id} at level {level_index} is stale "
+                        f"(age: {age_seconds:.0f}s > {max_age}s)"
+                    )
+
+        # Cancel stale orders
+        for level_index, order_id in stale_orders:
+            try:
+                if await self.cancel_order_at_level(level_index):
+                    cancelled_count += 1
+                    # Clean up timestamp
+                    self._order_created_times.pop(order_id, None)
+                    logger.info(f"Cancelled stale order {order_id} at level {level_index}")
+            except Exception as e:
+                logger.error(f"Failed to cancel stale order {order_id}: {e}")
+
+        if cancelled_count > 0:
+            logger.info(f"Cancelled {cancelled_count} stale orders")
+
+        return cancelled_count
+
+    def set_max_order_age(self, max_age_seconds: int) -> None:
+        """
+        Set the maximum order age for timeout detection.
+
+        Args:
+            max_age_seconds: Maximum age in seconds
+        """
+        self._max_order_age = max_age_seconds
+        logger.info(f"Max order age set to {max_age_seconds} seconds")
+
+    def _cleanup_order_timestamp(self, order_id: str) -> None:
+        """
+        Clean up order timestamp when order is removed.
+
+        Args:
+            order_id: Order ID to clean up
+        """
+        self._order_created_times.pop(order_id, None)
