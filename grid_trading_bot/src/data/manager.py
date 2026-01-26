@@ -629,9 +629,10 @@ class MarketDataManager:
 
         # Fallback to database (get from latest snapshot)
         latest = await self.balances.get_latest_snapshot(bot_id)
-        for balance in latest:
-            if balance.asset == asset.upper():
-                return balance
+        if latest:
+            for balance in latest:
+                if balance.asset == asset.upper():
+                    return balance
         return None
 
     # =========================================================================

@@ -347,18 +347,25 @@ class Master:
             # Bind instance to registry
             self._registry.bind_instance(bot_id, instance)
 
-            # Restore state from database if bot supports it
-            if hasattr(instance, "restore_from_db"):
-                await instance.restore_from_db()
+            try:
+                # Restore state from database if bot supports it
+                if hasattr(instance, "restore_from_db"):
+                    await instance.restore_from_db()
 
-            # Restart if was running
-            if bot_info.state == BotState.RUNNING:
-                await instance.start()
-                logger.info(f"Restored and started bot: {bot_id}")
-            else:
-                logger.info(f"Restored bot: {bot_id} (state: {bot_info.state.value})")
+                # Restart if was running
+                if bot_info.state == BotState.RUNNING:
+                    await instance.start()
+                    logger.info(f"Restored and started bot: {bot_id}")
+                else:
+                    logger.info(f"Restored bot: {bot_id} (state: {bot_info.state.value})")
 
-            return True
+                return True
+
+            except Exception as restore_error:
+                # Unbind instance on restore/start failure to prevent zombie instance
+                logger.error(f"Restore/start failed for {bot_id}, unbinding instance: {restore_error}")
+                self._registry.unbind_instance(bot_id)
+                return False
 
         except Exception as e:
             logger.error(f"Failed to restore bot {bot_id}: {e}")
