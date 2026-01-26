@@ -4,10 +4,13 @@ PostgreSQL Database Connection Manager.
 Provides async connection pool management using SQLAlchemy 2.0 and asyncpg.
 """
 
+import asyncio
+import functools
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Callable, Optional, TypeVar
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, OperationalError, TimeoutError as SQLTimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -18,6 +21,55 @@ from sqlalchemy.ext.asyncio import (
 from src.core import get_logger
 
 logger = get_logger(__name__)
+
+T = TypeVar("T")
+
+
+def with_db_retry(max_retries: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
+    """
+    Decorator for database operations with retry logic and exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay between retries (seconds)
+        max_delay: Maximum delay between retries (seconds)
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs) -> T:
+            last_error = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(self, *args, **kwargs)
+                except (OperationalError, DBAPIError, SQLTimeoutError, ConnectionRefusedError) as e:
+                    last_error = e
+                    # Check if it's a pool exhaustion error
+                    error_str = str(e).lower()
+                    is_pool_error = "pool" in error_str and ("timeout" in error_str or "exhausted" in error_str)
+
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        if is_pool_error:
+                            logger.warning(
+                                f"Database pool exhausted (attempt {attempt + 1}/{max_retries + 1}). "
+                                f"Waiting {delay:.1f}s for connection..."
+                            )
+                        else:
+                            logger.warning(
+                                f"Database operation {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                                f"Retrying in {delay:.1f}s..."
+                            )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"Database operation {func.__name__} failed after {max_retries + 1} attempts: {e}")
+                        raise
+                except Exception as e:
+                    # Non-retryable error
+                    logger.error(f"Database operation {func.__name__} failed with non-retryable error: {e}")
+                    raise
+            raise last_error or RuntimeError("Database operation failed")
+        return wrapper
+    return decorator
 
 
 class DatabaseManager:
@@ -224,6 +276,7 @@ class DatabaseManager:
     # Query Execution
     # =========================================================================
 
+    @with_db_retry(max_retries=3, base_delay=0.5)
     async def execute(
         self,
         query: str,
@@ -249,6 +302,7 @@ class DatabaseManager:
             result = await session.execute(text(query), params or {})
             return result
 
+    @with_db_retry(max_retries=3, base_delay=0.5)
     async def execute_many(
         self,
         query: str,
@@ -265,6 +319,7 @@ class DatabaseManager:
             for params in params_list:
                 await session.execute(text(query), params)
 
+    @with_db_retry(max_retries=3, base_delay=0.5)
     async def fetch_one(
         self,
         query: str,
@@ -283,6 +338,7 @@ class DatabaseManager:
         result = await self.execute(query, params)
         return result.fetchone()
 
+    @with_db_retry(max_retries=3, base_delay=0.5)
     async def fetch_all(
         self,
         query: str,
@@ -301,6 +357,7 @@ class DatabaseManager:
         result = await self.execute(query, params)
         return result.fetchall()
 
+    @with_db_retry(max_retries=3, base_delay=0.5)
     async def fetch_scalar(
         self,
         query: str,

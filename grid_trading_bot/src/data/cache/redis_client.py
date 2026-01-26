@@ -6,15 +6,61 @@ caching, Pub/Sub messaging, and key prefix management.
 """
 
 import asyncio
+import functools
 import json
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, TypeVar, Union
 
 import redis.asyncio as redis
 from redis.asyncio.client import PubSub
+from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
 
 from src.core import get_logger
 
 logger = get_logger(__name__)
+
+T = TypeVar("T")
+
+
+def with_retry(max_retries: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
+    """
+    Decorator for Redis operations with retry logic and exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay between retries (seconds)
+        max_delay: Maximum delay between retries (seconds)
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs) -> T:
+            last_error = None
+            for attempt in range(max_retries + 1):
+                try:
+                    # Verify connection before operation
+                    if not await self._ensure_connected():
+                        raise RuntimeError("Redis connection unavailable")
+                    return await func(self, *args, **kwargs)
+                except (RedisConnectionError, RedisTimeoutError, ConnectionResetError, BrokenPipeError) as e:
+                    last_error = e
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        logger.warning(
+                            f"Redis operation {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        # Mark as disconnected and try to reconnect
+                        self._connected = False
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"Redis operation {func.__name__} failed after {max_retries + 1} attempts: {e}")
+                        raise
+                except Exception as e:
+                    # Non-retryable error
+                    logger.error(f"Redis operation {func.__name__} failed with non-retryable error: {e}")
+                    raise
+            raise last_error or RuntimeError("Redis operation failed")
+        return wrapper
+    return decorator
 
 
 class RedisManager:
@@ -186,7 +232,41 @@ class RedisManager:
             return result is True
         except Exception as e:
             logger.error(f"Health check failed: {e}")
+            self._connected = False
             return False
+
+    async def _ensure_connected(self) -> bool:
+        """
+        Ensure Redis is connected, attempt reconnection if not.
+
+        Returns:
+            True if connected or reconnected successfully
+        """
+        if self._connected and self._client:
+            # Quick health check to detect EOF/broken pipe
+            try:
+                await asyncio.wait_for(self._client.ping(), timeout=2.0)
+                return True
+            except Exception:
+                logger.warning("Redis connection lost, attempting reconnect...")
+                self._connected = False
+
+        # Attempt reconnection
+        if not self._connected:
+            try:
+                if self._client:
+                    try:
+                        await self._client.close()
+                    except Exception:
+                        pass
+                    self._client = None
+
+                return await self.connect()
+            except Exception as e:
+                logger.error(f"Redis reconnection failed: {e}")
+                return False
+
+        return False
 
     # =========================================================================
     # Key Management
@@ -208,6 +288,7 @@ class RedisManager:
     # Basic Operations
     # =========================================================================
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def get(self, key: str) -> Optional[Any]:
         """
         Get value by key.
@@ -233,6 +314,7 @@ class RedisManager:
         except (json.JSONDecodeError, TypeError):
             return value
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def set(
         self,
         key: str,
@@ -268,6 +350,7 @@ class RedisManager:
 
         return bool(result)
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def delete(self, key: str) -> bool:
         """
         Delete key.
@@ -285,6 +368,7 @@ class RedisManager:
         result = await self._client.delete(full_key)
         return result > 0
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def exists(self, key: str) -> bool:
         """
         Check if key exists.
@@ -302,6 +386,7 @@ class RedisManager:
         result = await self._client.exists(full_key)
         return result > 0
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def expire(self, key: str, ttl: int) -> bool:
         """
         Set expiration time on key.
@@ -320,6 +405,7 @@ class RedisManager:
         result = await self._client.expire(full_key, ttl)
         return bool(result)
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def ttl(self, key: str) -> int:
         """
         Get remaining TTL for key.
@@ -336,6 +422,7 @@ class RedisManager:
         full_key = self._make_key(key)
         return await self._client.ttl(full_key)
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def keys(self, pattern: str = "*") -> list[str]:
         """
         Get keys matching pattern.
@@ -356,6 +443,7 @@ class RedisManager:
         prefix_len = len(self._key_prefix)
         return [k[prefix_len:] for k in keys]
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def mget(self, keys: list[str]) -> list[Optional[Any]]:
         """
         Get multiple values by keys.
@@ -384,6 +472,7 @@ class RedisManager:
 
         return results
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def mset(self, mapping: dict[str, Any]) -> bool:
         """
         Set multiple key-value pairs.
@@ -414,6 +503,7 @@ class RedisManager:
     # Pub/Sub Operations
     # =========================================================================
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def publish(self, channel: str, message: Any) -> int:
         """
         Publish message to channel.
@@ -488,12 +578,41 @@ class RedisManager:
 
     async def _pubsub_listener(self) -> None:
         """Listen for pubsub messages and dispatch to callbacks."""
-        try:
-            while self._pubsub and self._subscriptions:
+        reconnect_delay = 1.0
+        max_reconnect_delay = 30.0
+        consecutive_errors = 0
+
+        while self._subscriptions:
+            try:
+                # Ensure pubsub is initialized
+                if self._pubsub is None:
+                    if not self._client:
+                        logger.warning("Redis client not available, waiting to reconnect...")
+                        await asyncio.sleep(reconnect_delay)
+                        reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+
+                        # Try to reconnect
+                        if await self._ensure_connected():
+                            self._pubsub = self._client.pubsub()
+                            # Re-subscribe to all channels
+                            for channel in list(self._subscriptions.keys()):
+                                await self._pubsub.subscribe(channel)
+                            logger.info("Pubsub reconnected and resubscribed")
+                            reconnect_delay = 1.0
+                            consecutive_errors = 0
+                        continue
+                    self._pubsub = self._client.pubsub()
+                    for channel in list(self._subscriptions.keys()):
+                        await self._pubsub.subscribe(channel)
+
                 message = await self._pubsub.get_message(
                     ignore_subscribe_messages=True,
                     timeout=1.0,
                 )
+
+                # Reset error counter on successful operation
+                consecutive_errors = 0
+                reconnect_delay = 1.0
 
                 if message is None:
                     continue
@@ -522,16 +641,42 @@ class RedisManager:
                     except Exception as e:
                         logger.error(f"Callback error for {original_channel}: {e}")
 
-        except asyncio.CancelledError:
-            logger.debug("Pubsub listener cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Pubsub listener error: {e}")
+            except asyncio.CancelledError:
+                logger.debug("Pubsub listener cancelled")
+                raise
+            except (RedisConnectionError, RedisTimeoutError, ConnectionResetError, BrokenPipeError, OSError) as e:
+                consecutive_errors += 1
+                logger.warning(
+                    f"Pubsub connection error (attempt {consecutive_errors}): {e}. "
+                    f"Reconnecting in {reconnect_delay:.1f}s..."
+                )
+
+                # Mark as disconnected
+                self._connected = False
+                if self._pubsub:
+                    try:
+                        await self._pubsub.close()
+                    except Exception:
+                        pass
+                    self._pubsub = None
+
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
+
+                # Give up after too many consecutive errors
+                if consecutive_errors >= 10:
+                    logger.error("Pubsub listener giving up after 10 consecutive errors")
+                    break
+
+            except Exception as e:
+                logger.error(f"Pubsub listener unexpected error: {e}")
+                await asyncio.sleep(1.0)
 
     # =========================================================================
     # Hash Operations (useful for structured data)
     # =========================================================================
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def hget(self, name: str, key: str) -> Optional[Any]:
         """
         Get value from hash.
@@ -557,6 +702,7 @@ class RedisManager:
         except (json.JSONDecodeError, TypeError):
             return value
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def hset(self, name: str, key: str, value: Any) -> int:
         """
         Set value in hash.
@@ -581,6 +727,7 @@ class RedisManager:
 
         return await self._client.hset(full_name, key, value)
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def hgetall(self, name: str) -> dict[str, Any]:
         """
         Get all fields from hash.
@@ -606,6 +753,7 @@ class RedisManager:
 
         return result
 
+    @with_retry(max_retries=3, base_delay=0.5)
     async def hdel(self, name: str, *keys: str) -> int:
         """
         Delete fields from hash.
