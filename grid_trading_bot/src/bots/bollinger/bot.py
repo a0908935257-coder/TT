@@ -25,6 +25,7 @@ Bollinger BB_TREND_GRID Bot - 趨勢網格交易機器人.
 """
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal

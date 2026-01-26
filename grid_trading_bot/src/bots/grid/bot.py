@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
 from src.core import get_logger
-from src.core.models import Kline, MarketType, Order
+from src.core.models import Kline, MarketType, Order, OrderSide, OrderType, OrderStatus
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master.models import BotState
@@ -901,8 +901,94 @@ class GridBot(BaseBot):
                 await self._order_manager.handle_order_update(order)
 
     def _parse_order_update(self, data: dict) -> Optional[Order]:
-        """Parse order update from WebSocket data."""
-        return None
+        """Parse order update from WebSocket executionReport data.
+
+        Binance WebSocket executionReport fields:
+        - s: symbol
+        - S: side (BUY/SELL)
+        - o: order type
+        - X: order status
+        - i: order id
+        - c: client order id
+        - q: original quantity
+        - p: price
+        - z: cumulative filled quantity
+        - Z: cumulative quote asset transacted
+        - n: commission amount
+        - N: commission asset
+        - T: transaction time
+        - L: last filled price
+        """
+        try:
+            # Validate required fields
+            order_id = data.get("i")
+            symbol = data.get("s")
+            if not order_id or not symbol:
+                logger.warning(f"Missing order_id or symbol in execution report: {data}")
+                return None
+
+            # Parse side
+            side_str = data.get("S", "BUY")
+            try:
+                side = OrderSide(side_str)
+            except ValueError:
+                logger.warning(f"Invalid order side: {side_str}")
+                return None
+
+            # Parse order type
+            type_str = data.get("o", "LIMIT")
+            try:
+                order_type = OrderType(type_str)
+            except ValueError:
+                order_type = OrderType.LIMIT  # Default to LIMIT
+
+            # Parse status
+            status_str = data.get("X", "NEW")
+            try:
+                status = OrderStatus(status_str)
+            except ValueError:
+                logger.warning(f"Invalid order status: {status_str}")
+                return None
+
+            # Parse quantities and prices
+            quantity = Decimal(str(data.get("q", "0")))
+            price = Decimal(str(data.get("p", "0")))
+            filled_qty = Decimal(str(data.get("z", "0")))
+
+            # Calculate average price from last filled or use L (last executed price)
+            last_price = Decimal(str(data.get("L", "0")))
+            avg_price = last_price if last_price > 0 else price if price > 0 else None
+
+            # Parse commission
+            fee = Decimal(str(data.get("n", "0")))
+            fee_asset = data.get("N")
+
+            # Parse timestamps
+            transaction_time = data.get("T", 0)
+            created_at = datetime.fromtimestamp(
+                int(transaction_time) / 1000,
+                tz=timezone.utc
+            ) if transaction_time else datetime.now(timezone.utc)
+
+            return Order(
+                order_id=str(order_id),
+                client_order_id=data.get("c"),
+                symbol=symbol,
+                side=side,
+                order_type=order_type,
+                status=status,
+                price=price if price > 0 else None,
+                quantity=quantity,
+                filled_qty=filled_qty,
+                avg_price=avg_price,
+                fee=fee,
+                fee_asset=fee_asset,
+                created_at=created_at,
+                updated_at=datetime.now(timezone.utc),
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse order update: {e}, data: {data}")
+            return None
 
     async def _clear_position(self) -> None:
         """Market sell all positions."""

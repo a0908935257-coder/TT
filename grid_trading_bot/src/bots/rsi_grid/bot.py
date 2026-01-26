@@ -23,6 +23,7 @@ Design Goals:
 """
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -808,6 +809,11 @@ class RSIGridBot(BaseBot):
                     fill_price = order.avg_price if order.avg_price else price
                     fill_qty = order.filled_qty if order.filled_qty else quantity
 
+                # Validate fill_qty before proceeding
+                if fill_qty <= 0:
+                    logger.error(f"Invalid fill_qty: {fill_qty}, skipping position update")
+                    return False
+
                 # Check for partial fill
                 if fill_qty < quantity:
                     fill_result = await self._handle_partial_fill(
@@ -842,15 +848,20 @@ class RSIGridBot(BaseBot):
 
                 if self._position and self._position.side == side:
                     # Add to position (DCA)
-                    total_value = (
-                        self._position.quantity * self._position.entry_price +
-                        fill_qty * fill_price
-                    )
-                    self._position.quantity += fill_qty
-                    self._position.entry_price = total_value / self._position.quantity
+                    if fill_qty > 0:
+                        total_value = (
+                            self._position.quantity * self._position.entry_price +
+                            fill_qty * fill_price
+                        )
+                        self._position.quantity += fill_qty
+                        # Avoid division by zero
+                        if self._position.quantity > 0:
+                            self._position.entry_price = total_value / self._position.quantity
 
-                    if self._config.use_exchange_stop_loss:
-                        await self._update_stop_loss_order()
+                        if self._config.use_exchange_stop_loss:
+                            await self._update_stop_loss_order()
+                    else:
+                        logger.warning(f"Skipping DCA update: fill_qty is zero")
                 else:
                     # New position
                     if self._position:

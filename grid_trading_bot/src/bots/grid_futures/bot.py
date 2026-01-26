@@ -27,6 +27,7 @@ Features:
 """
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -896,16 +897,21 @@ class GridFuturesBot(BaseBot):
                 # Update position
                 if self._position and self._position.side == side:
                     # Add to position (DCA)
-                    total_value = (
-                        self._position.quantity * self._position.entry_price +
-                        fill_qty * fill_price
-                    )
-                    self._position.quantity += fill_qty
-                    self._position.entry_price = total_value / self._position.quantity
+                    if fill_qty > 0:
+                        total_value = (
+                            self._position.quantity * self._position.entry_price +
+                            fill_qty * fill_price
+                        )
+                        self._position.quantity += fill_qty
+                        # Avoid division by zero
+                        if self._position.quantity > 0:
+                            self._position.entry_price = total_value / self._position.quantity
 
-                    # Update stop loss order with new quantity and average price
-                    if self._config.use_exchange_stop_loss:
-                        await self._update_stop_loss_order()
+                        # Update stop loss order with new quantity and average price
+                        if self._config.use_exchange_stop_loss:
+                            await self._update_stop_loss_order()
+                    else:
+                        logger.warning(f"Skipping DCA update: fill_qty is zero")
                 else:
                     # New position (or flip)
                     if self._position:

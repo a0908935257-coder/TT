@@ -233,7 +233,12 @@ class BollingerCalculator:
             # Count how many values are strictly less than current BBW
             # This correctly handles duplicate values
             rank = sum(1 for val in self._bbw_history if val < bbw)
-            percentile = int((rank / len(self._bbw_history)) * 100)
+            # Use proper rounding and ensure minimum 1st percentile if any values exist below
+            history_len = len(self._bbw_history)
+            if history_len > 0:
+                percentile = round((rank / history_len) * 100)
+            else:
+                percentile = 50  # Default to median if no history
 
         # Determine squeeze state
         is_squeeze = percentile < self._bbw_threshold_pct

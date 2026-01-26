@@ -1256,14 +1256,27 @@ class GridOrderManager:
             self._match_lock = asyncio.Lock()
 
         async with self._match_lock:
-            # Look for pending buy fill at the level below
+            # Strategy 1: Look for pending buy fill at the level below (most common case)
             buy_level_index = sell_level_index - 1
-            if buy_level_index in self._pending_buy_fills:
+            if buy_level_index >= 0 and buy_level_index in self._pending_buy_fills:
                 buy_record = self._pending_buy_fills.pop(buy_level_index)
                 # Atomically pair both records (under lock protection)
                 buy_record.paired_record = sell_record
                 sell_record.paired_record = buy_record
                 return buy_record
+
+            # Strategy 2: Search nearby levels (for dynamic grid adjustments)
+            # Check levels within a range below the sell level
+            for offset in range(2, min(5, sell_level_index + 1)):
+                nearby_level = sell_level_index - offset
+                if nearby_level >= 0 and nearby_level in self._pending_buy_fills:
+                    buy_record = self._pending_buy_fills.pop(nearby_level)
+                    buy_record.paired_record = sell_record
+                    sell_record.paired_record = buy_record
+                    logger.debug(
+                        f"Matched buy at level {nearby_level} with sell at level {sell_level_index}"
+                    )
+                    return buy_record
 
             # Fallback: find any unpaired buy fill at a lower price
             for record in reversed(self._filled_history):

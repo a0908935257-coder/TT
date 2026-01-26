@@ -955,7 +955,8 @@ class GridRiskManager:
         for record in self._order_manager._filled_history:
             if record.side == OrderSide.BUY and record.paired_record is None:
                 # Unpaired buy = open position
-                pnl = (current_price - record.price) * record.quantity
+                # Include fees paid when buying
+                pnl = (current_price - record.price) * record.quantity - record.fee
                 total_pnl += pnl
 
         return total_pnl
@@ -1349,8 +1350,9 @@ class GridRiskManager:
 
                 # Pause if consecutive failures
                 if self._consecutive_health_failures >= 3:
-                    await self.pause("Health check failed 3 times")
+                    # Notify first, then pause to ensure notification reflects pre-pause state
                     await self._notify_health_failure(status)
+                    await self.pause("Health check failed 3 times")
 
         except Exception as e:
             logger.error(f"Health check error: {e}")

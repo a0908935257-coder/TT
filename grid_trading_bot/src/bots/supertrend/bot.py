@@ -24,6 +24,7 @@ RSI 過濾器效果:
 """
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Optional

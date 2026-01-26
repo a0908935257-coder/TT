@@ -5532,11 +5532,18 @@ class BaseBot(ABC):
             # Start heartbeat
             self._start_heartbeat()
 
+            # Start position reconciliation
+            self._start_position_reconciliation()
+
             logger.info(f"Bot {self._bot_id} started successfully")
             return True
 
         except Exception as e:
             logger.error(f"Failed to start bot {self._bot_id}: {e}")
+            # Cleanup any resources that may have been started
+            self._stop_heartbeat()
+            self._stop_position_reconciliation()
+            self._running = False
             self._state = BotState.ERROR
             self._error_message = str(e)
             raise
@@ -5568,6 +5575,9 @@ class BaseBot(ABC):
 
             # Stop heartbeat first to prevent stale heartbeats
             self._stop_heartbeat()
+
+            # Stop position reconciliation
+            self._stop_position_reconciliation()
 
             # Call subclass implementation (may have cleanup operations)
             await self._do_stop(clear_position)
