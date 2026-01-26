@@ -32,7 +32,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.master import Master, MasterConfig, BotType
 from src.notification import NotificationManager
-from src.fund_manager import FundManager
+from src.fund_manager import FundManager, SignalCoordinator, ConflictResolution
 from src.fund_manager.models.config import FundManagerConfig
 
 logger = get_logger(__name__)
@@ -77,8 +77,53 @@ _exchange: ExchangeClient | None = None
 _data_manager: MarketDataManager | None = None
 _notifier: NotificationManager | None = None
 _fund_manager: FundManager | None = None
+_signal_coordinator: SignalCoordinator | None = None
 _discord_bot = None
 _shutdown_event: asyncio.Event | None = None
+
+
+def initialize_signal_coordinator() -> SignalCoordinator:
+    """
+    Initialize SignalCoordinator from settings.yaml configuration.
+
+    Reads signal_coordinator section from settings.yaml and configures:
+    - Conflict resolution strategy
+    - Allowed hedge symbols
+    - Bot priorities
+    """
+    config = _load_yaml_config()
+    sc_config = config.get("signal_coordinator", {})
+
+    # Parse resolution strategy
+    resolution_str = sc_config.get("resolution", "block_newer")
+    resolution_map = {
+        "block_newer": ConflictResolution.BLOCK_NEWER,
+        "block_smaller": ConflictResolution.BLOCK_SMALLER,
+        "warn_only": ConflictResolution.WARN_ONLY,
+        "allow_hedge": ConflictResolution.ALLOW_HEDGE,
+        "priority_based": ConflictResolution.PRIORITY_BASED,
+    }
+    resolution = resolution_map.get(resolution_str, ConflictResolution.BLOCK_NEWER)
+
+    # Get other settings
+    signal_ttl = sc_config.get("signal_ttl_seconds", 60.0)
+    allowed_hedge_symbols = set(sc_config.get("allowed_hedge_symbols", []))
+    bot_priorities = sc_config.get("bot_priorities", {})
+
+    # Create and configure SignalCoordinator
+    coordinator = SignalCoordinator(
+        resolution=resolution,
+        signal_ttl_seconds=signal_ttl,
+        bot_priorities=bot_priorities,
+        allowed_hedge_symbols=allowed_hedge_symbols,
+    )
+
+    logger.info(
+        f"SignalCoordinator initialized: resolution={resolution.value}, "
+        f"hedge_symbols={allowed_hedge_symbols}"
+    )
+
+    return coordinator
 
 
 def print_banner():
@@ -442,7 +487,7 @@ async def start_discord_bot(master: Master):
 
 async def shutdown():
     """Graceful shutdown."""
-    global _master, _exchange, _data_manager, _notifier, _fund_manager, _discord_bot
+    global _master, _exchange, _data_manager, _notifier, _fund_manager, _signal_coordinator, _discord_bot
 
     print("\n正在關閉系統...")
 
@@ -451,6 +496,15 @@ async def shutdown():
         try:
             await _discord_bot.stop_bot()
             print("  ✓ Discord Bot 已關閉")
+        except:
+            pass
+
+    # Stop Signal Coordinator
+    if _signal_coordinator:
+        try:
+            await _signal_coordinator.stop()
+            SignalCoordinator.reset_instance()
+            print("  ✓ 訊號協調器已關閉")
         except:
             pass
 
@@ -492,7 +546,7 @@ async def shutdown():
 
 async def main():
     """Main entry point."""
-    global _master, _exchange, _data_manager, _notifier, _fund_manager, _shutdown_event
+    global _master, _exchange, _data_manager, _notifier, _fund_manager, _signal_coordinator, _shutdown_event
 
     print_banner()
     _shutdown_event = asyncio.Event()
@@ -558,11 +612,17 @@ async def main():
         await _fund_manager.start()
         print("  ✓ 資金管理系統啟動成功")
 
-        # 6. Create and start bots
+        # 6. Initialize Signal Coordinator (multi-bot conflict prevention)
+        print("正在初始化訊號協調器...")
+        _signal_coordinator = initialize_signal_coordinator()
+        await _signal_coordinator.start()
+        print(f"  ✓ 訊號協調器啟動成功 (對沖模式: BTCUSDT)")
+
+        # 7. Create and start bots
         print("\n正在創建機器人...")
         bot_ids = await create_and_start_bots(_master)
 
-        # 7. Dispatch initial funds to bots
+        # 8. Dispatch initial funds to bots
         print("\n正在分配資金...")
         dispatch_result = await _fund_manager.dispatch_funds(trigger="startup")
         if dispatch_result.success:
@@ -572,7 +632,7 @@ async def main():
         else:
             print(f"  ⚠️ 資金分配警告: {dispatch_result.errors}")
 
-        # 8. Start Discord bot
+        # 9. Start Discord bot
         print("\n正在啟動 Discord Bot...")
         await start_discord_bot(_master)
 

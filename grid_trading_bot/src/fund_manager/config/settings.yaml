@@ -275,6 +275,33 @@ bots:
 # Total: 90% allocated, 10% reserve (unallocated)
 
 # -----------------------------------------------------------------------------
+# Signal Coordinator Settings (多機器人訊號協調)
+# -----------------------------------------------------------------------------
+signal_coordinator:
+  # Conflict resolution strategy:
+  # - block_newer: Block the newer conflicting signal (default)
+  # - block_smaller: Block signal with smaller size
+  # - warn_only: Log warning but allow both
+  # - allow_hedge: Allow hedging (both long and short)
+  # - priority_based: Use bot priority to decide
+  resolution: allow_hedge
+
+  # Signal time-to-live in seconds
+  signal_ttl_seconds: 60
+
+  # Symbols that allow hedging (opposite direction positions)
+  # 允許對沖的交易對 - 這些交易對可以同時持有多空倉位
+  allowed_hedge_symbols:
+    - BTCUSDT
+
+  # Bot priorities (higher = more important, used with priority_based resolution)
+  bot_priorities:
+    grid_futures: 10
+    bollinger: 9
+    rsi_grid: 8
+    supertrend: 7
+
+# -----------------------------------------------------------------------------
 # Notification Settings
 # -----------------------------------------------------------------------------
 notifications:
