@@ -824,6 +824,7 @@ class GridRiskManager:
         total_quantity = self._calculate_total_position()
 
         # Market sell if we have positions
+        sell_succeeded = False
         if total_quantity > 0:
             try:
                 order = await self._order_manager._exchange.market_sell(
@@ -833,6 +834,7 @@ class GridRiskManager:
                 )
 
                 loss = self._calculate_unrealized_pnl(current_price)
+                sell_succeeded = True
 
                 logger.warning(
                     f"Price stop loss executed: sold {total_quantity} at ~{current_price}, "
@@ -858,8 +860,16 @@ class GridRiskManager:
                     had_positions=True,
                     error=str(e),
                 )
+                # Keep state as PAUSED so manual intervention can happen
+                self._state = RiskState.PAUSED
+                logger.warning(
+                    "Position sell failed - state set to PAUSED for manual intervention. "
+                    f"Position: {total_quantity}"
+                )
+                return  # Don't set to STOPPED
         else:
             # No positions, just cancelled orders
+            sell_succeeded = True
             logger.info("Price stop loss: no positions to sell, orders cancelled")
             await self._notify_price_stop_loss(
                 current_price=current_price,
@@ -869,8 +879,9 @@ class GridRiskManager:
                 had_positions=False,
             )
 
-        # Update state
-        self._state = RiskState.STOPPED
+        # Update state only if successful
+        if sell_succeeded:
+            self._state = RiskState.STOPPED
 
     async def _notify_price_stop_loss(
         self,
@@ -1172,18 +1183,27 @@ class GridRiskManager:
         Returns:
             True if started successfully
         """
-        if self._running:
+        if self._running or self._monitoring_task:
             logger.warning("Monitoring already running")
             return False
 
-        self._running = True
-        self._monitoring_task = asyncio.create_task(self._monitoring_loop())
+        try:
+            self._running = True
+            self._monitoring_task = asyncio.create_task(self._monitoring_loop())
 
-        # Update bot state
-        await self.change_state(BotState.RUNNING, "Monitoring started")
+            # Update bot state
+            await self.change_state(BotState.RUNNING, "Monitoring started")
 
-        logger.info("Monitoring started")
-        return True
+            logger.info("Monitoring started")
+            return True
+        except Exception as e:
+            # Cleanup on failure
+            self._running = False
+            if self._monitoring_task:
+                self._monitoring_task.cancel()
+                self._monitoring_task = None
+            logger.error(f"Failed to start monitoring: {e}")
+            raise
 
     async def stop_monitoring(self) -> None:
         """Stop the monitoring loop."""
@@ -1450,7 +1470,12 @@ class GridRiskManager:
 
         # Check consecutive loss trigger
         if self.check_consecutive_losses():
-            asyncio.create_task(self.pause("Consecutive loss limit exceeded"))
+            # Create and track the pause task to ensure it completes
+            pause_task = asyncio.create_task(self.pause("Consecutive loss limit exceeded"))
+            pause_task.add_done_callback(
+                lambda t: logger.error(f"Pause task failed: {t.exception()}")
+                if t.exception() else None
+            )
 
     async def reset_daily_stats(self) -> None:
         """Reset daily statistics (called at 00:00 UTC)."""
@@ -1567,9 +1592,13 @@ class GridRiskManager:
         # Cancel all orders
         cancelled = await self._order_manager.cancel_all_orders()
 
-        # Update states
+        # Update states - BotState first to ensure sync
+        if not await self.change_state(BotState.PAUSED, reason):
+            logger.error("Failed to change BotState to PAUSED")
+            return False
+
+        # Only update RiskState after BotState change succeeds
         self._state = RiskState.PAUSED
-        await self.change_state(BotState.PAUSED, reason)
 
         logger.info(f"Bot paused: {reason}. Cancelled {cancelled} orders.")
 
@@ -1601,9 +1630,13 @@ class GridRiskManager:
                     logger.warning(f"Cannot resume: still in {direction.value} breakout")
                     return False
 
-        # Update states
+        # Update states - BotState first to ensure sync
+        if not await self.change_state(BotState.RUNNING, "Resumed"):
+            logger.error("Failed to change BotState to RUNNING")
+            return False
+
+        # Only update RiskState after BotState change succeeds
         self._state = RiskState.NORMAL
-        await self.change_state(BotState.RUNNING, "Resumed")
 
         # Re-place orders
         placed = await self._order_manager.place_initial_orders()

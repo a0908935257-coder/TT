@@ -1073,6 +1073,14 @@ class GridOrderManager:
         # Use the smaller quantity (in case of partial fills)
         quantity = min(buy_record.quantity, sell_record.quantity)
 
+        # Guard against zero quantity
+        if quantity <= 0:
+            logger.warning(
+                f"Zero quantity in profit calculation: buy={buy_record.quantity}, "
+                f"sell={sell_record.quantity}"
+            )
+            return Decimal("0")
+
         # Gross profit
         gross_profit = (sell_record.price - buy_record.price) * quantity
 

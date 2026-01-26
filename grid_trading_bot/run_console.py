@@ -236,8 +236,8 @@ class SimpleMaster:
 
         try:
             await bot.stop()
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Error stopping bot {bot_id} before delete: {e}")
 
         del self._bots[bot_id]
         return type('Result', (), {'success': True, 'message': f'Bot {bot_id} deleted'})()
@@ -268,8 +268,8 @@ class SimpleMaster:
         for bot_id, bot in list(self._bots.items()):
             try:
                 await bot.stop()
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Error stopping bot {bot_id} during shutdown: {e}")
 
         if self._exchange:
             await self._exchange.disconnect()
@@ -345,8 +345,8 @@ async def shutdown(sig):
     if _discord_bot:
         try:
             await _discord_bot.stop_bot()
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Error stopping Discord bot during shutdown: {e}")
 
     if _master:
         await _master.shutdown()
