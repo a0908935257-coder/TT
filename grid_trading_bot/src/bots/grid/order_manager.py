@@ -154,7 +154,8 @@ class GridOrderManager:
         self._pending_buy_fills: dict[int, FilledRecord] = {}
 
         # Lock for atomic buy-sell matching (prevents race conditions)
-        self._match_lock: Optional[asyncio.Lock] = None
+        # Initialized early to avoid race condition in lazy initialization
+        self._match_lock: asyncio.Lock = asyncio.Lock()
 
         # Track order creation times for timeout handling
         # Key: order_id, Value: creation timestamp
@@ -1018,8 +1019,9 @@ class GridOrderManager:
         filled_side = OrderSide(order.side) if isinstance(order.side, str) else order.side
 
         if filled_side == OrderSide.BUY:
-            # Store buy fill for later profit calculation
-            self._pending_buy_fills[level_index] = fill_record
+            # Store buy fill for later profit calculation (protected by lock)
+            async with self._match_lock:
+                self._pending_buy_fills[level_index] = fill_record
         elif filled_side == OrderSide.SELL:
             # Check if we have a matching buy fill to calculate profit
             # Look for buy fills at lower levels
@@ -1293,19 +1295,21 @@ class GridOrderManager:
         Returns:
             Matching buy FilledRecord if found, None otherwise
         """
-        # Initialize lock lazily (to avoid event loop issues at construction time)
-        if self._match_lock is None:
-            self._match_lock = asyncio.Lock()
-
         async with self._match_lock:
             # Strategy 1: Look for pending buy fill at the level below (most common case)
             buy_level_index = sell_level_index - 1
             if buy_level_index >= 0 and buy_level_index in self._pending_buy_fills:
                 buy_record = self._pending_buy_fills.pop(buy_level_index)
-                # Atomically pair both records (under lock protection)
-                buy_record.paired_record = sell_record
-                sell_record.paired_record = buy_record
-                return buy_record
+                # Check if already paired (safety check)
+                if buy_record.paired_record is not None:
+                    logger.warning(
+                        f"Buy record at level {buy_level_index} already paired, skipping"
+                    )
+                else:
+                    # Atomically pair both records (under lock protection)
+                    buy_record.paired_record = sell_record
+                    sell_record.paired_record = buy_record
+                    return buy_record
 
             # Strategy 2: Search nearby levels (for dynamic grid adjustments)
             # Check levels within a range below the sell level
@@ -1313,6 +1317,12 @@ class GridOrderManager:
                 nearby_level = sell_level_index - offset
                 if nearby_level >= 0 and nearby_level in self._pending_buy_fills:
                     buy_record = self._pending_buy_fills.pop(nearby_level)
+                    # Check if already paired (safety check)
+                    if buy_record.paired_record is not None:
+                        logger.warning(
+                            f"Buy record at level {nearby_level} already paired, skipping"
+                        )
+                        continue
                     buy_record.paired_record = sell_record
                     sell_record.paired_record = buy_record
                     logger.debug(
@@ -1330,6 +1340,8 @@ class GridOrderManager:
                     # Atomically pair (under lock protection)
                     record.paired_record = sell_record
                     sell_record.paired_record = record
+                    # Also remove from _pending_buy_fills if present to prevent double pairing
+                    self._pending_buy_fills.pop(record.level_index, None)
                     return record
 
             return None

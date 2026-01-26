@@ -269,18 +269,19 @@ class GridBot(BaseBot):
             self._risk_manager.set_rebuild_callback(self._rebuild_grid)
             logger.info("Dynamic grid adjustment enabled")
 
-        # Step 7: Try to restore previous order mapping
+        # Step 7: Subscribe to user data stream BEFORE placing orders
+        # This ensures we don't miss any fill events
+        await self._subscribe_user_data()
+
+        # Step 8: Try to restore previous order mapping
         restored_orders = await self._try_restore_orders()
 
-        # Step 8: Place initial orders (only if no orders restored)
+        # Step 9: Place initial orders (only if no orders restored)
         if restored_orders == 0:
             placed = await self._order_manager.place_initial_orders()
             logger.info(f"Placed {placed} initial orders")
         else:
             logger.info(f"Restored {restored_orders} orders from previous session")
-
-        # Step 9: Subscribe to user data stream
-        await self._subscribe_user_data()
 
         # Step 10: Subscribe to K-line close events for dynamic adjustment
         if self._config.dynamic_adjust.enabled:

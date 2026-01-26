@@ -416,10 +416,11 @@ class GridRiskManager:
         # Determine action based on direction
         if direction == BreakoutDirection.UPPER:
             action = self._config.upper_breakout_action
-            self._state = RiskState.BREAKOUT_UPPER
         else:
             action = self._config.lower_breakout_action
-            self._state = RiskState.BREAKOUT_LOWER
+
+        # Note: _state will be set by execute_action based on the action taken
+        # This avoids the issue where BREAKOUT_* state is immediately overwritten
 
         # Record breakout event
         event = BreakoutEvent(
@@ -522,7 +523,11 @@ class GridRiskManager:
             direction: Breakout direction
         """
         logger.info(f"HOLD action: waiting for price return from {direction.value}")
-        # No action needed, just wait
+        # Set breakout state to track direction
+        if direction == BreakoutDirection.UPPER:
+            self._state = RiskState.BREAKOUT_UPPER
+        else:
+            self._state = RiskState.BREAKOUT_LOWER
 
     async def _action_pause(self, direction: BreakoutDirection) -> None:
         """
@@ -939,6 +944,51 @@ class GridRiskManager:
         except Exception as e:
             logger.warning(f"Failed to send price stop loss notification: {e}")
 
+    async def execute_pnl_stop_loss(self, current_price: Decimal) -> None:
+        """
+        Execute P&L-based stop loss.
+
+        Unlike _action_stop_loss, this method is direction-agnostic and always
+        checks for positions to sell based on unrealized P&L.
+
+        Args:
+            current_price: Current market price
+        """
+        logger.warning(f"P&L stop loss triggered at {current_price}")
+
+        # Cancel all pending orders first
+        cancelled = await self._order_manager.cancel_all_orders()
+        logger.info(f"P&L stop loss: cancelled {cancelled} orders")
+
+        # Calculate position and unrealized P&L
+        total_quantity = self._calculate_total_position()
+        unrealized_pnl = self._calculate_unrealized_pnl(current_price)
+
+        # Market sell if we have positions
+        if total_quantity > 0:
+            try:
+                order = await self._order_manager._exchange.market_sell(
+                    self._order_manager.symbol,
+                    total_quantity,
+                    self._order_manager._market_type,
+                )
+
+                # Notify
+                await self._notify_stop_loss(current_price, total_quantity, unrealized_pnl)
+
+                logger.warning(
+                    f"P&L stop loss executed: sold {total_quantity} at {current_price}, "
+                    f"loss={unrealized_pnl}"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to execute P&L stop loss: {e}")
+        else:
+            logger.info("P&L stop loss: no positions to sell, orders cancelled")
+
+        # Update state
+        self._state = RiskState.STOPPED
+
     def _calculate_unrealized_pnl(self, current_price: Decimal) -> Decimal:
         """
         Calculate unrealized P&L from filled buy positions.
@@ -1273,15 +1323,17 @@ class GridRiskManager:
                 )
 
                 if current_price:
-                    # Check breakout
-                    direction = self.check_breakout(current_price)
-                    if direction != BreakoutDirection.NONE:
-                        await self.handle_breakout(direction, current_price)
-                        continue
+                    # Check breakout (only if not already in breakout/paused/stopped state)
+                    # This prevents duplicate handling of the same breakout event
+                    if self._state == RiskState.NORMAL:
+                        direction = self.check_breakout(current_price)
+                        if direction != BreakoutDirection.NONE:
+                            await self.handle_breakout(direction, current_price)
+                            continue
 
-                    # Check stop loss (P&L based)
+                    # Check stop loss (P&L based) - direction-agnostic
                     if self.check_stop_loss(current_price):
-                        await self._action_stop_loss(BreakoutDirection.LOWER, current_price)
+                        await self.execute_pnl_stop_loss(current_price)
                         continue
 
                     # Check price stop loss (works even without filled positions)
