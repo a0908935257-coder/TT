@@ -655,6 +655,9 @@ class SupertrendBot(BaseBot):
         avg_gain = sum(gains) / self._rsi_period
         avg_loss = sum(losses) / self._rsi_period
 
+        # Handle edge cases to avoid division by zero
+        if avg_loss == 0 and avg_gain == 0:
+            return Decimal("50")  # Neutral RSI when no movement
         if avg_loss == 0:
             return Decimal("100")
 

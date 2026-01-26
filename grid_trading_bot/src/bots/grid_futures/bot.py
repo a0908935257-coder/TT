@@ -1281,11 +1281,16 @@ class GridFuturesBot(BaseBot):
                         partial_qty = self._position.quantity / Decimal(filled_long_count)
                     else:
                         partial_qty = self._position.quantity
-                    await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
-                level.state = GridLevelState.EMPTY
-                # Clear hysteresis on exit to allow fresh entry
-                if self._last_triggered_level == i:
-                    self._last_triggered_level = None
+                    close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
+                    # Only update state if close was successful
+                    if close_success:
+                        level.state = GridLevelState.EMPTY
+                        # Clear hysteresis on exit to allow fresh entry
+                        if self._last_triggered_level == i:
+                            self._last_triggered_level = None
+                else:
+                    # No position but level marked as filled - reset state
+                    level.state = GridLevelState.EMPTY
 
             # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
@@ -1317,11 +1322,16 @@ class GridFuturesBot(BaseBot):
                         partial_qty = self._position.quantity / Decimal(filled_short_count)
                     else:
                         partial_qty = self._position.quantity
-                    await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
-                level.state = GridLevelState.EMPTY
-                # Clear hysteresis on exit to allow fresh entry
-                if self._last_triggered_level == i:
-                    self._last_triggered_level = None
+                    close_success = await self._close_position(grid_price, ExitReason.GRID_PROFIT, partial_qty)
+                    # Only update state if close was successful
+                    if close_success:
+                        level.state = GridLevelState.EMPTY
+                        # Clear hysteresis on exit to allow fresh entry
+                        if self._last_triggered_level == i:
+                            self._last_triggered_level = None
+                else:
+                    # No position but level marked as filled - reset state
+                    level.state = GridLevelState.EMPTY
 
     # =========================================================================
     # Stop Loss Check

@@ -196,7 +196,7 @@ class BollingerBot(BaseBot):
         self._bb_calculator.initialize(self._klines)
 
         # 5. Initialize grid
-        if self._klines:
+        if self._klines and len(self._klines) > 0:
             current_price = self._klines[-1].close
             self._initialize_grid(current_price)
 
@@ -575,7 +575,7 @@ class BollingerBot(BaseBot):
 
                 # Update virtual position unrealized P&L
                 if self._position:
-                    current_price = self._klines[-1].close if self._klines else Decimal("0")
+                    current_price = self._klines[-1].close if self._klines and len(self._klines) > 0 else Decimal("0")
                     if current_price > 0:
                         self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
                         # Record price for CB validation
@@ -590,7 +590,7 @@ class BollingerBot(BaseBot):
                     )
                     # Trigger circuit breaker on CRITICAL risk level (with validation)
                     if risk_result["risk_level"] == "CRITICAL":
-                        current_price = self._klines[-1].close if self._klines else await self._get_current_price()
+                        current_price = self._klines[-1].close if self._klines and len(self._klines) > 0 else await self._get_current_price()
                         cb_result = await self.trigger_circuit_breaker_safe(
                             reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}",
                             current_price=current_price,
@@ -616,7 +616,7 @@ class BollingerBot(BaseBot):
 
                 # Comprehensive stop loss check (三層止損保護)
                 if self._position:
-                    current_price = self._klines[-1].close if self._klines else await self._get_current_price()
+                    current_price = self._klines[-1].close if self._klines and len(self._klines) > 0 else await self._get_current_price()
                     stop_loss_order_id = getattr(self._position, 'stop_loss_order_id', None)
                     sl_check = await self.comprehensive_stop_loss_check(
                         symbol=self._config.symbol,

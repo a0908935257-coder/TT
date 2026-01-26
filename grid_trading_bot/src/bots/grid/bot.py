@@ -612,14 +612,18 @@ class GridBot(BaseBot):
 
     def get_orders(self) -> List[Order]:
         """Get all pending orders."""
-        if not self._order_manager:
+        if not self._order_manager or not self._setup:
             return []
 
         orders = []
-        for level_index in self._order_manager._level_order_map:
-            order = self._order_manager.get_order_by_level(level_index)
-            if order:
-                orders.append(order)
+        # Use setup levels instead of directly accessing private _level_order_map
+        for i, level in enumerate(self._setup.levels):
+            try:
+                order = self._order_manager.get_order_by_level(i)
+                if order:
+                    orders.append(order)
+            except (IndexError, KeyError):
+                continue
         return orders
 
     def get_levels(self) -> List[GridLevel]:

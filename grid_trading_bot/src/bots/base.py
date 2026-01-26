@@ -6715,8 +6715,8 @@ class BaseBot(ABC):
             # Calculate P&L for this lot
             cost_basis = match_qty * lot["entry_price"]
             proceeds = match_qty * close_price
-            # Proportional entry fee
-            entry_fee_portion = lot["fee"] * (match_qty / lot["quantity"])
+            # Proportional entry fee (guard against division by zero)
+            entry_fee_portion = lot["fee"] * (match_qty / lot["quantity"]) if lot["quantity"] > 0 else Decimal("0")
             # Proportional exit fee
             exit_fee_portion = close_fee * (match_qty / close_quantity) if close_quantity > 0 else Decimal("0")
 

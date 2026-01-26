@@ -963,6 +963,14 @@ class RSIGridBot(BaseBot):
             if order:
                 fill_price = order.avg_price if order.avg_price else current_price
 
+                # Validate fill_price before calculations
+                if not fill_price or fill_price <= 0:
+                    logger.error(f"Invalid fill_price: {fill_price}, using current_price as fallback")
+                    fill_price = current_price
+                    if not fill_price or fill_price <= 0:
+                        logger.error("Cannot determine valid fill_price, aborting close")
+                        return False
+
                 # Calculate PnL
                 if self._position.side == PositionSide.LONG:
                     pnl = close_qty * (fill_price - self._position.entry_price) * Decimal(self._config.leverage)
