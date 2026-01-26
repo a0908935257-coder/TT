@@ -57,6 +57,10 @@ class GridFuturesStrategyConfig:
         fallback_range_pct: Range when ATR unavailable (default 8%)
         stop_loss_pct: Stop loss percentage (default 5%)
         take_profit_grids: Number of grids for take profit (default 1)
+        use_hysteresis: Enable hysteresis buffer zone (like live bot)
+        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
+        use_signal_cooldown: Enable signal cooldown (like live bot)
+        cooldown_bars: Minimum bars between signals
     """
 
     grid_count: int = 10
@@ -68,6 +72,11 @@ class GridFuturesStrategyConfig:
     fallback_range_pct: Decimal = Decimal("0.08")
     stop_loss_pct: Decimal = Decimal("0.05")
     take_profit_grids: int = 1
+    # Protective features (like live bot)
+    use_hysteresis: bool = False
+    hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 2
 
     def __post_init__(self):
         if not isinstance(self.atr_multiplier, Decimal):
@@ -76,6 +85,8 @@ class GridFuturesStrategyConfig:
             self.fallback_range_pct = Decimal(str(self.fallback_range_pct))
         if not isinstance(self.stop_loss_pct, Decimal):
             self.stop_loss_pct = Decimal(str(self.stop_loss_pct))
+        if not isinstance(self.hysteresis_pct, Decimal):
+            self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
 
 
 @dataclass
@@ -131,6 +142,13 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         # Trend state
         self._current_trend: int = 0  # 1=up, -1=down, 0=neutral
 
+        # Hysteresis state (like live bot)
+        self._last_triggered_level: Optional[int] = None
+        self._last_triggered_side: Optional[str] = None
+
+        # Signal cooldown state (like live bot)
+        self._signal_cooldown: int = 0
+
     def warmup_period(self) -> int:
         """Return warmup period for indicators."""
         return max(self._config.trend_period, self._config.atr_period) + 10
@@ -144,6 +162,11 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         self._grid_spacing = None
         self._grid_initialized = False
         self._current_trend = 0
+        # Reset hysteresis state
+        self._last_triggered_level = None
+        self._last_triggered_side = None
+        # Reset cooldown state
+        self._signal_cooldown = 0
 
     def _calculate_sma(self, closes: List[Decimal], period: int) -> Optional[Decimal]:
         """Calculate Simple Moving Average."""
@@ -234,6 +257,32 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
 
         return False
 
+    def _check_hysteresis(self, level_idx: int, side: str, level_price: Decimal, current_price: Decimal) -> bool:
+        """
+        Check if hysteresis allows entry (like live bot).
+
+        Prevents oscillation by requiring price to move beyond the buffer zone
+        before re-triggering the same level.
+        """
+        if not self._config.use_hysteresis:
+            return True
+
+        # Different level or different side - always allow
+        if self._last_triggered_level != level_idx or self._last_triggered_side != side:
+            return True
+
+        # Same level and side - check if price moved beyond hysteresis buffer
+        buffer = level_price * self._config.hysteresis_pct
+
+        if side == "long":
+            if current_price > level_price + buffer:
+                return True
+        else:  # short
+            if current_price < level_price - buffer:
+                return True
+
+        return False
+
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
         Process kline and generate signal.
@@ -249,6 +298,10 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         Returns:
             Entry signal or None
         """
+        # Decrement cooldown (like live bot)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         current_price = kline.close
         closes = context.get_closes(self._config.trend_period + 5)
         klines_window = context.get_klines_window(self._config.atr_period + 5)
@@ -263,6 +316,10 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
 
         # Already have position - don't generate new signals
         if context.has_position:
+            return None
+
+        # Check signal cooldown (like live bot)
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             return None
 
         # Determine allowed direction based on trend
@@ -304,11 +361,22 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
             entry_level = self._grid_levels[level_idx]
             # 當前 K 線的 low 觸及 grid level (價格下探)
             if not entry_level.is_filled and curr_low <= entry_level.price:
+                # Check hysteresis (like live bot)
+                if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
                 # Take profit at next grid level up
                 tp_level = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
                 tp_price = self._grid_levels[tp_level].price
                 sl_price = entry_level.price * (Decimal("1") - self._config.stop_loss_pct)
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx
+                self._last_triggered_side = "long"
+                # Set cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 return Signal.long_entry(
                     price=entry_level.price,  # 使用 grid level 價格
@@ -323,11 +391,22 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
             entry_level = self._grid_levels[level_idx + 1]
             # 當前 K 線的 high 觸及 grid level (價格反彈)
             if not entry_level.is_filled and curr_high >= entry_level.price:
+                # Check hysteresis (like live bot)
+                if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                    return None
+
                 entry_level.is_filled = True
                 # Take profit at next grid level down
                 tp_level = max(level_idx + 1 - self._config.take_profit_grids, 0)
                 tp_price = self._grid_levels[tp_level].price
                 sl_price = entry_level.price * (Decimal("1") + self._config.stop_loss_pct)
+
+                # Update hysteresis state (like live bot)
+                self._last_triggered_level = level_idx + 1
+                self._last_triggered_side = "short"
+                # Set cooldown (like live bot)
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
 
                 return Signal.short_entry(
                     price=entry_level.price,  # 使用 grid level 價格

@@ -109,16 +109,16 @@ class GridFuturesBot(BaseBot):
         # Statistics
         self._grid_stats = GridFuturesStats()
 
-        # Signal cooldown to prevent signal stacking
+        # Signal cooldown to prevent signal stacking (use config values)
         self._signal_cooldown: int = 0
-        self._cooldown_bars: int = 2  # Minimum bars between signals
+        self._cooldown_bars: int = self.config.cooldown_bars
 
         # Slippage tracking (uses BaseBot's enhanced tracking)
         self._init_slippage_tracking()
 
-        # Hysteresis: track last triggered level to prevent oscillation
+        # Hysteresis: track last triggered level to prevent oscillation (use config values)
         self._last_triggered_level: Optional[int] = None
-        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+        self._hysteresis_pct: Decimal = self.config.hysteresis_pct
 
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
@@ -1247,13 +1247,13 @@ class GridFuturesBot(BaseBot):
 
             # Long entry: K 線低點觸及 grid level (買跌，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_low <= grid_price:
-                # Check signal cooldown to prevent signal stacking
-                if self._signal_cooldown > 0:
+                # Check signal cooldown to prevent signal stacking (if enabled)
+                if self.config.use_signal_cooldown and self._signal_cooldown > 0:
                     logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping long entry")
                     continue
 
-                # Check hysteresis to prevent oscillation
-                if not self._check_hysteresis(i, "long", grid_price, current_price):
+                # Check hysteresis to prevent oscillation (if enabled)
+                if self.config.use_hysteresis and not self._check_hysteresis(i, "long", grid_price, current_price):
                     continue
 
                 if self._should_trade_direction("long"):
@@ -1262,7 +1262,8 @@ class GridFuturesBot(BaseBot):
                     if success:
                         level.state = GridLevelState.LONG_FILLED
                         level.filled_at = datetime.now(timezone.utc)
-                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        if self.config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         self._last_triggered_level = i  # Track for hysteresis
                         logger.info(f"Long entry at grid level {i}: {grid_price}")
 
@@ -1282,13 +1283,13 @@ class GridFuturesBot(BaseBot):
 
             # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
             if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
-                # Check signal cooldown to prevent signal stacking
-                if self._signal_cooldown > 0:
+                # Check signal cooldown to prevent signal stacking (if enabled)
+                if self.config.use_signal_cooldown and self._signal_cooldown > 0:
                     logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
                     continue
 
-                # Check hysteresis to prevent oscillation
-                if not self._check_hysteresis(i, "short", grid_price, current_price):
+                # Check hysteresis to prevent oscillation (if enabled)
+                if self.config.use_hysteresis and not self._check_hysteresis(i, "short", grid_price, current_price):
                     continue
 
                 if self._should_trade_direction("short"):
@@ -1297,7 +1298,8 @@ class GridFuturesBot(BaseBot):
                     if success:
                         level.state = GridLevelState.SHORT_FILLED
                         level.filled_at = datetime.now(timezone.utc)
-                        self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                        if self.config.use_signal_cooldown:
+                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                         self._last_triggered_level = i  # Track for hysteresis
                         logger.info(f"Short entry at grid level {i}: {grid_price}")
 

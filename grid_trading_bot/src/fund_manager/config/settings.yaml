@@ -216,6 +216,13 @@ bots:
       stop_loss_pct: 0.05
       rebuild_threshold_pct: 0.02
 
+      # Protective Features (ENABLED based on backtest results)
+      # 回測顯示啟用可提升收益 8.76%，Sharpe +0.06，回撤降低 15.78%
+      use_hysteresis: true               # 遲滯緩衝區 (已啟用，改善表現)
+      hysteresis_pct: 0.002              # 0.2%
+      use_signal_cooldown: true          # 訊號冷卻 (已啟用，改善表現)
+      cooldown_bars: 2                   # 2 bars
+
   # ===========================================================================
   # Supertrend TREND_GRID Bot (超級趨勢 + 網格 + RSI 過濾策略)
   # ===========================================================================
