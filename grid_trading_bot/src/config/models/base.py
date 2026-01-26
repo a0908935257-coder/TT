@@ -85,7 +85,7 @@ class BaseConfig(BaseModel):
 
     model_config = ConfigDict(
         frozen=True,  # Immutable
-        extra="forbid",  # No extra fields
+        extra="ignore",  # Ignore extra fields (e.g., fund_manager loaded separately)
         validate_default=True,
         str_strip_whitespace=True,
     )
