@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Dict, List, Optional
 from datetime import datetime, timezone
+import time
 import uuid
 
 from src.core import get_logger
@@ -115,8 +116,10 @@ class ExchangeClient:
         self._spot_ws: Optional[BinanceWebSocket] = None
         self._futures_ws: Optional[BinanceWebSocket] = None
 
-        # Symbol info cache
+        # Symbol info cache with TTL (1 hour)
         self._symbol_cache: dict[str, dict[MarketType, SymbolInfo]] = {}
+        self._symbol_cache_time: dict[str, dict[MarketType, float]] = {}
+        self._symbol_cache_ttl: float = 3600.0  # 1 hour in seconds
 
         # Connection state
         self._connected = False
@@ -488,7 +491,10 @@ class ExchangeClient:
         Periodically synchronize time with exchange servers.
 
         Monitors time offset and logs warnings if drift is detected.
+        Includes exponential backoff on consecutive failures.
         """
+        consecutive_failures = 0
+        max_failures_before_critical = 5
         try:
             while self._connected:
                 await asyncio.sleep(self._time_sync_interval)
@@ -499,8 +505,16 @@ class ExchangeClient:
                 try:
                     # Sync both spot and futures
                     await self._sync_time_with_warning()
+                    consecutive_failures = 0  # Reset on success
                 except Exception as e:
-                    logger.error(f"Time sync failed: {e}")
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures_before_critical:
+                        logger.critical(
+                            f"Time sync failed {consecutive_failures} consecutive times - "
+                            "API requests may be rejected due to timestamp issues!"
+                        )
+                    else:
+                        logger.error(f"Time sync failed ({consecutive_failures}/{max_failures_before_critical}): {e}")
 
         except asyncio.CancelledError:
             logger.debug("Time sync loop cancelled")
@@ -512,13 +526,13 @@ class ExchangeClient:
 
         Issues warnings if time offset exceeds thresholds.
         """
-        # Sync spot
+        # Sync spot (check _auth exists to avoid AttributeError)
         await self._spot.sync_time()
-        spot_offset = self._spot._auth.time_offset
+        spot_offset = self._spot._auth.time_offset if self._spot._auth else 0
 
-        # Sync futures
+        # Sync futures (check _auth exists to avoid AttributeError)
         await self._futures.sync_time()
-        futures_offset = self._futures._auth.time_offset
+        futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
 
         # Check spot offset
         if abs(spot_offset) > self._time_offset_critical_ms:
@@ -642,15 +656,18 @@ class ExchangeClient:
 
                         # Update statistics
                         wait_time = (datetime.now(timezone.utc) - request.created_at).total_seconds() * 1000
-                        self._queue_stats.total_processed += 1
                         self._queue_stats.max_wait_time_ms = max(
                             self._queue_stats.max_wait_time_ms, wait_time
                         )
-                        # Running average
+                        # Running average (calculate before incrementing counter)
                         n = self._queue_stats.total_processed
-                        self._queue_stats.avg_wait_time_ms = (
-                            (self._queue_stats.avg_wait_time_ms * (n - 1) + wait_time) / n
-                        )
+                        if n > 0:
+                            self._queue_stats.avg_wait_time_ms = (
+                                (self._queue_stats.avg_wait_time_ms * n + wait_time) / (n + 1)
+                            )
+                        else:
+                            self._queue_stats.avg_wait_time_ms = wait_time
+                        self._queue_stats.total_processed += 1
 
                     except Exception as e:
                         self._queue_stats.total_errors += 1
@@ -741,8 +758,6 @@ class ExchangeClient:
         Raises:
             RuntimeError: If queue is full or bot rate limit exceeded
         """
-        import time
-
         async with self._queue_lock:
             # Check queue size limit (prevent signal stacking)
             if len(self._order_queue) >= self._max_queue_size:
@@ -1426,13 +1441,16 @@ class ExchangeClient:
 
             stream = listen_key
 
+            # Capture callback at wrapper creation time to avoid closure issues
+            # (if callback is changed later, this wrapper still uses the original)
+            captured_callback = callback
+
             async def wrapper(data: dict):
-                if market == MarketType.SPOT:
-                    if self._user_data_callback:
-                        await self._invoke_user_data_callback(data, market)
-                else:
-                    if self._futures_user_data_callback:
-                        await self._invoke_user_data_callback(data, market)
+                if captured_callback:
+                    if asyncio.iscoroutinefunction(captured_callback):
+                        await captured_callback(data)
+                    else:
+                        captured_callback(data)
 
             # Subscribe to user data stream
             success = await ws.subscribe([stream], wrapper)
@@ -1483,10 +1501,14 @@ class ExchangeClient:
                 if self._user_data_listen_key and self._spot_ws:
                     await self._spot_ws.unsubscribe([self._user_data_listen_key])
 
-                # Delete listen key
+                # Delete listen key (ensure cleanup even on failure)
                 if self._user_data_listen_key:
-                    await self._spot.delete_listen_key(self._user_data_listen_key)
-                    self._user_data_listen_key = None
+                    try:
+                        await self._spot.delete_listen_key(self._user_data_listen_key)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete spot listen key: {e}")
+                    finally:
+                        self._user_data_listen_key = None
 
                 self._user_data_callback = None
             else:
@@ -1503,10 +1525,14 @@ class ExchangeClient:
                 if self._futures_user_data_listen_key and self._futures_ws:
                     await self._futures_ws.unsubscribe([self._futures_user_data_listen_key])
 
-                # Delete listen key
+                # Delete listen key (ensure cleanup even on failure)
                 if self._futures_user_data_listen_key:
-                    await self._futures.delete_listen_key(self._futures_user_data_listen_key)
-                    self._futures_user_data_listen_key = None
+                    try:
+                        await self._futures.delete_listen_key(self._futures_user_data_listen_key)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete futures listen key: {e}")
+                    finally:
+                        self._futures_user_data_listen_key = None
 
                 self._futures_user_data_callback = None
 
@@ -1595,12 +1621,19 @@ class ExchangeClient:
         Returns:
             SymbolInfo object
         """
-        # Check cache
-        if symbol in self._symbol_cache:
-            if market in self._symbol_cache[symbol]:
+        # Check cache with TTL
+        current_time = time.time()
+        if symbol in self._symbol_cache and market in self._symbol_cache[symbol]:
+            cache_time = self._symbol_cache_time.get(symbol, {}).get(market, 0)
+            if current_time - cache_time < self._symbol_cache_ttl:
                 return self._symbol_cache[symbol][market]
-        else:
+            # Cache expired, will refresh below
+
+        # Initialize cache dicts if needed
+        if symbol not in self._symbol_cache:
             self._symbol_cache[symbol] = {}
+        if symbol not in self._symbol_cache_time:
+            self._symbol_cache_time[symbol] = {}
 
         # Fetch from API
         api = self._get_api(market)
@@ -1608,6 +1641,7 @@ class ExchangeClient:
 
         if isinstance(info, SymbolInfo):
             self._symbol_cache[symbol][market] = info
+            self._symbol_cache_time[symbol][market] = current_time
             return info
 
         raise ValueError(f"Could not get symbol info for {symbol}")

@@ -634,6 +634,17 @@ class GridOrderManager:
         restored = 0
         for order_id, level_index in mapping.items():
             if self._setup and level_index < len(self._setup.levels):
+                # Check if level already has a different order mapped
+                if level_index in self._level_order_map:
+                    old_order_id = self._level_order_map[level_index]
+                    if old_order_id != order_id:
+                        logger.warning(
+                            f"Level {level_index} already has order {old_order_id[:8]}..., "
+                            f"replacing with {order_id[:8]}..."
+                        )
+                        # Remove old mapping
+                        self._order_level_map.pop(old_order_id, None)
+
                 self._order_level_map[order_id] = level_index
                 self._level_order_map[level_index] = order_id
                 restored += 1
@@ -735,7 +746,18 @@ class GridOrderManager:
                         await self._data_manager.update_order(order, bot_id=self._bot_id)
 
                 except Exception as e:
-                    logger.warning(f"Failed to get order status for {order_id}: {e}")
+                    logger.error(
+                        f"Failed to get order status for {order_id}: {e}. "
+                        "Order state may be inconsistent - manual check recommended."
+                    )
+                    # Mark level as needing attention but don't corrupt state
+                    if level_index is not None and level_index < len(self._setup.levels):
+                        level = self._setup.levels[level_index]
+                        level.state = LevelState.EMPTY
+                        level.order_id = None
+                        # Clean up mappings to allow retry
+                        self._level_order_map.pop(level_index, None)
+                        self._order_level_map.pop(order_id, None)
 
         # Warn about external orders
         if external_orders:
