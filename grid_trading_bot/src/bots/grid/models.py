@@ -798,18 +798,56 @@ class GridSetup:
 
     @property
     def average_buy_price(self) -> Decimal:
-        """Calculate average buy price."""
+        """
+        Calculate cost-weighted average buy price.
+
+        Uses allocated amounts to weight each level's price, providing
+        accurate average entry price for position sizing.
+        """
         buy_levels = self.buy_levels
         if not buy_levels:
             return Decimal("0")
+
+        total_cost = Decimal("0")
+        total_quantity = Decimal("0")
+
+        for level in buy_levels:
+            if level.price > 0 and level.allocated_amount > 0:
+                quantity = level.allocated_amount / level.price
+                total_cost += level.allocated_amount
+                total_quantity += quantity
+
+        if total_quantity > 0:
+            return total_cost / total_quantity
+
+        # Fallback to simple average if no allocations
         return sum(l.price for l in buy_levels) / Decimal(len(buy_levels))
 
     @property
     def average_sell_price(self) -> Decimal:
-        """Calculate average sell price."""
+        """
+        Calculate cost-weighted average sell price.
+
+        Uses allocated amounts to weight each level's price, providing
+        accurate average exit price for position sizing.
+        """
         sell_levels = self.sell_levels
         if not sell_levels:
             return Decimal("0")
+
+        total_value = Decimal("0")
+        total_quantity = Decimal("0")
+
+        for level in sell_levels:
+            if level.price > 0 and level.allocated_amount > 0:
+                quantity = level.allocated_amount / level.price
+                total_value += level.allocated_amount
+                total_quantity += quantity
+
+        if total_quantity > 0:
+            return total_value / total_quantity
+
+        # Fallback to simple average if no allocations
         return sum(l.price for l in sell_levels) / Decimal(len(sell_levels))
 
     @property

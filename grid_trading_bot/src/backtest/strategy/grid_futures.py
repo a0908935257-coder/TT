@@ -252,6 +252,16 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
 
         return 0
 
+    def _reset_filled_levels(self) -> None:
+        """
+        Reset all filled grid levels.
+
+        Called when no position is held, allowing levels to be reused.
+        This prevents the grid from becoming unusable after positions close.
+        """
+        for level in self._grid_levels:
+            level.is_filled = False
+
     def _should_rebuild_grid(self, current_price: Decimal) -> bool:
         """Check if grid needs rebuilding (price out of range)."""
         if not self._grid_initialized:
@@ -322,6 +332,10 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         # Already have position - don't generate new signals
         if context.has_position:
             return None
+
+        # Reset filled levels when no position is held
+        # This allows grid levels to be reused after positions close
+        self._reset_filled_levels()
 
         # Check signal cooldown (like live bot)
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:

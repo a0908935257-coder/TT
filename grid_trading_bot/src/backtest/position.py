@@ -177,21 +177,20 @@ class PositionManager:
         Returns:
             Completed Trade record
         """
-        # Calculate P&L
+        # Calculate P&L (without leverage multiplication)
+        # Leverage effect is reflected through margin-based ROI calculation
         if position.side == "LONG":
             gross_pnl = (exit_price - position.entry_price) * position.quantity
         else:
             gross_pnl = (position.entry_price - exit_price) * position.quantity
 
-        # Apply leverage
-        gross_pnl *= Decimal(leverage)
-
-        # Deduct fees
+        # Deduct fees (fees are paid on actual traded value, not leveraged)
         total_fees = position.entry_fee + exit_fee
         net_pnl = gross_pnl - total_fees
 
-        # Calculate ROI percentage based on margin (not notional)
-        # net_pnl already includes leverage, so divide by margin to get true ROI
+        # Calculate ROI percentage based on margin
+        # ROI = net_pnl / margin * 100, where margin = notional / leverage
+        # This correctly reflects leverage: same P&L on smaller margin = higher ROI
         if position.notional > 0 and leverage > 0:
             margin = position.notional / Decimal(leverage)
             pnl_pct = (net_pnl / margin) * Decimal("100")
