@@ -377,17 +377,22 @@ class RiskEngine:
         # 8. Execute risk actions
         await self._execute_risk_action(level, alerts)
 
-        # 9. Check for level change
-        if self._last_status and self._last_status.level != level:
-            logger.info(f"Risk level changed: {self._last_status.level} -> {level}")
+        # 9. Check for level change and save status
+        # Important: Save status BEFORE triggering callback so callback sees current state
+        old_level = self._last_status.level if self._last_status else None
+        level_changed = old_level is not None and old_level != level
+
+        # Save status first
+        self._last_status = status
+
+        # Then trigger callback (callback will see updated state)
+        if level_changed:
+            logger.info(f"Risk level changed: {old_level} -> {level}")
             if self._on_level_change:
                 try:
-                    self._on_level_change(self._last_status.level, level)
+                    self._on_level_change(old_level, level)
                 except Exception as e:
                     logger.error(f"Error in level change callback: {e}")
-
-        # 10. Save status
-        self._last_status = status
 
         return status
 

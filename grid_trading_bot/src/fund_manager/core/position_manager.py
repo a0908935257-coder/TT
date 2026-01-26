@@ -548,8 +548,9 @@ class SharedPositionManager:
         if len(self._changes) > self._max_changes:
             self._changes = self._changes[-self._max_changes:]
 
-        # Notify callbacks
-        for callback in self._on_position_change:
+        # Notify callbacks (copy list to allow modifications during iteration)
+        callbacks = list(self._on_position_change)
+        for callback in callbacks:
             try:
                 callback(change)
             except Exception as e:

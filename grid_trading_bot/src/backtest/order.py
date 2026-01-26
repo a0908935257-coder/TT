@@ -361,13 +361,20 @@ class OrderBook:
             if order.is_buy:
                 # Buy limit: price must touch or go below limit
                 if kline.low <= order.limit_price:
-                    # Fill at limit price or better (open if gapped down)
+                    # Gap handling for limit orders:
+                    # If price gaps down past the limit price, fill at the better
+                    # price (open price). This simulates favorable gap fills where
+                    # the order gets filled at a better price than requested.
+                    # Example: limit buy at 100, open gaps to 98 -> fill at 98
                     fill_price = min(order.limit_price, kline.open)
                     return True, fill_price
             else:
                 # Sell limit: price must touch or go above limit
                 if kline.high >= order.limit_price:
-                    # Fill at limit price or better (open if gapped up)
+                    # Gap handling for limit orders:
+                    # If price gaps up past the limit price, fill at the better
+                    # price (open price). This simulates favorable gap fills.
+                    # Example: limit sell at 100, open gaps to 102 -> fill at 102
                     fill_price = max(order.limit_price, kline.open)
                     return True, fill_price
 
@@ -679,13 +686,20 @@ class OrderSimulator:
         """
         Create a new position from a fill.
 
+        Note on entry price consistency:
+        The actual entry_price may differ from target_price due to slippage
+        simulation. This is expected behavior that models real market execution.
+        If stop_loss/take_profit are provided as absolute prices, they remain
+        unchanged. Strategies should be aware that the risk/reward ratio may
+        shift slightly due to slippage.
+
         Args:
             side: 'LONG' or 'SHORT'
             kline: Current kline
             bar_index: Current bar index
             target_price: Target entry price (or kline.close for market)
-            stop_loss: Stop loss price
-            take_profit: Take profit price
+            stop_loss: Stop loss price (absolute, not adjusted for slippage)
+            take_profit: Take profit price (absolute, not adjusted for slippage)
 
         Returns:
             New Position object

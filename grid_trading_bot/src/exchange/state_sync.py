@@ -546,6 +546,78 @@ class StateCache(Generic[T]):
 
             return len(expired_keys)
 
+    async def set_if_newer(
+        self,
+        key: str,
+        value: T,
+        timestamp: datetime,
+        ttl: Optional[float] = None,
+        source: str = "unknown",
+    ) -> bool:
+        """
+        Atomically set value only if it's newer than existing data.
+
+        This prevents race conditions where REST sync might overwrite
+        more recent WebSocket updates.
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            timestamp: Timestamp of this data (e.g., updated_at)
+            ttl: TTL in seconds (uses default if None)
+            source: Data source identifier
+
+        Returns:
+            True if value was set, False if existing data is newer
+        """
+        async with self._lock:
+            entry = self._cache.get(key)
+
+            if entry and not entry.is_expired:
+                # Check if existing data has a timestamp
+                existing_ts = getattr(entry.data, 'updated_at', None)
+                if existing_ts and timestamp and existing_ts > timestamp:
+                    # Existing data is newer, don't update
+                    return False
+
+            # Proceed with setting (reuse existing set logic)
+            # Check size limit
+            if len(self._cache) >= self.max_size and key not in self._cache:
+                oldest_key = min(
+                    self._cache.keys(),
+                    key=lambda k: self._cache[k].updated_at
+                )
+                del self._cache[oldest_key]
+
+            ttl_seconds = ttl if ttl is not None else self.default_ttl
+            expires_at = None
+            if ttl_seconds is not None:
+                expires_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=ttl_seconds
+                )
+
+            old_entry = self._cache.get(key)
+            is_update = old_entry is not None
+
+            new_entry = CacheEntry(
+                data=value,
+                expires_at=expires_at,
+                version=(old_entry.version + 1) if old_entry else 1,
+                source=source,
+            )
+
+            self._cache[key] = new_entry
+
+            self._emit_event(
+                CacheEventType.UPDATED if is_update else CacheEventType.ADDED,
+                key,
+                "cache",
+                old_data=old_entry.data if old_entry else None,
+                new_data=value,
+            )
+
+            return True
+
 
 # =============================================================================
 # State Synchronizer

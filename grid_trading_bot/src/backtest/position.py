@@ -190,9 +190,11 @@ class PositionManager:
         total_fees = position.entry_fee + exit_fee
         net_pnl = gross_pnl - total_fees
 
-        # Calculate percentage
-        if position.notional > 0:
-            pnl_pct = (net_pnl / position.notional) * Decimal("100")
+        # Calculate ROI percentage based on margin (not notional)
+        # net_pnl already includes leverage, so divide by margin to get true ROI
+        if position.notional > 0 and leverage > 0:
+            margin = position.notional / Decimal(leverage)
+            pnl_pct = (net_pnl / margin) * Decimal("100")
         else:
             pnl_pct = Decimal("0")
 

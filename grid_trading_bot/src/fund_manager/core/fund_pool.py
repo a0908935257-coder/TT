@@ -165,14 +165,17 @@ class FundPool:
                 total_balance += balance.total
                 available_balance += balance.free
 
-        # Create snapshot
-        snapshot = BalanceSnapshot(
-            timestamp=datetime.now(timezone.utc),
-            total_balance=total_balance,
-            available_balance=available_balance,
-            allocated_balance=self.allocated_balance,
-            reserved_balance=self.reserved_balance,
-        )
+        # Create snapshot with lock protection for consistent allocated balance
+        async with self._allocation_lock:
+            allocated = sum(self._allocations.values())
+            reserved = total_balance * self._config.reserve_ratio
+            snapshot = BalanceSnapshot(
+                timestamp=datetime.now(timezone.utc),
+                total_balance=total_balance,
+                available_balance=available_balance,
+                allocated_balance=allocated,
+                reserved_balance=reserved,
+            )
 
         # Update internal state
         self._update_snapshot(snapshot)
@@ -291,7 +294,9 @@ class FundPool:
 
     def get_allocation(self, bot_id: str) -> Decimal:
         """
-        Get current allocation for a bot.
+        Get current allocation for a bot (sync version).
+
+        Note: For thread-safe access, use get_allocation_async().
 
         Args:
             bot_id: Bot identifier
@@ -301,13 +306,29 @@ class FundPool:
         """
         return self._allocations.get(bot_id, Decimal("0"))
 
+    async def get_allocation_async(self, bot_id: str) -> Decimal:
+        """
+        Get current allocation for a bot with lock protection.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            Allocated amount
+        """
+        async with self._allocation_lock:
+            return self._allocations.get(bot_id, Decimal("0"))
+
     # =========================================================================
     # Allocation Management
     # =========================================================================
 
     def set_allocation(self, bot_id: str, amount: Decimal) -> None:
         """
-        Set allocation for a bot.
+        Set allocation for a bot (sync version).
+
+        Note: For thread-safe access, use set_allocation_async() or call
+        within allocation_lock context.
 
         Args:
             bot_id: Bot identifier
@@ -319,9 +340,27 @@ class FundPool:
             self._allocations[bot_id] = amount
         logger.debug(f"Allocation set for {bot_id}: {amount}")
 
+    async def set_allocation_async(self, bot_id: str, amount: Decimal) -> None:
+        """
+        Set allocation for a bot with lock protection.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount to allocate
+        """
+        async with self._allocation_lock:
+            if amount <= 0:
+                self._allocations.pop(bot_id, None)
+            else:
+                self._allocations[bot_id] = amount
+            logger.debug(f"Allocation set for {bot_id}: {amount}")
+
     def add_allocation(self, bot_id: str, amount: Decimal) -> Decimal:
         """
-        Add to existing allocation for a bot.
+        Add to existing allocation for a bot (sync version).
+
+        Note: For thread-safe access, use add_allocation_async() or call
+        within allocation_lock context.
 
         Args:
             bot_id: Bot identifier
@@ -334,6 +373,27 @@ class FundPool:
         new_amount = current + amount
         self.set_allocation(bot_id, new_amount)
         return new_amount
+
+    async def add_allocation_async(self, bot_id: str, amount: Decimal) -> Decimal:
+        """
+        Add to existing allocation for a bot with lock protection.
+
+        Args:
+            bot_id: Bot identifier
+            amount: Amount to add
+
+        Returns:
+            New total allocation
+        """
+        async with self._allocation_lock:
+            current = self._allocations.get(bot_id, Decimal("0"))
+            new_amount = current + amount
+            if new_amount <= 0:
+                self._allocations.pop(bot_id, None)
+            else:
+                self._allocations[bot_id] = new_amount
+            logger.debug(f"Allocation added for {bot_id}: {amount} (total: {new_amount})")
+            return new_amount
 
     def remove_allocation(self, bot_id: str) -> Decimal:
         """

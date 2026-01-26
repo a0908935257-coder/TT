@@ -555,19 +555,19 @@ class FundManager:
     # Manual Operations
     # =========================================================================
 
-    def set_allocation(
+    async def set_allocation(
         self,
         bot_id: str,
         amount: Decimal,
     ) -> None:
         """
-        Manually set allocation for a bot.
+        Manually set allocation for a bot with lock protection.
 
         Args:
             bot_id: Bot identifier
             amount: Amount to allocate
         """
-        self._fund_pool.set_allocation(bot_id, amount)
+        await self._fund_pool.set_allocation_async(bot_id, amount)
         logger.info(f"Manual allocation set for {bot_id}: {amount}")
 
     def adjust_ratio(
@@ -609,7 +609,7 @@ class FundManager:
         Returns:
             AllocationRecord with recall result
         """
-        current_allocation = self._fund_pool.get_allocation(bot_id)
+        current_allocation = await self._fund_pool.get_allocation_async(bot_id)
 
         if current_allocation <= 0:
             record = AllocationRecord(
@@ -641,8 +641,8 @@ class FundManager:
         )
 
         try:
-            # Update fund pool allocation tracking
-            self._fund_pool.set_allocation(bot_id, new_allocation)
+            # Update fund pool allocation tracking with lock protection
+            await self._fund_pool.set_allocation_async(bot_id, new_allocation)
 
             # Notify bot about reduced allocation
             dispatch_record = await self._dispatcher.notify_bot(

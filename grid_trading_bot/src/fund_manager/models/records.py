@@ -250,6 +250,9 @@ class AllocationTransaction:
     pre_state_snapshot: Dict[str, Decimal] = field(default_factory=dict)
     executed_allocations: List[AllocationRecord] = field(default_factory=list)
     error_message: Optional[str] = None
+    # Private counters to avoid race conditions during list iteration
+    _successful_count: int = field(default=0, repr=False)
+    _failed_count: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         """Convert values if necessary."""
@@ -290,13 +293,13 @@ class AllocationTransaction:
 
     @property
     def successful_count(self) -> int:
-        """Get count of successful allocations."""
-        return sum(1 for a in self.executed_allocations if a.success)
+        """Get count of successful allocations (uses cached counter)."""
+        return self._successful_count
 
     @property
     def failed_count(self) -> int:
-        """Get count of failed allocations."""
-        return sum(1 for a in self.executed_allocations if not a.success)
+        """Get count of failed allocations (uses cached counter)."""
+        return self._failed_count
 
     @property
     def total_allocated(self) -> Decimal:
@@ -328,8 +331,13 @@ class AllocationTransaction:
         self.error_message = error
 
     def add_executed(self, record: AllocationRecord) -> None:
-        """Add an executed allocation record."""
+        """Add an executed allocation record and update counters."""
         self.executed_allocations.append(record)
+        # Update cached counters to avoid iteration during concurrent access
+        if record.success:
+            self._successful_count += 1
+        else:
+            self._failed_count += 1
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
