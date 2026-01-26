@@ -494,7 +494,7 @@ class SupertrendBot(BaseBot):
                                 self._position.stop_loss_price = replace_result.get("stop_price")
 
                         elif sl_check["action_type"] == "BACKUP_CLOSE":
-                            await self._close_position(current_price, "BACKUP_STOP_LOSS")
+                            await self._close_position(ExitReason.STOP_LOSS)
                             self.reset_stop_loss_protection()
 
                 # Network health monitoring (網路彈性監控)
@@ -605,7 +605,7 @@ class SupertrendBot(BaseBot):
     async def _sync_position(self) -> None:
         """Sync position with exchange."""
         try:
-            positions = await self._exchange.get_positions(self._config.symbol)
+            positions = await self._exchange.futures.get_positions(self._config.symbol)
 
             for pos in positions:
                 if pos.symbol == self._config.symbol and pos.quantity != Decimal("0"):
