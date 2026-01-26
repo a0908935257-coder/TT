@@ -157,6 +157,11 @@ class BaseBot(ABC):
         # Track fire-and-forget notification tasks to prevent resource leaks
         self._notification_tasks: set[asyncio.Task] = set()
 
+        # Position reconciliation (initialized here to avoid hasattr checks)
+        self._reconciliation_task: Optional[asyncio.Task] = None
+        self._last_known_position: Optional[Dict[str, Any]] = None
+        self._position_mismatch_count: int = 0
+
     # =========================================================================
     # Read-only Properties
     # =========================================================================
@@ -1871,19 +1876,9 @@ class BaseBot(ABC):
     # Position reconciliation interval (seconds)
     POSITION_RECONCILIATION_INTERVAL = 30
 
-    def _init_position_reconciliation(self) -> None:
-        """Initialize position reconciliation tracking."""
-        if not hasattr(self, "_reconciliation_task"):
-            self._reconciliation_task: Optional[asyncio.Task] = None
-        if not hasattr(self, "_last_known_position"):
-            self._last_known_position: Optional[Dict[str, Any]] = None
-        if not hasattr(self, "_position_mismatch_count"):
-            self._position_mismatch_count: int = 0
-
     def _start_position_reconciliation(self) -> None:
         """Start background position reconciliation task."""
-        self._init_position_reconciliation()
-
+        # Attributes are initialized in __init__, no need for hasattr checks
         if self._reconciliation_task is not None:
             return
 
@@ -1898,7 +1893,7 @@ class BaseBot(ABC):
 
     def _stop_position_reconciliation(self) -> None:
         """Stop background position reconciliation task."""
-        if hasattr(self, "_reconciliation_task") and self._reconciliation_task:
+        if self._reconciliation_task:
             self._reconciliation_task.cancel()
             self._reconciliation_task = None
             logger.debug(f"[{self._bot_id}] Position reconciliation stopped")

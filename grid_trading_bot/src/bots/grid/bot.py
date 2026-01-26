@@ -1028,7 +1028,7 @@ class GridBot(BaseBot):
 
         total = Decimal("0")
         for record in self._order_manager._filled_history:
-            if record.side.value == "BUY" and record.paired_record is None:
+            if record.side == OrderSide.BUY and record.paired_record is None:
                 total += record.quantity
 
         return total
@@ -1040,7 +1040,7 @@ class GridBot(BaseBot):
 
         total_pnl = Decimal("0")
         for record in self._order_manager._filled_history:
-            if record.side.value == "BUY" and record.paired_record is None:
+            if record.side == OrderSide.BUY and record.paired_record is None:
                 pnl = (current_price - record.price) * record.quantity
                 total_pnl += pnl
 

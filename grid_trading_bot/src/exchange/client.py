@@ -572,8 +572,8 @@ class ExchangeClient:
             Dictionary with 'spot' and 'futures' offset values in milliseconds
         """
         return {
-            "spot": self._spot._auth.time_offset,
-            "futures": self._futures._auth.time_offset,
+            "spot": self._spot._auth.time_offset if self._spot._auth else 0,
+            "futures": self._futures._auth.time_offset if self._futures._auth else 0,
         }
 
     async def force_time_sync(self) -> dict[str, int]:
