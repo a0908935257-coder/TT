@@ -663,11 +663,12 @@ class TestFundManager:
         assert status["auto_dispatch"] is True
         assert status["running"] is False
 
-    def test_set_allocation(self):
+    @pytest.mark.asyncio
+    async def test_set_allocation(self):
         """Test setting allocation manually."""
         manager = FundManager()
 
-        manager.set_allocation("grid_btc", Decimal("1000"))
+        await manager.set_allocation("grid_btc", Decimal("1000"))
 
         assert manager.fund_pool.get_allocation("grid_btc") == Decimal("1000")
 
@@ -699,7 +700,7 @@ class TestFundManager:
             manager._dispatcher.set_notification_method("grid_btc", "file")
 
             # Set initial allocation
-            manager.set_allocation("grid_btc", Decimal("1000"))
+            await manager.set_allocation("grid_btc", Decimal("1000"))
 
             # Recall funds
             record = await manager.recall_funds("grid_btc", Decimal("500"))
@@ -723,8 +724,8 @@ class TestFundManager:
             manager._dispatcher.set_notification_method("grid_eth", "file")
 
             # Set initial allocations
-            manager.set_allocation("grid_btc", Decimal("1000"))
-            manager.set_allocation("grid_eth", Decimal("500"))
+            await manager.set_allocation("grid_btc", Decimal("1000"))
+            await manager.set_allocation("grid_eth", Decimal("500"))
 
             # Recall all
             records = await manager.recall_all_funds()
