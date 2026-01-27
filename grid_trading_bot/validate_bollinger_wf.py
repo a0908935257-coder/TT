@@ -3,8 +3,16 @@
 Bollinger 策略 Walk-Forward 驗證腳本.
 
 驗證優化後參數的樣本外表現和穩健性。
+
+用法:
+    # 驗證 BB_TREND_GRID (預設)
+    python validate_bollinger_wf.py
+
+    # 驗證 BB_NEUTRAL_GRID
+    python validate_bollinger_wf.py --mode neutral
 """
 
+import argparse
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -45,22 +53,43 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def run_backtest(klines: list[Kline], leverage: int = 19) -> dict:
+def run_backtest(klines: list[Kline], leverage: int = 19, mode: str = "trend") -> dict:
     """執行回測並返回結果."""
-    # 優化後的參數 (19x 槓桿激進版)
-    config = BollingerStrategyConfig(
-        mode=BollingerMode.BB_TREND_GRID,
-        bb_period=12,
-        bb_std=Decimal("2.0"),
-        grid_count=6,
-        grid_range_pct=Decimal("0.02"),
-        take_profit_grids=2,
-        stop_loss_pct=Decimal("0.025"),
-        use_hysteresis=False,
-        hysteresis_pct=Decimal("0.002"),
-        use_signal_cooldown=False,
-        cooldown_bars=0,
-    )
+    if mode == "neutral":
+        # BB_NEUTRAL_GRID 模式 (類似 Grid Futures)
+        config = BollingerStrategyConfig(
+            mode=BollingerMode.BB_NEUTRAL_GRID,
+            bb_period=20,
+            bb_std=Decimal("2.0"),
+            grid_count=12,
+            take_profit_grids=1,
+            stop_loss_pct=Decimal("0.005"),  # 0.5% tight SL
+            # ATR dynamic range
+            use_atr_range=True,
+            atr_period=21,
+            atr_multiplier=Decimal("6.0"),
+            fallback_range_pct=Decimal("0.04"),
+            # Protective features
+            use_hysteresis=True,
+            hysteresis_pct=Decimal("0.002"),
+            use_signal_cooldown=False,
+            cooldown_bars=0,
+        )
+    else:
+        # BB_TREND_GRID 模式 (驗證通過)
+        config = BollingerStrategyConfig(
+            mode=BollingerMode.BB_TREND_GRID,
+            bb_period=12,
+            bb_std=Decimal("2.0"),
+            grid_count=6,
+            grid_range_pct=Decimal("0.02"),
+            take_profit_grids=2,
+            stop_loss_pct=Decimal("0.025"),
+            use_hysteresis=False,
+            hysteresis_pct=Decimal("0.002"),
+            use_signal_cooldown=False,
+            cooldown_bars=0,
+        )
 
     strategy = BollingerBacktestStrategy(config)
 
@@ -83,14 +112,15 @@ def run_backtest(klines: list[Kline], leverage: int = 19) -> dict:
     }
 
 
-def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 19):
+def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 19, mode: str = "trend"):
     """
     Walk-Forward 驗證.
 
     將數據分成多個時間段，每段獨立回測，檢驗參數穩健性。
     """
+    mode_name = "BB_NEUTRAL_GRID" if mode == "neutral" else "BB_TREND_GRID"
     print(f"\n{'=' * 60}")
-    print(f"  Walk-Forward 驗證 (Bollinger 優化參數)")
+    print(f"  Walk-Forward 驗證 ({mode_name})")
     print(f"  槓桿: {leverage}x, 分割數: {n_splits}")
     print(f"{'=' * 60}")
 
@@ -111,7 +141,7 @@ def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: in
         start_date = period_klines[0].open_time.strftime('%Y-%m-%d')
         end_date = period_klines[-1].open_time.strftime('%Y-%m-%d')
 
-        result = run_backtest(period_klines, leverage)
+        result = run_backtest(period_klines, leverage, mode)
         results.append(result)
 
         status = "✅" if result["total_return"] > 0 else "❌"
@@ -150,7 +180,7 @@ def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: in
     }
 
 
-def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19):
+def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19, mode: str = "trend"):
     """
     Monte Carlo 穩健性測試.
 
@@ -177,7 +207,7 @@ def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19)
             continue
 
         test_klines = klines[offset:end_idx]
-        result = run_backtest(test_klines, leverage)
+        result = run_backtest(test_klines, leverage, mode)
         results.append(result)
 
         if result["total_return"] > 0:
@@ -206,17 +236,34 @@ def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19)
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Bollinger 策略 Walk-Forward 驗證")
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["trend", "neutral"],
+        default="trend",
+        help="策略模式: trend (BB_TREND_GRID), neutral (BB_NEUTRAL_GRID)"
+    )
+    parser.add_argument(
+        "--leverage", "-l",
+        type=int,
+        default=18,
+        help="槓桿倍數 (default: 18)"
+    )
+    args = parser.parse_args()
+
+    mode = args.mode
+    leverage = args.leverage
+    mode_name = "BB_NEUTRAL_GRID" if mode == "neutral" else "BB_TREND_GRID"
+
     # 載入數據
     klines = load_klines("data/historical/BTCUSDT_1h_730d.json")
 
-    leverage = 19
-
     # 完整回測
     print(f"\n{'=' * 60}")
-    print(f"  完整回測 (優化參數, {leverage}x 槓桿)")
+    print(f"  完整回測 ({mode_name}, {leverage}x 槓桿)")
     print(f"{'=' * 60}")
 
-    full_result = run_backtest(klines, leverage)
+    full_result = run_backtest(klines, leverage, mode)
     total_return = full_result["total_return"]
     annual_return = ((1 + total_return/100) ** 0.5 - 1) * 100
 
@@ -228,14 +275,14 @@ def main():
     print(f"  交易數: {full_result['trades']}")
 
     # Walk-Forward 驗證
-    wf_result = walk_forward_validation(klines, n_splits=9, leverage=leverage)
+    wf_result = walk_forward_validation(klines, n_splits=9, leverage=leverage, mode=mode)
 
     # Monte Carlo 測試
-    mc_result = monte_carlo_test(klines, n_tests=15, leverage=leverage)
+    mc_result = monte_carlo_test(klines, n_tests=15, leverage=leverage, mode=mode)
 
     # 總結
     print(f"\n{'=' * 60}")
-    print(f"  驗證總結")
+    print(f"  驗證總結 ({mode_name})")
     print(f"{'=' * 60}")
     print(f"  年化報酬: {annual_return:.2f}%")
     print(f"  W-F 一致性: {wf_result['consistency']:.1f}%")
@@ -245,7 +292,7 @@ def main():
     if passed:
         print(f"\n  ✅ 驗證通過 - 可用於實戰")
     else:
-        print(f"\n  ⚠️ 驗證未通過 - 建議保守配置")
+        print(f"\n  ⚠️ 驗證未通過 - 建議保守配置或調整參數")
 
     return passed
 

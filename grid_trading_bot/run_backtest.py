@@ -25,6 +25,7 @@ from src.backtest import BacktestEngine, BacktestConfig
 from src.backtest.strategy import (
     BollingerBacktestStrategy,
     BollingerStrategyConfig,
+    BollingerMode,
     SupertrendBacktestStrategy,
     SupertrendStrategyConfig,
     GridBacktestStrategy,
@@ -79,13 +80,35 @@ def create_strategy(strategy_name: str, params: dict):
     """根據名稱創建策略實例"""
 
     if strategy_name == "bollinger":
+        # BB_TREND_GRID 模式 (驗證通過)
         config = BollingerStrategyConfig(
+            mode=BollingerMode.BB_TREND_GRID,
+            bb_period=params.get("bb_period", 12),
+            bb_std=Decimal(str(params.get("bb_std", "2.0"))),
+            grid_count=params.get("grid_count", 6),
+            grid_range_pct=Decimal(str(params.get("grid_range_pct", "0.02"))),
+            take_profit_grids=params.get("take_profit_grids", 2),
+            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.025"))),
+        )
+        return BollingerBacktestStrategy(config)
+
+    elif strategy_name == "bollinger_neutral":
+        # BB_NEUTRAL_GRID 模式 (新增 - 待優化)
+        config = BollingerStrategyConfig(
+            mode=BollingerMode.BB_NEUTRAL_GRID,
             bb_period=params.get("bb_period", 20),
             bb_std=Decimal(str(params.get("bb_std", "2.0"))),
-            grid_count=params.get("grid_count", 10),
-            grid_range_pct=Decimal(str(params.get("grid_range_pct", "0.04"))),
+            grid_count=params.get("grid_count", 12),
             take_profit_grids=params.get("take_profit_grids", 1),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
+            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.005"))),  # 0.5% tight SL
+            # ATR dynamic range
+            use_atr_range=True,
+            atr_period=params.get("atr_period", 21),
+            atr_multiplier=Decimal(str(params.get("atr_multiplier", "6.0"))),
+            fallback_range_pct=Decimal(str(params.get("fallback_range_pct", "0.04"))),
+            # Protective features
+            use_hysteresis=params.get("use_hysteresis", True),
+            hysteresis_pct=Decimal(str(params.get("hysteresis_pct", "0.002"))),
         )
         return BollingerBacktestStrategy(config)
 
@@ -163,9 +186,9 @@ async def main():
     parser = argparse.ArgumentParser(description="統一回測系統")
     parser.add_argument(
         "--strategy", "-s",
-        choices=["bollinger", "supertrend", "grid", "rsi", "grid_futures"],
+        choices=["bollinger", "bollinger_neutral", "supertrend", "grid", "rsi", "grid_futures"],
         default="bollinger",
-        help="策略名稱: bollinger, supertrend, grid, rsi, grid_futures (default: bollinger)"
+        help="策略名稱: bollinger, bollinger_neutral, supertrend, grid, rsi, grid_futures (default: bollinger)"
     )
     parser.add_argument(
         "--symbol", "-p",

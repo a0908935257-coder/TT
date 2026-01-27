@@ -5,7 +5,7 @@ Provides base classes and adapters for backtest strategies.
 """
 
 from .base import BacktestStrategy, BacktestContext
-from .bollinger import BollingerBacktestStrategy, BollingerStrategyConfig
+from .bollinger import BollingerBacktestStrategy, BollingerStrategyConfig, BollingerMode
 from .supertrend import SupertrendBacktestStrategy, SupertrendStrategyConfig
 from .grid import GridBacktestStrategy, GridStrategyConfig, MultiLevelGridStrategy
 from .grid_futures import GridFuturesBacktestStrategy, GridFuturesStrategyConfig, GridDirection
@@ -31,6 +31,7 @@ __all__ = [
     # Bollinger
     "BollingerBacktestStrategy",
     "BollingerStrategyConfig",
+    "BollingerMode",
     # Supertrend
     "SupertrendBacktestStrategy",
     "SupertrendStrategyConfig",
