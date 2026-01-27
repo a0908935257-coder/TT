@@ -540,6 +540,9 @@ class SupertrendBot(BaseBot):
                 except Exception as ssl_err:
                     await self.handle_ssl_error(ssl_err, "background_monitor")
 
+                # Send heartbeat
+                await self._send_heartbeat()
+
                 # Wait 30 seconds between updates
                 await asyncio.sleep(30)
 

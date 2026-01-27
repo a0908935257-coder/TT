@@ -1623,6 +1623,9 @@ class GridFuturesBot(BaseBot):
                 except Exception as ssl_err:
                     await self.handle_ssl_error(ssl_err, "background_monitor")
 
+                # Send heartbeat
+                await self._send_heartbeat()
+
                 # Comprehensive stop loss check (三層止損保護)
                 if self._position:
                     current_price = await self._get_current_price()

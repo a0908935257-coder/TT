@@ -1416,7 +1416,7 @@ class RSIGridBot(BaseBot):
                     await self.handle_ssl_error(ssl_err, "background_monitor")
 
                 # Send heartbeat
-                self._send_heartbeat()
+                await self._send_heartbeat()
 
                 # Wait 30 seconds between updates
                 await asyncio.sleep(30)

@@ -708,7 +708,7 @@ class BollingerBot(BaseBot):
                 except Exception as ssl_err:
                     await self.handle_ssl_error(ssl_err, "background_monitor")
 
-                self._send_heartbeat()
+                await self._send_heartbeat()
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
                 break
