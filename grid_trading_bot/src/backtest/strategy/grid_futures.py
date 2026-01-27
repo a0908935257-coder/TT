@@ -72,10 +72,11 @@ class GridFuturesStrategyConfig:
     fallback_range_pct: Decimal = Decimal("0.08")
     stop_loss_pct: Decimal = Decimal("0.05")
     take_profit_grids: int = 1
-    # Protective features (like live bot)
-    use_hysteresis: bool = False
+    # Protective features (ENABLED by default - matches live bot)
+    # 回測顯示啟用保護機制可提升收益 8.76%，Sharpe +0.06，回撤降低 15.78%
+    use_hysteresis: bool = True
     hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
-    use_signal_cooldown: bool = False
+    use_signal_cooldown: bool = True
     cooldown_bars: int = 2
 
     def __post_init__(self):

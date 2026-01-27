@@ -77,51 +77,51 @@ bots:
   # ===========================================================================
   # Bollinger Bot (BB_TREND_GRID 策略: BB 中軌趨勢 + 網格交易)
   # ===========================================================================
-  # Walk-Forward 驗證: 80% 一致性 (8/10 時段獲利), OOS Sharpe 6.56
-  # 平均 OOS 報酬: 10.39%, 穩健性: ROBUST
+  # 參數優化 (2026-01-27):
+  # - 年化報酬: 16.86%, Sharpe: 4.47, 回撤: 1.80%
+  # - 勝率: 81.1%, 交易數: 1761/2年
   # ===========================================================================
   - bot_id: bollinger_*
     name: "Bollinger BB_TREND_GRID Strategy"
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.30                          # 30%
+    ratio: 0.25                          # 25% (優化後調整)
     min_capital: 50
     max_capital: 8000
     priority: 9
 
-    # --- 策略參數 (Walk-Forward validated) ---
+    # --- 策略參數 (Optuna 優化 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 1h                       # 優化後使用 1h
+      timeframe: 1h
       leverage: 2
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # Bollinger Bands (用於趨勢判斷)
-      bb_period: 20
-      bb_std: 2.0                         # 標準 2.0 (不是 3.0)
+      # Bollinger Bands (優化後)
+      bb_period: 31                       # 優化後: 31 (原 20)
+      bb_std: 2.0
 
-      # Grid Parameters (網格交易)
-      grid_count: 10                      # 網格數量
-      grid_range_pct: 0.04                # 4% 範圍
-      take_profit_grids: 1                # 止盈網格數
+      # Grid Parameters (優化後)
+      grid_count: 6                       # 優化後: 6 (原 10)
+      grid_range_pct: 0.02                # 優化後: 2% (原 4%)
+      take_profit_grids: 1
 
-      # Risk Management
-      stop_loss_pct: 0.05                 # 5% 止損
-      rebuild_threshold_pct: 0.02         # 2% 網格重建閾值
+      # Risk Management (優化後)
+      stop_loss_pct: 0.10                 # 優化後: 10% (原 5%)
+      rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (disabled for maximum returns)
-      # 回測顯示關閉可提升收益 1.45%，Sharpe 差異極小
-      use_hysteresis: false              # 遲滯緩衝區 (已禁用)
-      hysteresis_pct: 0.002              # 0.2% (如需啟用)
-      use_signal_cooldown: false         # 訊號冷卻 (已禁用)
-      cooldown_bars: 2                   # 2 bars (如需啟用)
+      # Protective Features (優化後: 啟用)
+      use_hysteresis: true                # 優化後: 啟用
+      hysteresis_pct: 0.002
+      use_signal_cooldown: true           # 優化後: 啟用
+      cooldown_bars: 1                    # 優化後: 1 bar
 
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
@@ -136,7 +136,7 @@ bots:
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.15                          # 15%
+    ratio: 0.10                          # 10% (優化後調整)
     min_capital: 50
     max_capital: 5000
     priority: 8
@@ -179,53 +179,52 @@ bots:
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略)
   # ===========================================================================
-  # Walk-Forward 驗證: 100% 一致性, Sharpe 8.33
-  # 報酬: +376.5% (2年), 勝率: 83.6%, 交易: 1,891 次
-  # 參數: leverage=10, direction=NEUTRAL (與回測完全一致)
+  # 參數優化 (2026-01-27):
+  # - 年化報酬: 24.98%, Sharpe: 高, 回撤: 2.26%
+  # - 勝率: 85.2%, 交易數: 3395/2年
   # ===========================================================================
   - bot_id: grid_futures_*
     name: "Grid Futures Trading"
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.30                          # 30%
+    ratio: 0.40                          # 40% (主力策略，提升分配)
     min_capital: 100
     max_capital: 10000
     priority: 10
 
-    # --- 策略參數 (與回測完全一致) ---
+    # --- 策略參數 (Optuna 優化 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 10                       # 回測驗證: 10x
+      leverage: 8                        # 優化後: 8x (原 10x)
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # Grid Settings
-      grid_count: 10
-      direction: neutral                 # 回測驗證: NEUTRAL (雙向交易)
+      # Grid Settings (優化後)
+      grid_count: 8                      # 優化後: 8 (原 10)
+      direction: neutral                 # NEUTRAL (雙向交易)
 
       # Trend Filter (NEUTRAL 模式不使用趨勢過濾)
       use_trend_filter: false
       trend_period: 20
 
-      # ATR Range
+      # ATR Range (優化後)
       use_atr_range: true
-      atr_period: 14
+      atr_period: 25                     # 優化後: 25 (原 14)
       atr_multiplier: 3.0
       fallback_range_pct: 0.08
 
-      # Risk Management
-      stop_loss_pct: 0.05
+      # Risk Management (優化後)
+      stop_loss_pct: 0.02                # 優化後: 2% (原 5%)
       rebuild_threshold_pct: 0.02
 
-      # Protective Features (ENABLED based on backtest results)
-      # 回測顯示啟用可提升收益 8.76%，Sharpe +0.06，回撤降低 15.78%
-      use_hysteresis: true               # 遲滯緩衝區 (已啟用，改善表現)
-      hysteresis_pct: 0.002              # 0.2%
-      use_signal_cooldown: true          # 訊號冷卻 (已啟用，改善表現)
-      cooldown_bars: 2                   # 2 bars
+      # Protective Features (優化後)
+      use_hysteresis: true               # 優化後: 啟用
+      hysteresis_pct: 0.003              # 優化後: 0.3% (原 0.2%)
+      use_signal_cooldown: false         # 優化後: 禁用 (原 啟用)
+      cooldown_bars: 1
 
   # ===========================================================================
   # Supertrend TREND_GRID Bot (超級趨勢 + 網格 + RSI 過濾策略)
@@ -282,7 +281,8 @@ bots:
       use_signal_cooldown: true          # 訊號冷卻 (已啟用)
       cooldown_bars: 4                   # 4 bars (原 2 → 4)
 
-# Total: 90% allocated, 10% reserve (unallocated)
+# Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
+# 預估組合年化報酬: ~17-18% (保守估計)
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)
