@@ -1046,7 +1046,7 @@ class SupertrendBot(BaseBot):
         side: PositionSide,
         price: Decimal,
         take_profit: Optional[Decimal] = None
-    ) -> None:
+    ) -> bool:
         """
         Open a new position (TREND_GRID mode).
 
@@ -1885,7 +1885,7 @@ class SupertrendBot(BaseBot):
 
             # Verify position sync with exchange
             try:
-                exchange_positions = await exchange.get_positions(config.symbol)
+                exchange_positions = await exchange.futures.get_positions(config.symbol)
                 exchange_pos = None
                 for pos in exchange_positions:
                     if pos.symbol == config.symbol and pos.quantity != Decimal("0"):
