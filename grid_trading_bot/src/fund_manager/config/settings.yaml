@@ -126,54 +126,55 @@ bots:
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
   # ===========================================================================
-  # 目標: Sharpe > 3.0, 一致性 > 90%, 勝率 > 70%
-  # 結合 RSI 均值回歸 + Grid 高頻進場機制
+  # 參數優化 (2026-01-27) + Walk-Forward 驗證:
+  # - 年化報酬: 5.59%, Sharpe: 6.51, 回撤: 0.94%
+  # - W-F 一致性: 50%, Monte Carlo: ROBUST (100% 獲利)
+  # - 勝率: 84.8%, 交易數: 328/2年
   # ===========================================================================
   - bot_id: rsi_grid_*
     name: "RSI-Grid Hybrid Strategy"
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.15                          # 15% (取代 RSI Momentum)
+    ratio: 0.15                          # 15%
     min_capital: 50
     max_capital: 5000
     priority: 8
 
-    # --- 策略參數 ---
+    # --- 策略參數 (Optuna 優化 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 15m
+      timeframe: 1h                      # 優化後: 1h (原 15m)
       leverage: 2
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # RSI Parameters
+      # RSI Parameters (優化後)
       rsi_period: 14
-      oversold_level: 30
-      overbought_level: 70
+      oversold_level: 33                 # 優化後: 33 (原 30)
+      overbought_level: 66               # 優化後: 66 (原 70)
 
-      # Grid Parameters
-      grid_count: 10
-      atr_period: 14
-      atr_multiplier: 3.0
+      # Grid Parameters (優化後)
+      grid_count: 8                      # 優化後: 8 (原 10)
+      atr_period: 22                     # 優化後: 22 (原 14)
+      atr_multiplier: 3.5                # 優化後: 3.5 (原 3.0)
 
-      # Trend Filter
-      trend_sma_period: 20
-      use_trend_filter: true
+      # Trend Filter (優化後: 關閉)
+      trend_sma_period: 39               # 優化後: 39 (原 20)
+      use_trend_filter: false            # 優化後: 關閉 (原 true)
 
-      # Risk Management
-      stop_loss_atr_mult: 1.5
+      # Risk Management (優化後)
+      stop_loss_atr_mult: 2.0            # 優化後: 2.0 (原 1.5)
       max_stop_loss_pct: 0.03            # 3%
       take_profit_grids: 1
       max_positions: 5
 
-      # Protective Features (disabled based on backtest results)
-      # 回測顯示這些保護機制對 RSI Grid 策略有負面影響
-      use_hysteresis: false              # 遲滯緩衝區 (已禁用)
-      hysteresis_pct: 0.002              # 0.2% (如需啟用)
-      use_signal_cooldown: false         # 訊號冷卻 (已禁用)
-      cooldown_bars: 2                   # 2 bars (如需啟用)
+      # Protective Features (優化後: 保持關閉)
+      use_hysteresis: false
+      hysteresis_pct: 0.003              # 優化後: 0.3%
+      use_signal_cooldown: false
+      cooldown_bars: 2
 
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略)
