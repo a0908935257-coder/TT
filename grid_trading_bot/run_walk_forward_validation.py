@@ -154,23 +154,12 @@ def create_all_strategies() -> dict:
         stop_loss_pct=Decimal("0.05"),
     )
 
-    # Supertrend: 使用 settings.yaml 實盤參數
-    # 模式: TREND_GRID (與實盤 Bot 一致)
-    # timeframe=1h, atr_period=14, stop_loss=5%, RSI filter enabled
+    # Supertrend: 使用默認配置 (已與實盤 Bot 一致)
+    # 模式: TREND_GRID, atr_period=25, stop_loss=5%
+    # RSI filter, Hysteresis, Signal Cooldown, Trailing Stop 全部啟用
     supertrend_config = SupertrendStrategyConfig(
-        mode=SupertrendMode.TREND_GRID,  # 與實盤 Bot 一致
-        atr_period=14,
-        atr_multiplier=Decimal("3.0"),
-        grid_count=10,
-        grid_atr_multiplier=Decimal("3.0"),
-        take_profit_grids=1,
-        stop_loss_pct=Decimal("0.05"),
-        # RSI Filter (與實盤 Bot 一致)
-        use_rsi_filter=True,
-        rsi_period=14,
-        rsi_overbought=60,
-        rsi_oversold=40,
-        min_trend_bars=2,
+        mode=SupertrendMode.TREND_GRID,
+        # 其餘使用默認值（已與實戰一致）
     )
 
     return {
@@ -535,7 +524,7 @@ async def main():
 
     try:
         # 獲取數據
-        klines = await fetch_klines(args.symbol, args.interval, args.days)
+        klines = await fetch_klines(args.symbol, args.interval, args.days, args.data_file)
 
         if len(klines) < 100:
             print("錯誤: K 線數據不足")
