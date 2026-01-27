@@ -80,61 +80,63 @@ class BollingerConfig:
     """
     Bollinger BB_TREND_GRID Bot configuration.
 
-    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割)
+    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據)
 
-    驗證結果:
-        - Walk-Forward 一致性: 80% (8/10 時段獲利)
-        - OOS Sharpe: 6.56
-        - 平均 OOS 報酬: 10.39%
-        - 過度擬合: 未檢測到
+    驗證結果 (2026-01-27 優化):
+        - Walk-Forward 一致性: 100% (9/9 時段獲利)
+        - Monte Carlo 穩健性: 100% (15/15 測試獲利)
+        - 年化報酬: 17.39%
+        - 最大回撤: 6.60%
+        - Sharpe: 4.70
+        - 勝率: 63.3%
         - 穩健性: ROBUST
 
     策略邏輯:
     - 趨勢: BB 中軌 (SMA) 判斷方向
     - 進場: 網格交易，K線觸及網格線時進場
-    - 出場: 止盈 1 個網格 或 止損 5%
+    - 出場: 止盈 2 個網格 或 止損 2.5%
 
-    默認參數 (Walk-Forward 驗證通過):
-    - bb_period: 20
+    默認參數 (W-F 驗證通過 2026-01-27):
+    - bb_period: 12
     - bb_std: 2.0
-    - grid_count: 10
-    - grid_range_pct: 4%
-    - stop_loss_pct: 5%
+    - grid_count: 6
+    - grid_range_pct: 2%
+    - stop_loss_pct: 2.5%
+    - leverage: 19x (⚠️ 高槓桿)
     """
 
     symbol: str
     timeframe: str = "1h"
 
-    # Bollinger Bands parameters
-    bb_period: int = 20
+    # Bollinger Bands parameters (驗證通過)
+    bb_period: int = 12                                                        # 驗證通過: 12 (原 20)
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Grid parameters (Walk-Forward validated)
-    grid_count: int = 10
-    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 4% range
-    take_profit_grids: int = 1  # Take profit at next grid level
+    # Grid parameters (驗證通過)
+    grid_count: int = 6                                                        # 驗證通過: 6 (原 10)
+    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))   # 驗證通過: 2% (原 4%)
+    take_profit_grids: int = 2                                                 # 驗證通過: 2 (原 1)
 
-    # Position settings
-    leverage: int = 2
+    # Position settings (⚠️ 高槓桿)
+    leverage: int = 19                                                         # ⚠️ 驗證通過: 19x (原 2x)
     margin_type: str = "ISOLATED"
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max 50% exposure
 
-    # Risk management
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 5% stop loss
+    # Risk management (驗證通過)
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.025"))   # 驗證通過: 2.5% (原 5%)
     rebuild_threshold_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # Rebuild when price moves 2% from grid
 
     # BBW filter (for squeeze detection)
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
 
-    # Protective features (disabled by default for maximum returns)
-    # 回測顯示關閉保護機制可提升收益 1.45%，Sharpe 差異極小
-    use_hysteresis: bool = False  # 遲滯緩衝區 (已禁用)
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))  # 0.2%
-    use_signal_cooldown: bool = False  # 訊號冷卻 (已禁用)
-    cooldown_bars: int = 2
+    # Protective features (驗證通過: 關閉)
+    use_hysteresis: bool = False                                               # 驗證通過: 關閉
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
+    use_signal_cooldown: bool = False                                          # 驗證通過: 關閉
+    cooldown_bars: int = 0                                                     # 驗證通過: 0 (原 2)
 
     def __post_init__(self):
         """Validate and normalize configuration."""

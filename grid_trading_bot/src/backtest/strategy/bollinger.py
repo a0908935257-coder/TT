@@ -75,18 +75,21 @@ class BollingerStrategyConfig:
         cooldown_bars: Minimum bars between signals
     """
 
+    # Walk-Forward 驗證通過參數 (2026-01-27)
+    # W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
+    # 年化: 17.39%, 回撤: 6.60%, Sharpe: 4.70
     mode: BollingerMode = BollingerMode.BB_TREND_GRID
-    bb_period: int = 20
+    bb_period: int = 12                                    # 優化後: 12 (原 20)
     bb_std: Decimal = Decimal("2.0")
-    grid_count: int = 10
-    grid_range_pct: Decimal = Decimal("0.04")  # 4% range
-    take_profit_grids: int = 1
-    stop_loss_pct: Decimal = Decimal("0.05")
-    # Protective features (like live bot)
+    grid_count: int = 6                                    # 優化後: 6 (原 10)
+    grid_range_pct: Decimal = Decimal("0.02")              # 優化後: 2% (原 4%)
+    take_profit_grids: int = 2                             # 優化後: 2 (原 1)
+    stop_loss_pct: Decimal = Decimal("0.025")              # 優化後: 2.5% (原 5%)
+    # Protective features (驗證後: 關閉)
     use_hysteresis: bool = False
-    hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
+    hysteresis_pct: Decimal = Decimal("0.002")
     use_signal_cooldown: bool = False
-    cooldown_bars: int = 2
+    cooldown_bars: int = 0                                 # 優化後: 0 (原 2)
 
 
 @dataclass

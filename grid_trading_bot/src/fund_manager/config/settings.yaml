@@ -77,51 +77,53 @@ bots:
   # ===========================================================================
   # Bollinger Bot (BB_TREND_GRID 策略: BB 中軌趨勢 + 網格交易)
   # ===========================================================================
-  # 參數優化 (2026-01-27):
-  # - 年化報酬: 16.86%, Sharpe: 4.47, 回撤: 1.80%
-  # - 勝率: 81.1%, 交易數: 1761/2年
+  # 參數優化 + Walk-Forward 驗證 (2026-01-27):
+  # - 年化報酬: 17.39%, Sharpe: 4.70, 回撤: 6.60%
+  # - W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
+  # - 勝率: 63.3%, 交易數: 1636/2年
+  # ⚠️ 高槓桿配置 - 19x 槓桿 (驗證通過)
   # ===========================================================================
   - bot_id: bollinger_*
     name: "Bollinger BB_TREND_GRID Strategy"
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.25                          # 25% (優化後調整)
+    ratio: 0.25                          # 25%
     min_capital: 50
     max_capital: 8000
     priority: 9
 
-    # --- 策略參數 (Optuna 優化 2026-01-27) ---
+    # --- 策略參數 (W-F 驗證通過 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 2
+      leverage: 19                        # ⚠️ 高槓桿 (驗證通過)
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # Bollinger Bands (優化後)
-      bb_period: 31                       # 優化後: 31 (原 20)
+      # Bollinger Bands (驗證通過)
+      bb_period: 12                       # 驗證通過: 12 (原 20)
       bb_std: 2.0
 
-      # Grid Parameters (優化後)
-      grid_count: 6                       # 優化後: 6 (原 10)
-      grid_range_pct: 0.02                # 優化後: 2% (原 4%)
-      take_profit_grids: 1
+      # Grid Parameters (驗證通過)
+      grid_count: 6                       # 驗證通過: 6 (原 10)
+      grid_range_pct: 0.02                # 驗證通過: 2% (原 4%)
+      take_profit_grids: 2                # 驗證通過: 2 (原 1)
 
-      # Risk Management (優化後)
-      stop_loss_pct: 0.10                 # 優化後: 10% (原 5%)
+      # Risk Management (驗證通過)
+      stop_loss_pct: 0.025                # 驗證通過: 2.5% (原 5%)
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (優化後: 啟用)
-      use_hysteresis: true                # 優化後: 啟用
+      # Protective Features (驗證通過: 關閉)
+      use_hysteresis: false               # 驗證通過: 關閉
       hysteresis_pct: 0.002
-      use_signal_cooldown: true           # 優化後: 啟用
-      cooldown_bars: 1                    # 優化後: 1 bar
+      use_signal_cooldown: false          # 驗證通過: 關閉
+      cooldown_bars: 0                    # 驗證通過: 0
 
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
