@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
+from threading import Lock
 from typing import Any, Callable, Optional, Union
 import random
 import itertools
@@ -327,7 +328,8 @@ class GridSearchOptimizer(Optimizer):
                 if callback:
                     callback(trial)
         else:
-            # Parallel execution
+            # Parallel execution with thread-safe best tracking
+            best_lock = Lock()
             with ThreadPoolExecutor(max_workers=n_jobs) as executor:
                 futures = {
                     executor.submit(run_trial, idx, combo): idx
@@ -343,9 +345,17 @@ class GridSearchOptimizer(Optimizer):
                         else trial.score < best_score
                     )
                     if is_better:
-                        best_score = trial.score
-                        best_params = trial.params.copy()
-                        best_metrics = trial.metrics.copy()
+                        with best_lock:
+                            # Double-check after acquiring lock
+                            is_still_better = (
+                                trial.score > best_score
+                                if direction == OptimizationDirection.MAXIMIZE
+                                else trial.score < best_score
+                            )
+                            if is_still_better:
+                                best_score = trial.score
+                                best_params = trial.params.copy()
+                                best_metrics = trial.metrics.copy()
 
                     if callback:
                         callback(trial)
@@ -379,8 +389,23 @@ class RandomSearchOptimizer(Optimizer):
         Args:
             seed: Random seed for reproducibility
         """
-        if seed is not None:
-            random.seed(seed)
+        # Use instance-level RNG to avoid polluting global random state
+        self._rng = random.Random(seed)
+
+    def _sample_random(self, param: ParameterSpace) -> Any:
+        """Sample a random value using instance-level RNG."""
+        if param.param_type == "categorical":
+            return self._rng.choice(param.choices)
+        elif param.param_type == "int":
+            return self._rng.randint(int(param.low), int(param.high))
+        elif param.param_type == "float":
+            if param.log_scale:
+                import math
+                log_low = math.log(param.low)
+                log_high = math.log(param.high)
+                return math.exp(self._rng.uniform(log_low, log_high))
+            return self._rng.uniform(param.low, param.high)
+        return None
 
     def optimize(
         self,
@@ -402,7 +427,7 @@ class RandomSearchOptimizer(Optimizer):
         best_metrics: dict[str, Any] = {}
 
         def run_trial(idx: int) -> OptimizationTrial:
-            params = {p.name: p.sample_random() for p in param_space}
+            params = {p.name: self._sample_random(p) for p in param_space}
             trial_start = time.time()
             score, metrics = objective_fn(params)
             duration = time.time() - trial_start
@@ -432,6 +457,8 @@ class RandomSearchOptimizer(Optimizer):
                 if callback:
                     callback(trial)
         else:
+            # Parallel execution with thread-safe best tracking
+            best_lock = Lock()
             with ThreadPoolExecutor(max_workers=n_jobs) as executor:
                 futures = {executor.submit(run_trial, idx): idx for idx in range(n_trials)}
                 for future in as_completed(futures):
@@ -444,9 +471,17 @@ class RandomSearchOptimizer(Optimizer):
                         else trial.score < best_score
                     )
                     if is_better:
-                        best_score = trial.score
-                        best_params = trial.params.copy()
-                        best_metrics = trial.metrics.copy()
+                        with best_lock:
+                            # Double-check after acquiring lock
+                            is_still_better = (
+                                trial.score > best_score
+                                if direction == OptimizationDirection.MAXIMIZE
+                                else trial.score < best_score
+                            )
+                            if is_still_better:
+                                best_score = trial.score
+                                best_params = trial.params.copy()
+                                best_metrics = trial.metrics.copy()
 
                     if callback:
                         callback(trial)

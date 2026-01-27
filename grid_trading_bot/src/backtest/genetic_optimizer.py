@@ -136,13 +136,27 @@ class GeneticAlgorithmOptimizer(Optimizer):
         """
         self._config = config or GAConfig()
 
-        if self._config.seed is not None:
-            random.seed(self._config.seed)
+        # Use instance-level RNG to avoid polluting global random state
+        self._rng = random.Random(self._config.seed)
 
         # Adaptive mutation state
         self._current_mutation_rate = self._config.mutation_rate
         self._best_fitness_history: list[float] = []
         self._generations_without_improvement = 0
+
+    def _sample_random(self, param: ParameterSpace) -> Any:
+        """Sample a random value using instance-level RNG."""
+        if param.param_type == "categorical":
+            return self._rng.choice(param.choices)
+        elif param.param_type == "int":
+            return self._rng.randint(int(param.low), int(param.high))
+        elif param.param_type == "float":
+            if param.log_scale:
+                log_low = math.log(param.low)
+                log_high = math.log(param.high)
+                return math.exp(self._rng.uniform(log_low, log_high))
+            return self._rng.uniform(param.low, param.high)
+        return None
 
     def optimize(
         self,
@@ -238,7 +252,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
         """Initialize random population."""
         population = []
         for _ in range(self._config.population_size):
-            genes = {p.name: p.sample_random() for p in param_space}
+            genes = {p.name: self._sample_random(p) for p in param_space}
             population.append(Individual(genes=genes))
         return population
 
@@ -321,7 +335,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
             parent2 = self._select_parent(population, direction)
 
             # Crossover
-            if random.random() < self._config.crossover_rate:
+            if self._rng.random() < self._config.crossover_rate:
                 child1, child2 = self._crossover(parent1, parent2, param_space)
             else:
                 child1, child2 = parent1.copy(), parent2.copy()
@@ -359,7 +373,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
         direction: OptimizationDirection,
     ) -> Individual:
         """Select parent via tournament."""
-        tournament = random.sample(population, min(self._config.tournament_size, len(population)))
+        tournament = self._rng.sample(population, min(self._config.tournament_size, len(population)))
         return self._get_best(tournament, direction)
 
     def _roulette_selection(
@@ -380,9 +394,9 @@ class GeneticAlgorithmOptimizer(Optimizer):
 
         total_fitness = sum(fitness_values)
         if total_fitness == 0:
-            return random.choice(population)
+            return self._rng.choice(population)
 
-        pick = random.uniform(0, total_fitness)
+        pick = self._rng.uniform(0, total_fitness)
         current = 0
         for ind, fit in zip(population, fitness_values):
             current += fit
@@ -405,7 +419,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
         ranks = list(range(1, n + 1))
         total_rank = sum(ranks)
 
-        pick = random.uniform(0, total_rank)
+        pick = self._rng.uniform(0, total_rank)
         current = 0
         for ind, rank in zip(sorted_pop, ranks):
             current += rank
@@ -438,7 +452,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
     ) -> tuple[Individual, Individual]:
         """Single-point crossover."""
         param_names = [p.name for p in param_space]
-        point = random.randint(1, len(param_names) - 1)
+        point = self._rng.randint(1, len(param_names) - 1)
 
         child1_genes = {}
         child2_genes = {}
@@ -463,8 +477,8 @@ class GeneticAlgorithmOptimizer(Optimizer):
         param_names = [p.name for p in param_space]
         n = len(param_names)
 
-        point1 = random.randint(0, n - 1)
-        point2 = random.randint(0, n - 1)
+        point1 = self._rng.randint(0, n - 1)
+        point2 = self._rng.randint(0, n - 1)
         if point1 > point2:
             point1, point2 = point2, point1
 
@@ -492,7 +506,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
         child2_genes = {}
 
         for p in param_space:
-            if random.random() < 0.5:
+            if self._rng.random() < 0.5:
                 child1_genes[p.name] = parent1.genes[p.name]
                 child2_genes[p.name] = parent2.genes[p.name]
             else:
@@ -535,8 +549,8 @@ class GeneticAlgorithmOptimizer(Optimizer):
                 if high <= low:
                     c1 = c2 = low if p.low is not None else (v1 + v2) / 2
                 else:
-                    c1 = random.uniform(low, high)
-                    c2 = random.uniform(low, high)
+                    c1 = self._rng.uniform(low, high)
+                    c2 = self._rng.uniform(low, high)
 
                 if p.param_type == "int":
                     c1 = int(round(c1))
@@ -546,17 +560,17 @@ class GeneticAlgorithmOptimizer(Optimizer):
                 child2_genes[p.name] = c2
             else:
                 # Non-numeric: random choice
-                child1_genes[p.name] = random.choice([v1, v2])
-                child2_genes[p.name] = random.choice([v1, v2])
+                child1_genes[p.name] = self._rng.choice([v1, v2])
+                child2_genes[p.name] = self._rng.choice([v1, v2])
 
         return Individual(genes=child1_genes), Individual(genes=child2_genes)
 
     def _mutate(self, individual: Individual, param_space: list[ParameterSpace]) -> Individual:
         """Apply mutation to an individual."""
         for p in param_space:
-            if random.random() < self._current_mutation_rate:
+            if self._rng.random() < self._current_mutation_rate:
                 if self._config.mutation_method == MutationMethod.UNIFORM:
-                    individual.genes[p.name] = p.sample_random()
+                    individual.genes[p.name] = self._sample_random(p)
                 elif self._config.mutation_method == MutationMethod.GAUSSIAN:
                     individual.genes[p.name] = self._gaussian_mutate(individual.genes[p.name], p)
                 else:  # ADAPTIVE
@@ -568,7 +582,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
         """Apply Gaussian mutation to a value."""
         if param.param_type == "categorical":
             # For categorical, just sample random
-            return param.sample_random()
+            return self._sample_random(param)
 
         if param.param_type == "int":
             # Use integer-appropriate mutation
@@ -577,7 +591,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
             else:
                 std = abs(value) * 0.2 if value != 0 else 1
 
-            new_value = value + random.gauss(0, std)
+            new_value = value + self._rng.gauss(0, std)
             new_value = int(round(new_value))
 
             # Clip to bounds
@@ -594,7 +608,7 @@ class GeneticAlgorithmOptimizer(Optimizer):
             else:
                 std = abs(value) * 0.2 if value != 0 else 0.1
 
-            new_value = value + random.gauss(0, std)
+            new_value = value + self._rng.gauss(0, std)
 
             # Clip to bounds
             if param.low is not None:

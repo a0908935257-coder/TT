@@ -1544,14 +1544,17 @@ class GridRiskManager:
 
         # Track consecutive losses
         if profit < 0:
+            # Loss: increment consecutive loss count
             if not self._last_trade_profitable:
                 self._consecutive_losses += 1
             else:
                 self._consecutive_losses = 1
             self._last_trade_profitable = False
-        else:
+        elif profit > 0:
+            # Profit: reset consecutive loss count
             self._consecutive_losses = 0
             self._last_trade_profitable = True
+        # else: profit == 0 (break-even trade), treat as neutral - don't change any state
 
         logger.debug(
             f"Trade completed: profit={profit}, daily_pnl={self._daily_pnl}, "
