@@ -4,7 +4,7 @@ Tests for Capital Monitor.
 Tests capital tracking, change calculations, and alert generation.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -487,8 +487,8 @@ class TestCapitalMonitorUtility:
                 available_balance=Decimal(f"{100000 + i * 1000}"),
             )
 
-        # Get snapshots since 2 ago
-        since = datetime.now() - timedelta(seconds=1)
+        # Get snapshots since 2 ago (use UTC to match snapshot timestamps)
+        since = datetime.now(timezone.utc) - timedelta(seconds=1)
         recent = monitor.get_snapshots_since(since)
 
         # Should include all snapshots (they were just created)
@@ -503,8 +503,8 @@ class TestCapitalMonitorUtility:
                 available_balance=Decimal(f"{100000 + i * 1000}"),
             )
 
-        start = datetime.now() - timedelta(hours=1)
-        end = datetime.now() + timedelta(hours=1)
+        start = datetime.now(timezone.utc) - timedelta(hours=1)
+        end = datetime.now(timezone.utc) + timedelta(hours=1)
         snapshots = monitor.get_snapshots_for_period(start, end)
 
         assert len(snapshots) == 3

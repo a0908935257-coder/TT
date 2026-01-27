@@ -394,8 +394,8 @@ class TestBaseBotHeartbeat:
         bot = MockBot(heartbeat_callback=callback)
         await bot.start()
 
-        # Manually trigger heartbeat
-        bot._send_heartbeat()
+        # Manually trigger heartbeat (now async)
+        await bot._send_heartbeat()
 
         assert len(received_heartbeats) == 1
         assert received_heartbeats[0].bot_id == "test_bot"

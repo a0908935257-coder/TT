@@ -156,7 +156,7 @@ class TestHeartbeatMonitor:
             metrics={"total_trades": 5},
         )
 
-        monitor.receive(heartbeat)
+        await monitor.receive(heartbeat)
 
         assert monitor.is_alive("bot_001")
         assert "bot_001" in monitor
@@ -176,7 +176,7 @@ class TestHeartbeatMonitor:
             state=BotState.RUNNING,
             metrics={"total_trades": 5},
         )
-        monitor.receive(heartbeat)
+        await monitor.receive(heartbeat)
 
         status = monitor.get_status("bot_001")
 
@@ -206,7 +206,7 @@ class TestHeartbeatMonitor:
 
         # Receive heartbeat
         heartbeat = HeartbeatData(bot_id="bot_001", state=BotState.RUNNING)
-        monitor.receive(heartbeat)
+        await monitor.receive(heartbeat)
 
         assert monitor.get_missed_count("bot_001") == 0
 
@@ -238,7 +238,7 @@ class TestHeartbeatMonitor:
         await registry.update_state("bot_001", BotState.RUNNING)
 
         # Add recent heartbeat
-        monitor.receive(HeartbeatData(bot_id="bot_001", state=BotState.RUNNING))
+        await monitor.receive(HeartbeatData(bot_id="bot_001", state=BotState.RUNNING))
 
         results = await monitor.check_all()
 
@@ -313,8 +313,8 @@ class TestHeartbeatMonitor:
         await registry.register("bot_001", BotType.GRID, sample_config)
         await registry.register("bot_002", BotType.GRID, sample_config)
 
-        monitor.receive(HeartbeatData(bot_id="bot_001", state=BotState.RUNNING))
-        monitor.receive(HeartbeatData(bot_id="bot_002", state=BotState.RUNNING))
+        await monitor.receive(HeartbeatData(bot_id="bot_001", state=BotState.RUNNING))
+        await monitor.receive(HeartbeatData(bot_id="bot_002", state=BotState.RUNNING))
 
         all_status = monitor.get_all_status()
 
@@ -388,7 +388,7 @@ class TestHeartbeatRecovery:
 
         # Receive new heartbeat
         heartbeat = HeartbeatData(bot_id="bot_001", state=BotState.RUNNING)
-        monitor.receive(heartbeat)
+        await monitor.receive(heartbeat)
 
         # Allow async task to run
         await asyncio.sleep(0.1)

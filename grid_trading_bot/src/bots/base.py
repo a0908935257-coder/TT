@@ -5775,13 +5775,13 @@ class BaseBot(ABC):
                 # Check all state conditions to avoid sending stale heartbeat
                 # during state transitions (e.g., when bot is stopping)
                 if self._running and self._state == BotState.RUNNING and self._heartbeat_callback:
-                    self._send_heartbeat()
+                    await self._send_heartbeat()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"Heartbeat error: {e}")
 
-    def _send_heartbeat(self) -> None:
+    async def _send_heartbeat(self) -> None:
         """Send heartbeat to Master via callback."""
         if not self._heartbeat_callback:
             return
@@ -5795,7 +5795,10 @@ class BaseBot(ABC):
                 state=self._state,
                 metrics=self._get_heartbeat_metrics(),
             )
-            self._heartbeat_callback(heartbeat)
+            # Callback may be async (HeartbeatMonitor.receive)
+            result = self._heartbeat_callback(heartbeat)
+            if asyncio.iscoroutine(result):
+                await result
         except Exception as e:
             logger.warning(f"Failed to send heartbeat: {e}")
 

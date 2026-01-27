@@ -41,8 +41,8 @@ def mock_registry():
     registry = MagicMock()
     registry.get_all.return_value = []
     registry.get.return_value = None
-    registry.update_heartbeat = MagicMock()
-    registry.update_state = MagicMock()
+    registry.update_heartbeat = AsyncMock()  # async method
+    registry.update_state = AsyncMock()  # async method
     registry.set_error = MagicMock()
     return registry
 
@@ -51,7 +51,7 @@ def mock_registry():
 def mock_heartbeat_monitor():
     """Create mock heartbeat monitor."""
     monitor = MagicMock()
-    monitor.receive = MagicMock()
+    monitor.receive = AsyncMock()  # receive is async
     return monitor
 
 
@@ -225,8 +225,9 @@ class TestMasterIPCHandler:
         event = Event.error("bot-001", "Connection failed")
         await handler._on_event(event.to_json())
 
-        mock_registry.update_state.assert_called_once_with("bot-001", BotState.ERROR)
-        mock_registry.set_error.assert_called_once()
+        mock_registry.update_state.assert_called_once_with(
+            "bot-001", BotState.ERROR, message="Connection failed"
+        )
 
     @pytest.mark.asyncio
     async def test_event_callback(self, handler):
