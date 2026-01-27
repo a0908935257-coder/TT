@@ -1,20 +1,29 @@
 """
-Bollinger BB_TREND_GRID Bot Data Models.
+Bollinger Bot Data Models.
 
-✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割):
-- Walk-Forward 一致性: 80% (8/10 時段獲利)
-- OOS Sharpe: 6.56
-- 過度擬合: 未檢測到
+支援模式:
+1. BB_TREND_GRID: 趨勢跟隨 + 網格交易 (已驗證)
+2. BB_NEUTRAL_GRID: 雙向中性 + 網格交易 (類似 Grid Futures)
+
+✅ BB_TREND_GRID Walk-Forward 驗證通過 (2024-01 ~ 2026-01):
+- Walk-Forward 一致性: 100% (9/9 時段獲利)
+- Monte Carlo 穩健性: 100% (15/15)
+- 年化報酬: 17.39%
 - 穩健性: ROBUST
 
-策略邏輯 (BB_TREND_GRID):
+策略邏輯:
+BB_TREND_GRID:
 - 趨勢判斷: BB 中軌 (SMA)
   - Price > SMA = 看多 (只做 LONG)
   - Price < SMA = 看空 (只做 SHORT)
-- 進場: 網格交易
-  - LONG: kline.low <= grid_level.price (買跌)
-  - SHORT: kline.high >= grid_level.price (賣漲)
-- 出場: 止盈 1 個網格 或 止損 5%
+- 進場: 網格交易 (K線觸及網格)
+- 出場: 止盈 2 個網格 或 止損 2.5%
+
+BB_NEUTRAL_GRID:
+- 雙向交易: 隨時可做多/做空 (無趨勢過濾)
+- 網格範圍: ATR 動態計算
+- 止損: 0.5-1% (更緊)
+- 預期交易量: 2-3x BB_TREND_GRID
 """
 
 from dataclasses import dataclass, field
@@ -32,7 +41,8 @@ from typing import List, Optional
 class StrategyMode(str, Enum):
     """Trading strategy mode."""
 
-    BB_TREND_GRID = "bb_trend_grid"  # BB trend + grid trading (validated)
+    BB_TREND_GRID = "bb_trend_grid"      # BB trend + grid trading (validated)
+    BB_NEUTRAL_GRID = "bb_neutral_grid"  # Neutral bi-directional grid (like Grid Futures)
 
 
 class SignalType(str, Enum):
@@ -78,11 +88,13 @@ class ExitReason(str, Enum):
 @dataclass
 class BollingerConfig:
     """
-    Bollinger BB_TREND_GRID Bot configuration.
+    Bollinger Bot configuration.
 
-    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據)
+    支援模式:
+    1. BB_TREND_GRID (預設): 趨勢跟隨 + 網格交易
+    2. BB_NEUTRAL_GRID: 雙向中性 + 網格交易 (類似 Grid Futures)
 
-    驗證結果 (2026-01-27 優化):
+    ✅ BB_TREND_GRID Walk-Forward 驗證通過 (2026-01-27):
         - Walk-Forward 一致性: 100% (9/9 時段獲利)
         - Monte Carlo 穩健性: 100% (15/15 測試獲利)
         - 年化報酬: 17.39%
@@ -91,22 +103,27 @@ class BollingerConfig:
         - 勝率: 63.3%
         - 穩健性: ROBUST
 
-    策略邏輯:
-    - 趨勢: BB 中軌 (SMA) 判斷方向
-    - 進場: 網格交易，K線觸及網格線時進場
-    - 出場: 止盈 2 個網格 或 止損 2.5%
-
-    默認參數 (W-F 驗證通過 2026-01-27):
+    BB_TREND_GRID 默認參數 (W-F 驗證通過):
     - bb_period: 12
     - bb_std: 2.0
     - grid_count: 6
     - grid_range_pct: 2%
     - stop_loss_pct: 2.5%
     - leverage: 19x (⚠️ 高槓桿)
+
+    BB_NEUTRAL_GRID 建議參數 (待優化):
+    - grid_count: 10-12
+    - use_atr_range: true
+    - atr_period: 21
+    - atr_multiplier: 4.0-6.0
+    - stop_loss_pct: 0.5-1%
     """
 
     symbol: str
     timeframe: str = "1h"
+
+    # Strategy mode
+    mode: StrategyMode = StrategyMode.BB_TREND_GRID
 
     # Bollinger Bands parameters (驗證通過)
     bb_period: int = 12                                                        # 驗證通過: 12 (原 20)
@@ -138,6 +155,12 @@ class BollingerConfig:
     use_signal_cooldown: bool = False                                          # 驗證通過: 關閉
     cooldown_bars: int = 0                                                     # 驗證通過: 0 (原 2)
 
+    # ATR dynamic range (for BB_NEUTRAL_GRID mode)
+    use_atr_range: bool = False                                                # 用於 NEUTRAL_GRID
+    atr_period: int = 21                                                       # ATR 計算週期
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))    # ATR 乘數
+    fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # ATR 不可用時的備用範圍
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.bb_std, Decimal):
@@ -156,6 +179,14 @@ class BollingerConfig:
             self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        # ATR range parameters
+        if not isinstance(self.atr_multiplier, Decimal):
+            self.atr_multiplier = Decimal(str(self.atr_multiplier))
+        if not isinstance(self.fallback_range_pct, Decimal):
+            self.fallback_range_pct = Decimal(str(self.fallback_range_pct))
+        # Convert mode string to enum if needed
+        if isinstance(self.mode, str):
+            self.mode = StrategyMode(self.mode)
 
         self._validate()
 
