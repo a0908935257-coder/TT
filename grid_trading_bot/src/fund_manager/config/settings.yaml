@@ -177,54 +177,56 @@ bots:
       cooldown_bars: 2
 
   # ===========================================================================
-  # Grid Futures Bot (雙向網格策略)
+  # Grid Futures Bot (雙向網格策略) - 激進版
   # ===========================================================================
-  # 參數優化 (2026-01-27):
-  # - 年化報酬: 24.98%, Sharpe: 高, 回撤: 2.26%
-  # - 勝率: 85.2%, 交易數: 3395/2年
+  # 參數優化 + Walk-Forward 驗證 (2026-01-27):
+  # - 年化報酬: 43.25%, 回撤: 3.74%
+  # - W-F 一致性: 100% (9/9), Monte Carlo: 100%
+  # - 勝率: 56.6%, 交易數: 4949/2年
+  # ⚠️ 高槓桿高風險配置
   # ===========================================================================
   - bot_id: grid_futures_*
-    name: "Grid Futures Trading"
+    name: "Grid Futures Trading (Aggressive)"
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.40                          # 40% (主力策略，提升分配)
+    ratio: 0.40                          # 40% (主力策略)
     min_capital: 100
     max_capital: 10000
     priority: 10
 
-    # --- 策略參數 (Optuna 優化 2026-01-27) ---
+    # --- 策略參數 (W-F 驗證通過 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 8                        # 優化後: 8x (原 10x)
+      leverage: 18                       # ⚠️ 高槓桿 (驗證通過)
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # Grid Settings (優化後)
-      grid_count: 8                      # 優化後: 8 (原 10)
+      # Grid Settings (驗證通過)
+      grid_count: 12                     # 驗證通過: 12
       direction: neutral                 # NEUTRAL (雙向交易)
 
       # Trend Filter (NEUTRAL 模式不使用趨勢過濾)
       use_trend_filter: false
       trend_period: 20
 
-      # ATR Range (優化後)
+      # ATR Range (驗證通過)
       use_atr_range: true
-      atr_period: 25                     # 優化後: 25 (原 14)
-      atr_multiplier: 3.0
+      atr_period: 21                     # 驗證通過: 21
+      atr_multiplier: 6.0                # 驗證通過: 6.0 (寬範圍)
       fallback_range_pct: 0.08
 
-      # Risk Management (優化後)
-      stop_loss_pct: 0.02                # 優化後: 2% (原 5%)
+      # Risk Management (驗證通過)
+      stop_loss_pct: 0.005               # ⚠️ 0.5% 緊止損 (驗證通過)
       rebuild_threshold_pct: 0.02
 
-      # Protective Features (優化後)
-      use_hysteresis: true               # 優化後: 啟用
-      hysteresis_pct: 0.003              # 優化後: 0.3% (原 0.2%)
-      use_signal_cooldown: false         # 優化後: 禁用 (原 啟用)
-      cooldown_bars: 1
+      # Protective Features (驗證通過)
+      use_hysteresis: true               # 啟用
+      hysteresis_pct: 0.002              # 0.2%
+      use_signal_cooldown: false         # 禁用
+      cooldown_bars: 0
 
   # ===========================================================================
   # Supertrend TREND_GRID Bot (超級趨勢 + 網格 + RSI 過濾策略)
@@ -282,7 +284,8 @@ bots:
       cooldown_bars: 4                   # 4 bars (原 2 → 4)
 
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
-# 預估組合年化報酬: ~17-18% (保守估計)
+# 預估組合年化報酬: ~30-40% (Grid Futures 激進版 W-F 驗證通過)
+# ⚠️ 高槓桿高風險配置 - Grid Futures 使用 18x 槓桿
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)

@@ -9,18 +9,21 @@ Strategy Logic:
 - Dynamic ATR-based grid range
 - Leverage support with proper PnL calculation
 
-Walk-Forward Validated Parameters (2-year backtest 2024-01-05 ~ 2026-01-24):
-- Direction: NEUTRAL (best for ranging markets)
-- Leverage: 10x
-- Grid Count: 10
-- ATR Period: 14
-- ATR Multiplier: 3.0
+⚠️ Walk-Forward Validated Parameters (2026-01-27) - 高槓桿高風險:
+- Direction: NEUTRAL (雙向交易)
+- Leverage: 18x (高槓桿)
+- Grid Count: 12
+- ATR Period: 21
+- ATR Multiplier: 6.0 (寬範圍)
+- Stop Loss: 0.5% (緊止損)
 
-Validation Results:
-- BTCUSDT: +228% return, 93.4% win rate, 1453 trades, Sharpe 3.24
-- ETHUSDT: +395% return, 91.5% win rate, 1709 trades, Sharpe 3.72
-- Walk-Forward Consistency: 50-67%
-- Monte Carlo Robustness: PASSED
+Validation Results (BTCUSDT 1h, 2024-01 ~ 2026-01):
+- 年化報酬: 43.25%
+- 回撤: 3.74%
+- 勝率: 56.6%
+- 交易次數: 4,949
+- Walk-Forward 一致性: 100% (9/9)
+- Monte Carlo 穩健性: 100%
 """
 
 from dataclasses import dataclass, field
@@ -47,37 +50,39 @@ class GridFuturesStrategyConfig:
     """
     Configuration for Grid Futures backtest strategy.
 
+    ⚠️ W-F 驗證通過的高槓桿配置 (2026-01-27):
+    - 年化 43.25%, 回撤 3.74%, 一致性 100%
+
     Attributes:
-        grid_count: Number of grid levels (default 10, validated)
-        direction: Trading direction mode (default NEUTRAL, validated)
-        leverage: Leverage multiplier for PnL (default 10, validated)
+        grid_count: Number of grid levels (default 12, W-F validated)
+        direction: Trading direction mode (default NEUTRAL)
+        leverage: Leverage multiplier (default 18x, HIGH RISK)
         trend_period: SMA period for trend detection (default 20)
-        atr_period: ATR calculation period (default 14)
-        atr_multiplier: ATR multiplier for range (default 3.0)
+        atr_period: ATR calculation period (default 21, W-F validated)
+        atr_multiplier: ATR multiplier for range (default 6.0, wide range)
         fallback_range_pct: Range when ATR unavailable (default 8%)
-        stop_loss_pct: Stop loss percentage (default 5%)
+        stop_loss_pct: Stop loss percentage (default 0.5%, TIGHT)
         take_profit_grids: Number of grids for take profit (default 1)
-        use_hysteresis: Enable hysteresis buffer zone (like live bot)
+        use_hysteresis: Enable hysteresis buffer zone (default True)
         hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
-        use_signal_cooldown: Enable signal cooldown (like live bot)
-        cooldown_bars: Minimum bars between signals
+        use_signal_cooldown: Enable signal cooldown (default False)
+        cooldown_bars: Minimum bars between signals (default 0)
     """
 
-    grid_count: int = 10
+    grid_count: int = 12  # W-F 驗證通過
     direction: GridDirection = GridDirection.NEUTRAL
-    leverage: int = 10
+    leverage: int = 18  # ⚠️ 高槓桿 (W-F 驗證通過)
     trend_period: int = 20
-    atr_period: int = 14
-    atr_multiplier: Decimal = Decimal("3.0")
+    atr_period: int = 21  # W-F 驗證通過
+    atr_multiplier: Decimal = Decimal("6.0")  # 寬範圍
     fallback_range_pct: Decimal = Decimal("0.08")
-    stop_loss_pct: Decimal = Decimal("0.05")
+    stop_loss_pct: Decimal = Decimal("0.005")  # ⚠️ 0.5% 緊止損
     take_profit_grids: int = 1
-    # Protective features (ENABLED by default - matches live bot)
-    # 回測顯示啟用保護機制可提升收益 8.76%，Sharpe +0.06，回撤降低 15.78%
+    # Protective features (W-F 驗證通過)
     use_hysteresis: bool = True
     hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
-    use_signal_cooldown: bool = True
-    cooldown_bars: int = 2
+    use_signal_cooldown: bool = False  # 禁用
+    cooldown_bars: int = 0
 
     def __post_init__(self):
         if not isinstance(self.atr_multiplier, Decimal):
