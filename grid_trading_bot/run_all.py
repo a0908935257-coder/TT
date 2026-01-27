@@ -570,7 +570,7 @@ async def shutdown():
         try:
             await _discord_bot.stop_bot()
             print("  ✓ Discord Bot 已關閉")
-        except:
+        except Exception:
             pass
 
     # Stop Signal Coordinator
@@ -579,7 +579,7 @@ async def shutdown():
             await _signal_coordinator.stop()
             SignalCoordinator.reset_instance()
             print("  ✓ 訊號協調器已關閉")
-        except:
+        except Exception:
             pass
 
     # Stop Fund Manager
@@ -588,7 +588,7 @@ async def shutdown():
             await _fund_manager.stop()
             FundManager.reset_instance()
             print("  ✓ 資金管理系統已關閉")
-        except:
+        except Exception:
             pass
 
     # Stop Master (this stops all bots)
@@ -597,7 +597,7 @@ async def shutdown():
             await _master.stop()
             Master.reset_instance()
             print("  ✓ Master 已關閉")
-        except:
+        except Exception:
             pass
 
     # Disconnect exchange
@@ -605,14 +605,14 @@ async def shutdown():
         try:
             await _exchange.disconnect()
             print("  ✓ 交易所連接已關閉")
-        except:
+        except Exception:
             pass
 
     # Close notifier
     if _notifier:
         try:
             await _notifier.close()
-        except:
+        except Exception:
             pass
 
     print("\n系統已完全關閉")
@@ -751,7 +751,7 @@ Discord 指令:
                 message=f"已啟動 {len(bots)} 隻機器人\n\n"
                         f"使用 /bot list 查看狀態",
             )
-        except:
+        except Exception:
             pass
 
         # Wait for shutdown signal

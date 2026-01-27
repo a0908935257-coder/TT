@@ -442,20 +442,20 @@ async def main() -> None:
         if _master:
             try:
                 await _master.stop()
-            except:
+            except Exception:
                 pass
             Master.reset_instance()
 
         if _exchange:
             try:
                 await _exchange.disconnect()
-            except:
+            except Exception:
                 pass
 
         if _notifier:
             try:
                 await _notifier.close()
-            except:
+            except Exception:
                 pass
 
         print("主控台已關閉")

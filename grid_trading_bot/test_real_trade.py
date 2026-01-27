@@ -163,7 +163,7 @@ async def test_real_trade(client: ExchangeClient):
                 print(f"\n   Canceling stop order...")
                 await client.futures.cancel_algo_order(SYMBOL, algo_id=str(stop_order_id))
                 print(f"   ✓ Stop order cancelled")
-            except:
+            except Exception:
                 pass
 
         # Try to close position

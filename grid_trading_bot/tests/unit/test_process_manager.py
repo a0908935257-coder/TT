@@ -366,7 +366,7 @@ sys.exit(0)
             yield f.name
         try:
             os.unlink(f.name)
-        except:
+        except Exception:
             pass
 
     def test_spawn_real_process(self, manager, temp_script):
