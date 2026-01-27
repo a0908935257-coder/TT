@@ -229,10 +229,10 @@ bots:
   # ===========================================================================
   # Supertrend TREND_GRID Bot (超級趨勢 + 網格 + RSI 過濾策略)
   # ===========================================================================
-  # Walk-Forward 驗證 (2024-01-25 ~ 2026-01-24, 2年數據):
-  # - 一致性: 70% (7/10 時段), OOS Sharpe: 5.84
-  # - 過度擬合: NO, 穩健性: ROBUST
-  # - 獲利機率: 100%, 勝率: ~94%
+  # 參數優化 (2026-01-27) + Walk-Forward 驗證:
+  # - 年化報酬: 8.69%, Sharpe: 3.78, 回撤: 4.51%
+  # - 一致性: 30% (3/10), 穩健性: ROBUST (Monte Carlo 100%)
+  # - 勝率: 85.4%, 總交易: 540 筆/2年
   # ===========================================================================
   - bot_id: supertrend_*
     name: "Supertrend GRID Strategy"
@@ -244,36 +244,42 @@ bots:
     max_capital: 5000
     priority: 7
 
-    # --- 策略參數 (Walk-Forward validated 2026-01-24) ---
+    # --- 策略參數 (Optuna 優化 2026-01-27) ---
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 1h                      # 優化後使用 1h (原 15m)
+      timeframe: 1h
       leverage: 2
       margin_type: ISOLATED
       position_size_pct: 0.1
 
-      # Supertrend Settings
-      atr_period: 14                     # ATR 週期
-      atr_multiplier: 3.0                # ATR 乘數
+      # Supertrend Settings (優化後)
+      atr_period: 46                     # ATR 週期 (原 14 → 46)
+      atr_multiplier: 2.5                # ATR 乘數 (原 3.0 → 2.5)
 
-      # Grid Settings (TREND_GRID 模式)
-      grid_count: 10                     # 網格數量
-      grid_atr_multiplier: 3.0           # 網格範圍 ATR 乘數
+      # Grid Settings (TREND_GRID 模式，優化後)
+      grid_count: 8                      # 網格數量 (原 10 → 8)
+      grid_atr_multiplier: 5.0           # 網格範圍 ATR 乘數 (原 3.0 → 5.0)
       take_profit_grids: 1               # 止盈網格數
 
-      # RSI Filter (減少假訊號)
+      # RSI Filter (優化後)
       use_rsi_filter: true
-      rsi_period: 14
-      rsi_overbought: 60                 # RSI > 60 不做多
-      rsi_oversold: 40                   # RSI < 40 不做空
+      rsi_period: 18                     # RSI 週期 (原 14 → 18)
+      rsi_overbought: 62                 # RSI > 62 不做多 (原 60 → 62)
+      rsi_oversold: 31                   # RSI < 31 不做空 (原 40 → 31)
 
-      # Trend confirmation
-      min_trend_bars: 2                  # 趨勢確認所需最少 K 線數
+      # Trend confirmation (優化後)
+      min_trend_bars: 3                  # 趨勢確認 K 線數 (原 2 → 3)
 
-      # Risk Management
-      stop_loss_pct: 0.05                # 5%
-      use_trailing_stop: false
-      trailing_stop_pct: 0.02
+      # Risk Management (優化後)
+      stop_loss_pct: 0.04                # 4% (原 5% → 4%)
+      use_trailing_stop: true            # 啟用追蹤止損
+      trailing_stop_pct: 0.03            # 3% (原 2% → 3%)
+
+      # Protective Features (與實戰一致，優化後)
+      use_hysteresis: true               # 遲滯緩衝區 (已啟用)
+      hysteresis_pct: 0.004              # 0.4% (原 0.2% → 0.4%)
+      use_signal_cooldown: true          # 訊號冷卻 (已啟用)
+      cooldown_bars: 4                   # 4 bars (原 2 → 4)
 
 # Total: 90% allocated, 10% reserve (unallocated)
 

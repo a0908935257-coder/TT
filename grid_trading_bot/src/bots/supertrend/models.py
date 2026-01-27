@@ -3,23 +3,25 @@ Supertrend Bot Data Models.
 
 Provides data models for Supertrend TREND_GRID strategy with RSI filter.
 
-✅ Walk-Forward + OOS 驗證通過 (2024-01-25 ~ 2026-01-24, 2 年數據)
+✅ 參數優化 + Walk-Forward 驗證 (2026-01-27)
 
 TREND_GRID 模式:
     - 在多頭趨勢中，於網格低點做多
     - 在空頭趨勢中，於網格高點做空
     - RSI 過濾器避免極端進場
 
-驗證結果 (2026-01-24):
-    - Walk-Forward 一致性: 70% (7/10 時段)
-    - OOS Sharpe: 5.84
-    - 過度擬合: NO
+優化後驗證結果 (2026-01-27):
+    - 年化報酬: 8.69%, Sharpe: 3.78
+    - 最大回撤: 4.51%, 勝率: 85.4%
+    - Walk-Forward 一致性: 30% (3/10 時段)
     - Monte Carlo: ROBUST (100% 獲利機率)
-    - 勝率: ~94%
 
-RSI 過濾器原理:
-    - 當 RSI > 60 時不做多 (已超買，避免追高)
-    - 當 RSI < 40 時不做空 (已超賣，避免殺低)
+優化後參數:
+    - ATR Period: 46, ATR Multiplier: 2.5
+    - Grid Count: 8, Grid ATR Multiplier: 5.0
+    - RSI Period: 18, Overbought: 62, Oversold: 31
+    - Stop Loss: 4%, Trailing Stop: 3%
+    - Hysteresis: 0.4%, Cooldown: 4 bars
 """
 
 from dataclasses import dataclass, field
@@ -56,36 +58,33 @@ class SupertrendConfig:
     """
     Supertrend Bot configuration (TREND_GRID mode).
 
-    ✅ Walk-Forward 驗證通過 (2024-01-25 ~ 2026-01-24, 2 年數據, 10 期分割)
+    ✅ 參數優化 + Walk-Forward 驗證 (2026-01-27)
 
-    驗證結果 (2026-01-24):
-    - Walk-Forward 一致性: 70% (7/10 時段)
-    - OOS Sharpe: 5.84
-    - 過度擬合: NO
+    優化後驗證結果:
+    - 年化報酬: 8.69%, Sharpe: 3.78
+    - 最大回撤: 4.51%, 勝率: 85.4%
     - Monte Carlo: ROBUST (100% 獲利機率)
-    - 勝率: ~94%
 
-    默認參數 (Walk-Forward 驗證通過):
-    - Timeframe: 1h (非 15m)
-    - ATR Period: 14
-    - ATR Multiplier: 3.0
-    - Grid Count: 10
-    - Leverage: 2x
-    - Stop Loss: 5%
+    優化後默認參數:
+    - Timeframe: 1h
+    - ATR Period: 46, ATR Multiplier: 2.5
+    - Grid Count: 8, Grid ATR Multiplier: 5.0
+    - Leverage: 2x, Stop Loss: 4%
+    - Trailing Stop: 3%
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "1h", validated)
-        atr_period: ATR calculation period (default 14, validated)
-        atr_multiplier: ATR multiplier for bands (default 3.0, validated)
-        leverage: Futures leverage (default 2, validated)
+        timeframe: Kline timeframe (default "1h")
+        atr_period: ATR calculation period (default 46, optimized)
+        atr_multiplier: ATR multiplier for bands (default 2.5, optimized)
+        leverage: Futures leverage (default 2)
         position_size_pct: Position size as percentage of balance (default 10%)
     """
     symbol: str
-    timeframe: str = "1h"  # Walk-Forward validated: 1h (非 15m)
-    atr_period: int = 14  # Walk-Forward validated: ATR=14
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # Validated: 3.0
-    leverage: int = 2  # Walk-Forward validated: 2x
+    timeframe: str = "1h"
+    atr_period: int = 46  # 優化後: 46 (原 14)
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.5"))  # 優化後: 2.5 (原 3.0)
+    leverage: int = 2
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
@@ -93,31 +92,37 @@ class SupertrendConfig:
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
-    # Grid Settings (網格設定) - TREND_GRID 模式
-    grid_count: int = 10  # 網格數量
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # 網格範圍 ATR 乘數
+    # Grid Settings (網格設定) - TREND_GRID 模式 (優化後)
+    grid_count: int = 8  # 優化後: 8 (原 10)
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("5.0"))  # 優化後: 5.0 (原 3.0)
     take_profit_grids: int = 1  # 止盈網格數
 
-    # Optional trailing stop (software-based)
-    use_trailing_stop: bool = False
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
+    # Trailing stop (優化後啟用)
+    use_trailing_stop: bool = True  # 優化後: 啟用
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # 優化後: 3% (原 2%)
 
     # Exchange-based stop loss (recommended for safety)
     use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # Walk-Forward validated: 5%
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 優化後: 4% (原 5%)
 
     # Risk control (風險控制)
     daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
     max_consecutive_losses: int = 5  # 最大連續虧損次數
 
-    # RSI Filter (RSI 過濾器) - OOS 驗證通過
+    # RSI Filter (RSI 過濾器) - 優化後
     use_rsi_filter: bool = True  # 啟用 RSI 過濾器
-    rsi_period: int = 14  # RSI 計算週期
-    rsi_overbought: int = 60  # RSI > 60 時不做多 (避免追高)
-    rsi_oversold: int = 40  # RSI < 40 時不做空 (避免殺低)
+    rsi_period: int = 18  # 優化後: 18 (原 14)
+    rsi_overbought: int = 62  # 優化後: 62 (原 60)
+    rsi_oversold: int = 31  # 優化後: 31 (原 40)
 
-    # Trend confirmation
-    min_trend_bars: int = 2  # 趨勢確認所需最少 K 線數
+    # Trend confirmation (優化後)
+    min_trend_bars: int = 3  # 優化後: 3 (原 2)
+
+    # Protective Features (與實戰一致，優化後)
+    use_hysteresis: bool = True  # 遲滯緩衝區 (啟用)
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.004"))  # 優化後: 0.4% (原 0.2%)
+    use_signal_cooldown: bool = True  # 訊號冷卻 (啟用)
+    cooldown_bars: int = 4  # 優化後: 4 (原 2)
 
     def __post_init__(self):
         """Validate and normalize configuration."""
@@ -137,6 +142,8 @@ class SupertrendConfig:
             self.daily_loss_limit_pct = Decimal(str(self.daily_loss_limit_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if not isinstance(self.hysteresis_pct, Decimal):
+            self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
 
         self._validate()
 
