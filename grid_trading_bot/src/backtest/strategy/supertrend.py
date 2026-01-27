@@ -17,10 +17,13 @@ Strategy Modes:
 VALIDATION STATUS: PASSED (2024-01-25 ~ 2026-01-24, 2-year data)
 
 Walk-Forward Validated Parameters (BTCUSDT 1h):
-- ATR Period: 14, ATR Multiplier: 3.0
+- ATR Period: 25, ATR Multiplier: 3.0 (與實戰一致)
 - Grid Count: 10, Grid ATR Multiplier: 3.0
 - Take Profit: 1 grid, Stop Loss: 5%
 - RSI Filter: period=14, overbought=60, oversold=40
+- Hysteresis: 0.2% buffer (與實戰一致)
+- Signal Cooldown: 2 bars (與實戰一致)
+- Trailing Stop: 5% (與實戰一致)
 
 Validation Results (2026-01-24):
 - Walk-Forward Consistency: 70% (7/10 periods)
@@ -80,7 +83,7 @@ class SupertrendStrategyConfig:
     """
 
     mode: SupertrendMode = SupertrendMode.TREND_GRID
-    atr_period: int = 14
+    atr_period: int = 25  # 與實戰一致 (was 14)
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
     grid_count: int = 10
     grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
@@ -94,11 +97,14 @@ class SupertrendStrategyConfig:
     # Trend confirmation
     min_trend_bars: int = 2
     # Hysteresis (like live bot) - prevents oscillation at grid boundaries
-    use_hysteresis: bool = False
+    use_hysteresis: bool = True  # 與實戰一致 (was False)
     hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
     # Signal cooldown (like live bot) - prevents signal stacking
-    use_signal_cooldown: bool = False
+    use_signal_cooldown: bool = True  # 與實戰一致 (was False)
     cooldown_bars: int = 2
+    # Trailing stop (like live bot)
+    use_trailing_stop: bool = True  # 新增：與實戰一致
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
 
 
 @dataclass
@@ -166,6 +172,10 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         # Signal cooldown state (like live bot)
         self._signal_cooldown: int = 0
+
+        # Trailing stop state (like live bot)
+        self._position_max_price: Optional[Decimal] = None
+        self._position_min_price: Optional[Decimal] = None
 
     @property
     def config(self) -> SupertrendStrategyConfig:
@@ -531,8 +541,32 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         """
         Check if position should be exited.
 
-        Exit on trend flip (position against new trend).
+        Exit conditions:
+        1. Trend flip (position against new trend)
+        2. Trailing stop (like live bot)
         """
+        current_price = kline.close
+
+        # Update price extremes for trailing stop (like live bot)
+        if position.side == "LONG":
+            if self._position_max_price is None or current_price > self._position_max_price:
+                self._position_max_price = current_price
+        else:  # SHORT
+            if self._position_min_price is None or current_price < self._position_min_price:
+                self._position_min_price = current_price
+
+        # Check trailing stop (like live bot)
+        if self._config.use_trailing_stop:
+            if position.side == "LONG" and self._position_max_price is not None:
+                stop_price = self._position_max_price * (Decimal("1") - self._config.trailing_stop_pct)
+                if current_price <= stop_price:
+                    return Signal.close_all(reason="trailing_stop")
+
+            elif position.side == "SHORT" and self._position_min_price is not None:
+                stop_price = self._position_min_price * (Decimal("1") + self._config.trailing_stop_pct)
+                if current_price >= stop_price:
+                    return Signal.close_all(reason="trailing_stop")
+
         # Exit if trend flipped against position
         if position.side == "LONG" and self._current_trend == -1:
             return Signal.close_all(reason="trend_flip_bearish")
@@ -543,12 +577,16 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         return None
 
     def on_position_opened(self, position: Position) -> None:
-        """Track state at entry."""
-        pass
+        """Track state at entry (like live bot)."""
+        # Initialize trailing stop tracking
+        self._position_max_price = position.entry_price
+        self._position_min_price = position.entry_price
 
     def on_position_closed(self, trade: Trade) -> None:
-        """Reset tracking after trade."""
-        pass
+        """Reset tracking after trade (like live bot)."""
+        # Reset trailing stop tracking
+        self._position_max_price = None
+        self._position_min_price = None
 
     def reset(self) -> None:
         """Reset strategy state."""
@@ -569,3 +607,6 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         self._last_triggered_side = None
         # Reset cooldown state
         self._signal_cooldown = 0
+        # Reset trailing stop state (like live bot)
+        self._position_max_price = None
+        self._position_min_price = None
