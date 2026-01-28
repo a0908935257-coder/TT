@@ -11,17 +11,15 @@ Grid Futures Bot Runner.
 - OOS/IS Sharpe: 0.72
 - W-F 一致性: 88.9% (8/9)
 
-⚠️ 超高槓桿風險驗證參數 (2026-01-28):
-- leverage: 42x (⚠️ 超高槓桿)
-- direction: NEUTRAL (雙向交易)
-- grid_count: 18
-- atr_period: 28
-- atr_multiplier: 9.5 (寬範圍)
-- hysteresis_pct: 0.1%
-- use_signal_cooldown: true
+⚠️ 參數來自 settings.yaml (單一來源):
+- 所有策略參數從 settings.yaml 讀取
+- 支援環境變數覆蓋 (例: GRID_FUTURES_LEVERAGE=20)
 
 Usage:
     python run_grid_futures.py
+
+    # 覆蓋特定參數
+    GRID_FUTURES_LEVERAGE=20 python run_grid_futures.py
 """
 
 import asyncio
@@ -40,6 +38,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.grid_futures import GridFuturesBot, GridFuturesConfig, GridDirection
+from src.config import load_strategy_config
 
 # Load environment variables
 load_dotenv()
@@ -52,30 +51,28 @@ _bot: GridFuturesBot | None = None
 
 def get_config_from_env() -> GridFuturesConfig:
     """
-    從環境變數讀取配置。
+    從 settings.yaml 讀取配置，支援環境變數覆蓋。
 
-    ✅ Walk-Forward 驗證通過的默認參數 (2026-01-28) - 積極策略:
-    - leverage: 42x (⚠️ 超高槓桿)
-    - direction: NEUTRAL (雙向交易)
-    - grid_count: 18
-    - atr_period: 28
-    - atr_multiplier: 9.5 (寬範圍)
-    - trend_period: 24
-    - hysteresis_pct: 0.1%
-    - use_signal_cooldown: true
+    單一來源設計：
+    - 所有策略參數從 settings.yaml 讀取
+    - 支援環境變數覆蓋 (格式: GRID_FUTURES_{PARAM_NAME})
 
-    驗證結果:
-    - 年化報酬: 45.18%
-    - 最大回撤: 3.79%
-    - OOS/IS Sharpe: 0.72
-    - W-F 一致性: 88.9% (8/9)
+    Example:
+        # 使用 YAML 參數
+        python run_grid_futures.py
+
+        # 覆蓋特定參數
+        GRID_FUTURES_LEVERAGE=20 python run_grid_futures.py
     """
-    # 資金分配
+    # 從 settings.yaml 加載參數（支援環境變數覆蓋）
+    params = load_strategy_config("grid_futures")
+
+    # 資金分配（環境變數覆蓋）
     max_capital_str = os.getenv('GRID_FUTURES_MAX_CAPITAL', '')
     max_capital = Decimal(max_capital_str) if max_capital_str else None
 
-    # 方向模式 (默認 NEUTRAL - W-F 驗證通過)
-    direction_str = os.getenv('GRID_FUTURES_DIRECTION', 'neutral').lower()
+    # 方向模式
+    direction_str = str(params.get('direction', 'neutral')).lower()
     direction_map = {
         'long_only': GridDirection.LONG_ONLY,
         'short_only': GridDirection.SHORT_ONLY,
@@ -85,40 +82,40 @@ def get_config_from_env() -> GridFuturesConfig:
     direction = direction_map.get(direction_str, GridDirection.NEUTRAL)
 
     return GridFuturesConfig(
-        # 基本設定 (W-F 驗證通過 - 積極策略)
-        symbol=os.getenv('GRID_FUTURES_SYMBOL', 'BTCUSDT'),
-        timeframe=os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-        leverage=int(os.getenv('GRID_FUTURES_LEVERAGE', '42')),  # ⚠️ 超高槓桿 (W-F 驗證通過)
-        margin_type=os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
+        # 基本設定
+        symbol=params.get('symbol', 'BTCUSDT'),
+        timeframe=params.get('timeframe', '1h'),
+        leverage=int(params.get('leverage', 42)),
+        margin_type=params.get('margin_type', 'ISOLATED'),
 
-        # 網格設定 (W-F 驗證通過: 18 格, NEUTRAL)
-        grid_count=int(os.getenv('GRID_FUTURES_COUNT', '18')),
+        # 網格設定
+        grid_count=int(params.get('grid_count', 18)),
         direction=direction,
 
-        # 趨勢過濾 (W-F 驗證通過: 24 週期)
-        use_trend_filter=os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
-        trend_period=int(os.getenv('GRID_FUTURES_TREND_PERIOD', '24')),
+        # 趨勢過濾
+        use_trend_filter=bool(params.get('use_trend_filter', False)),
+        trend_period=int(params.get('trend_period', 24)),
 
-        # 動態 ATR 範圍 (W-F 驗證通過: 28 週期, 9.5 乘數)
-        use_atr_range=os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-        atr_period=int(os.getenv('GRID_FUTURES_ATR_PERIOD', '28')),
-        atr_multiplier=Decimal(os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '9.5')),
-        fallback_range_pct=Decimal(os.getenv('GRID_FUTURES_RANGE_PCT', '0.08')),
+        # 動態 ATR 範圍
+        use_atr_range=bool(params.get('use_atr_range', True)),
+        atr_period=int(params.get('atr_period', 28)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 9.5))),
+        fallback_range_pct=Decimal(str(params.get('fallback_range_pct', 0.08))),
 
-        # 倉位管理 (10% 單次)
+        # 倉位管理
         max_capital=max_capital,
-        position_size_pct=Decimal(os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1')),
-        max_position_pct=Decimal(os.getenv('GRID_FUTURES_MAX_POSITION', '0.5')),
+        position_size_pct=Decimal(str(params.get('position_size_pct', 0.1))),
+        max_position_pct=Decimal(str(params.get('max_position_pct', 0.5))),
 
-        # 風險管理 (W-F 驗證通過: 0.5% 緊止損)
-        stop_loss_pct=Decimal(os.getenv('GRID_FUTURES_STOP_LOSS', '0.005')),
-        rebuild_threshold_pct=Decimal(os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02')),
+        # 風險管理
+        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.005))),
+        rebuild_threshold_pct=Decimal(str(params.get('rebuild_threshold_pct', 0.02))),
 
-        # Protective features (W-F 驗證通過 - 積極策略)
-        use_hysteresis=os.getenv('GRID_FUTURES_USE_HYSTERESIS', 'true').lower() == 'true',
-        hysteresis_pct=Decimal(os.getenv('GRID_FUTURES_HYSTERESIS_PCT', '0.001')),
-        use_signal_cooldown=os.getenv('GRID_FUTURES_USE_COOLDOWN', 'true').lower() == 'true',
-        cooldown_bars=int(os.getenv('GRID_FUTURES_COOLDOWN_BARS', '0')),
+        # Protective features
+        use_hysteresis=bool(params.get('use_hysteresis', True)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.001))),
+        use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
+        cooldown_bars=int(params.get('cooldown_bars', 0)),
     )
 
 

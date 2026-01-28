@@ -34,6 +34,7 @@ from src.master import Master, MasterConfig, BotType
 from src.notification import NotificationManager
 from src.fund_manager import FundManager, SignalCoordinator, ConflictResolution
 from src.fund_manager.models.config import FundManagerConfig
+from src.config import load_strategy_config
 
 logger = get_logger(__name__)
 
@@ -49,27 +50,6 @@ def _load_yaml_config() -> dict:
         with open("src/fund_manager/config/settings.yaml", "r") as f:
             _yaml_config = yaml.safe_load(f)
     return _yaml_config
-
-
-def _get_bot_strategy_params(bot_pattern: str) -> dict:
-    """
-    Get strategy parameters for a bot by its pattern.
-
-    Args:
-        bot_pattern: Bot ID pattern (e.g., "bollinger_*", "rsi_*")
-
-    Returns:
-        Strategy parameters dict from settings.yaml
-    """
-    config = _load_yaml_config()
-    bots = config.get("bots", [])
-
-    for bot in bots:
-        if bot.get("bot_id") == bot_pattern:
-            return bot.get("strategy_params", {})
-
-    logger.warning(f"Bot pattern {bot_pattern} not found in settings.yaml")
-    return {}
 
 # Global references for cleanup
 _master: Master | None = None
@@ -263,201 +243,48 @@ def create_notifier() -> NotificationManager:
 
 def get_bollinger_config() -> dict:
     """
-    Get Bollinger BB_TREND_GRID Bot config from settings.yaml.
+    Get Bollinger Bot config from settings.yaml (單一來源).
 
-    ✅ Walk-Forward 驗證通過 (80% 一致性, OOS Sharpe 6.56):
-    - BB_TREND_GRID 策略 (BB 中軌趨勢 + 網格交易)
-    - BB_PERIOD=20, BB_STD=2.0
-    - Grid: 10 格, 4% 範圍
-    - leverage: 2x
-    - 止損: 5%
+    使用 strategy_loader 從 settings.yaml 讀取參數，支援環境變數覆蓋。
     """
-    params = _get_bot_strategy_params("bollinger_*")
-    return {
-        "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "1h"),
-        "leverage": params.get("leverage", 2),
-        "margin_type": params.get("margin_type", "ISOLATED"),
-        "position_size_pct": params.get("position_size_pct", 0.1),
-        "max_position_pct": params.get("max_position_pct", 0.5),
-        # Bollinger Bands (Walk-Forward validated)
-        "bb_period": params.get("bb_period", 20),
-        "bb_std": params.get("bb_std", 2.0),
-        # Grid parameters
-        "grid_count": params.get("grid_count", 10),
-        "grid_range_pct": params.get("grid_range_pct", 0.04),  # 4% range
-        "take_profit_grids": params.get("take_profit_grids", 1),
-        # Risk management
-        "stop_loss_pct": params.get("stop_loss_pct", 0.05),
-        "rebuild_threshold_pct": params.get("rebuild_threshold_pct", 0.02),
-        # BBW filter
-        "bbw_lookback": params.get("bbw_lookback", 200),
-        "bbw_threshold_pct": params.get("bbw_threshold_pct", 20),
-        # Protective features (disabled by default for Bollinger)
-        "use_hysteresis": params.get("use_hysteresis", False),
-        "hysteresis_pct": params.get("hysteresis_pct", 0.002),
-        "use_signal_cooldown": params.get("use_signal_cooldown", False),
-        "cooldown_bars": params.get("cooldown_bars", 2),
-        # max_capital is managed by FundManager
-    }
+    return load_strategy_config("bollinger")
 
 
 def get_rsi_config() -> dict:
     """
-    Get RSI Momentum Bot config from settings.yaml.
-
-    ✅ Walk-Forward 驗證通過 (88% 一致性, OOS 效率 140%):
-    - RSI Period: 21
-    - Entry Level: 50, Momentum Threshold: 5
-    - Leverage: 2x (降低風險)
-    - Stop Loss: 4%, Take Profit: 8%
+    Get RSI Bot config.
 
     NOTE: This bot is replaced by RSI-Grid. Kept for backward compatibility.
+    Returns RSI-Grid config instead.
     """
-    params = _get_bot_strategy_params("rsi_*")
-    return {
-        "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "15m"),
-        "rsi_period": params.get("rsi_period", 21),
-        "entry_level": params.get("entry_level", 50),
-        "momentum_threshold": params.get("momentum_threshold", 5),
-        "leverage": params.get("leverage", 2),
-        "margin_type": params.get("margin_type", "ISOLATED"),
-        # max_capital is managed by FundManager
-        "position_size_pct": params.get("position_size_pct", 0.1),
-        "stop_loss_pct": params.get("stop_loss_pct", 0.04),
-        "take_profit_pct": params.get("take_profit_pct", 0.08),
-    }
+    return get_rsi_grid_config()
 
 
 def get_rsi_grid_config() -> dict:
     """
-    Get RSI-Grid Hybrid Bot config from settings.yaml.
+    Get RSI-Grid Hybrid Bot config from settings.yaml (單一來源).
 
-    目標性能:
-    - Target Sharpe > 3.0
-    - Walk-Forward Consistency > 90%
-    - Win Rate > 70%
-    - Max Drawdown < 5%
-
-    策略設計:
-    - RSI Zone Filter: Oversold=LONG, Overbought=SHORT
-    - SMA Trend Filter: Direction bias
-    - ATR-based Grid: Dynamic entry levels
+    使用 strategy_loader 從 settings.yaml 讀取參數，支援環境變數覆蓋。
     """
-    params = _get_bot_strategy_params("rsi_grid_*")
-    return {
-        "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "15m"),
-        "leverage": params.get("leverage", 2),
-        "margin_type": params.get("margin_type", "ISOLATED"),
-        # max_capital is managed by FundManager
-        "position_size_pct": params.get("position_size_pct", 0.1),
-        "max_position_pct": params.get("max_position_pct", 0.5),
-        # RSI Parameters
-        "rsi_period": params.get("rsi_period", 14),
-        "oversold_level": params.get("oversold_level", 30),
-        "overbought_level": params.get("overbought_level", 70),
-        # Grid Parameters
-        "grid_count": params.get("grid_count", 10),
-        "atr_period": params.get("atr_period", 14),
-        "atr_multiplier": params.get("atr_multiplier", 3.0),
-        # Trend Filter
-        "trend_sma_period": params.get("trend_sma_period", 20),
-        "use_trend_filter": params.get("use_trend_filter", True),
-        # Risk Management
-        "stop_loss_atr_mult": params.get("stop_loss_atr_mult", 1.5),
-        "max_stop_loss_pct": params.get("max_stop_loss_pct", 0.03),
-        "take_profit_grids": params.get("take_profit_grids", 1),
-        "max_positions": params.get("max_positions", 5),
-    }
+    return load_strategy_config("rsi_grid")
 
 
 def get_grid_futures_config() -> dict:
     """
-    Get Grid Futures Bot config from settings.yaml.
+    Get Grid Futures Bot config from settings.yaml (單一來源).
 
-    ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據)
-
-    驗證結果 - 最佳配置:
-    - Walk-Forward 一致性: 100%, Sharpe 8.33
-    - 報酬: +376.5% (2 年), 勝率: 83.6%
-    - 參數: leverage=10, direction=NEUTRAL
-
-    Protective Features (已啟用):
-    - use_hysteresis: true (回測顯示提升收益 8.76%)
-    - use_signal_cooldown: true (回撤降低 15.78%)
+    使用 strategy_loader 從 settings.yaml 讀取參數，支援環境變數覆蓋。
     """
-    params = _get_bot_strategy_params("grid_futures_*")
-    return {
-        "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "1h"),
-        "leverage": params.get("leverage", 10),  # 回測驗證: 10x
-        "margin_type": params.get("margin_type", "ISOLATED"),
-        "grid_count": params.get("grid_count", 10),
-        "direction": params.get("direction", "neutral"),  # 回測驗證: NEUTRAL
-        "use_trend_filter": params.get("use_trend_filter", False),  # NEUTRAL 不用趨勢
-        "trend_period": params.get("trend_period", 20),
-        "use_atr_range": params.get("use_atr_range", True),
-        "atr_period": params.get("atr_period", 14),
-        "atr_multiplier": params.get("atr_multiplier", 3.0),
-        "fallback_range_pct": params.get("fallback_range_pct", 0.08),
-        # max_capital is managed by FundManager
-        "position_size_pct": params.get("position_size_pct", 0.1),
-        "max_position_pct": params.get("max_position_pct", 0.5),
-        "stop_loss_pct": params.get("stop_loss_pct", 0.05),
-        "rebuild_threshold_pct": params.get("rebuild_threshold_pct", 0.02),
-        # Protective Features (回測驗證: 啟用可提升表現)
-        "use_hysteresis": params.get("use_hysteresis", True),
-        "hysteresis_pct": params.get("hysteresis_pct", 0.002),
-        "use_signal_cooldown": params.get("use_signal_cooldown", True),
-        "cooldown_bars": params.get("cooldown_bars", 2),
-    }
+    return load_strategy_config("grid_futures")
 
 
 def get_supertrend_config() -> dict:
     """
-    Get Supertrend TREND_GRID Bot config from settings.yaml.
+    Get Supertrend Bot config from settings.yaml (單一來源).
 
-    ✅ Walk-Forward 驗證通過 (2024-01-25 ~ 2026-01-24, 2 年數據)
-
-    驗證結果 - TREND_GRID 模式:
-    - Walk-Forward 一致性: 70% (7/10 時段)
-    - OOS Sharpe: 5.84
-    - 過度擬合: NO, 穩健性: ROBUST
-    - 獲利機率: 100%, 勝率: ~94%
-
-    TREND_GRID 模式:
-    - 在多頭趨勢中，於網格低點做多
-    - 在空頭趨勢中，於網格高點做空
-    - RSI 過濾器避免極端進場
+    使用 strategy_loader 從 settings.yaml 讀取參數，支援環境變數覆蓋。
     """
-    params = _get_bot_strategy_params("supertrend_*")
-    return {
-        "symbol": params.get("symbol", "BTCUSDT"),
-        "timeframe": params.get("timeframe", "1h"),  # Walk-Forward validated: 1h
-        "leverage": params.get("leverage", 2),
-        "margin_type": params.get("margin_type", "ISOLATED"),
-        # Supertrend Settings
-        "atr_period": params.get("atr_period", 14),  # Walk-Forward validated
-        "atr_multiplier": params.get("atr_multiplier", 3.0),
-        # Grid Settings (TREND_GRID 模式)
-        "grid_count": params.get("grid_count", 10),
-        "grid_atr_multiplier": params.get("grid_atr_multiplier", 3.0),
-        "take_profit_grids": params.get("take_profit_grids", 1),
-        # RSI Filter (減少假訊號)
-        "use_rsi_filter": params.get("use_rsi_filter", True),
-        "rsi_period": params.get("rsi_period", 14),
-        "rsi_overbought": params.get("rsi_overbought", 60),
-        "rsi_oversold": params.get("rsi_oversold", 40),
-        # Trend confirmation
-        "min_trend_bars": params.get("min_trend_bars", 2),
-        # max_capital is managed by FundManager
-        "position_size_pct": params.get("position_size_pct", 0.1),
-        "stop_loss_pct": params.get("stop_loss_pct", 0.05),  # 5%
-        "use_trailing_stop": params.get("use_trailing_stop", False),
-        "trailing_stop_pct": params.get("trailing_stop_pct", 0.02),
-    }
+    return load_strategy_config("supertrend")
 
 
 async def create_and_start_bots(master: Master) -> list[str]:

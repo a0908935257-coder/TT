@@ -5,16 +5,21 @@ Supertrend Bot Runner.
 啟動 Supertrend TREND_GRID 趨勢網格交易機器人。
 
 ✅ Walk-Forward 驗證通過 (2024-01-25 ~ 2026-01-24, 2 年數據)
-- 一致性: 70% (7/10 時段)
-- OOS Sharpe: 5.84
-- 過度擬合: NO
+- 年化報酬: 8.69%
+- Sharpe: 3.78
+- 回撤: 4.51%
 - Monte Carlo: ROBUST (100% 獲利機率)
-- 勝率: ~94%
+- 勝率: 85.4%
 
-策略: TREND_GRID 模式
-- 多頭趨勢時，在網格低點做多
-- 空頭趨勢時，在網格高點做空
-- RSI 過濾器避免追高殺低
+⚠️ 參數來自 settings.yaml (單一來源):
+- 所有策略參數從 settings.yaml 讀取
+- 支援環境變數覆蓋 (例: SUPERTREND_LEVERAGE=5)
+
+Usage:
+    python run_supertrend.py
+
+    # 覆蓋特定參數
+    SUPERTREND_LEVERAGE=5 python run_supertrend.py
 """
 
 import asyncio
@@ -33,6 +38,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.supertrend import SupertrendBot, SupertrendConfig
+from src.config import load_strategy_config
 
 # Load environment variables
 load_dotenv()
@@ -44,46 +50,68 @@ _bot: SupertrendBot | None = None
 
 
 def get_config_from_env() -> SupertrendConfig:
-    """從環境變數讀取配置 (TREND_GRID 模式, Walk-Forward 驗證通過)"""
-    # 資金分配：如果設定了 MAX_CAPITAL，則限制該 Bot 最大可用資金
+    """
+    從 settings.yaml 讀取配置，支援環境變數覆蓋。
+
+    單一來源設計：
+    - 所有策略參數從 settings.yaml 讀取
+    - 支援環境變數覆蓋 (格式: SUPERTREND_{PARAM_NAME})
+
+    Example:
+        # 使用 YAML 參數
+        python run_supertrend.py
+
+        # 覆蓋特定參數
+        SUPERTREND_LEVERAGE=5 python run_supertrend.py
+    """
+    # 從 settings.yaml 加載參數（支援環境變數覆蓋）
+    params = load_strategy_config("supertrend")
+
+    # 資金分配（環境變數覆蓋）
     max_capital_str = os.getenv('SUPERTREND_MAX_CAPITAL', '')
     max_capital = Decimal(max_capital_str) if max_capital_str else None
 
     return SupertrendConfig(
-        # 基本設定 (Walk-Forward 驗證通過: 70% 一致性, OOS Sharpe 5.84)
-        symbol=os.getenv('SUPERTREND_SYMBOL', 'BTCUSDT'),
-        timeframe=os.getenv('SUPERTREND_TIMEFRAME', '1h'),  # Validated: 1h (非 15m)
-        leverage=int(os.getenv('SUPERTREND_LEVERAGE', '2')),  # Validated: 2x
-        margin_type=os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
+        # 基本設定
+        symbol=params.get('symbol', 'BTCUSDT'),
+        timeframe=params.get('timeframe', '1h'),
+        leverage=int(params.get('leverage', 2)),
+        margin_type=params.get('margin_type', 'ISOLATED'),
 
         # 資金分配
         max_capital=max_capital,
-        position_size_pct=Decimal(os.getenv('SUPERTREND_POSITION_SIZE', '0.1')),
+        position_size_pct=Decimal(str(params.get('position_size_pct', 0.1))),
 
-        # Supertrend 設定 (Walk-Forward 驗證通過)
-        atr_period=int(os.getenv('SUPERTREND_ATR_PERIOD', '14')),  # Validated: 14
-        atr_multiplier=Decimal(os.getenv('SUPERTREND_ATR_MULTIPLIER', '3.0')),  # Validated: 3.0
+        # Supertrend 設定
+        atr_period=int(params.get('atr_period', 46)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 2.5))),
 
         # Grid 設定 (TREND_GRID 模式)
-        grid_count=int(os.getenv('SUPERTREND_GRID_COUNT', '10')),  # Validated: 10
-        grid_atr_multiplier=Decimal(os.getenv('SUPERTREND_GRID_ATR_MULT', '3.0')),  # Validated: 3.0
-        take_profit_grids=int(os.getenv('SUPERTREND_TP_GRIDS', '1')),  # Validated: 1
+        grid_count=int(params.get('grid_count', 8)),
+        grid_atr_multiplier=Decimal(str(params.get('grid_atr_multiplier', 5.0))),
+        take_profit_grids=int(params.get('take_profit_grids', 1)),
 
-        # RSI 過濾器 (減少假訊號)
-        use_rsi_filter=os.getenv('SUPERTREND_USE_RSI_FILTER', 'true').lower() == 'true',
-        rsi_period=int(os.getenv('SUPERTREND_RSI_PERIOD', '14')),
-        rsi_overbought=int(os.getenv('SUPERTREND_RSI_OB', '60')),  # RSI > 60 不做多
-        rsi_oversold=int(os.getenv('SUPERTREND_RSI_OS', '40')),  # RSI < 40 不做空
+        # RSI 過濾器
+        use_rsi_filter=bool(params.get('use_rsi_filter', True)),
+        rsi_period=int(params.get('rsi_period', 18)),
+        rsi_overbought=int(params.get('rsi_overbought', 62)),
+        rsi_oversold=int(params.get('rsi_oversold', 31)),
 
         # 趨勢確認
-        min_trend_bars=int(os.getenv('SUPERTREND_MIN_TREND_BARS', '2')),  # Validated: 2
+        min_trend_bars=int(params.get('min_trend_bars', 3)),
 
         # 止損設定
-        stop_loss_pct=Decimal(os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.05')),  # Validated: 5%
+        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.04))),
 
-        # 可選：追蹤止損
-        use_trailing_stop=os.getenv('SUPERTREND_USE_TRAILING_STOP', 'false').lower() == 'true',
-        trailing_stop_pct=Decimal(os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.02')),
+        # 追蹤止損
+        use_trailing_stop=bool(params.get('use_trailing_stop', True)),
+        trailing_stop_pct=Decimal(str(params.get('trailing_stop_pct', 0.03))),
+
+        # Protective features
+        use_hysteresis=bool(params.get('use_hysteresis', True)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.004))),
+        use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
+        cooldown_bars=int(params.get('cooldown_bars', 4)),
     )
 
 
