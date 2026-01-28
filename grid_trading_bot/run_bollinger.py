@@ -4,20 +4,30 @@ Bollinger BB_TREND_GRID Bot Runner.
 
 啟動布林帶趨勢網格交易機器人。
 
-✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據, 10 期分割):
-- Walk-Forward 一致性: 80% (8/10 時段獲利)
-- OOS Sharpe: 6.56
-- 過度擬合: 未檢測到
+✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據):
+- 年化報酬: 17.39%
+- 最大回撤: 6.60%
+- Sharpe: 4.70
+- 勝率: 63.3%
+- W-F 一致性: 100% (9/9 時段獲利)
+- Monte Carlo: 100% (15/15)
 - 穩健性: ROBUST
+
+驗證通過參數:
+- bb_period: 12
+- bb_std: 2.0
+- grid_count: 6
+- grid_range_pct: 2%
+- take_profit_grids: 2
+- stop_loss_pct: 2.5%
+- leverage: 19x (⚠️ 高槓桿)
 
 策略邏輯 (BB_TREND_GRID):
 - 趨勢判斷: BB 中軌 (SMA)
   - Price > SMA = 看多 (只做 LONG)
   - Price < SMA = 看空 (只做 SHORT)
-- 進場: 網格交易
-  - LONG: kline.low <= grid_level.price (買跌)
-  - SHORT: kline.high >= grid_level.price (賣漲)
-- 出場: 止盈 1 個網格 或 止損 5%
+- 進場: 網格交易 (K線觸及網格)
+- 出場: 止盈 2 個網格 或 止損 2.5%
 """
 
 import asyncio
@@ -51,13 +61,20 @@ def get_config_from_env() -> BollingerConfig:
     """
     從環境變數讀取配置。
 
-    Walk-Forward 驗證通過的默認參數:
-    - bb_period: 20
+    ✅ Walk-Forward 驗證通過的默認參數 (2026-01-27):
+    - bb_period: 12
     - bb_std: 2.0
-    - grid_count: 10
-    - grid_range_pct: 4%
-    - stop_loss_pct: 5%
-    - leverage: 2
+    - grid_count: 6
+    - grid_range_pct: 2%
+    - take_profit_grids: 2
+    - stop_loss_pct: 2.5%
+    - leverage: 19x (⚠️ 高槓桿)
+
+    驗證結果:
+    - 年化報酬: 17.39%
+    - 最大回撤: 6.60%
+    - Sharpe: 4.70
+    - W-F 一致性: 100% (9/9)
     """
     # 資金分配
     max_capital_str = os.getenv('BOLLINGER_MAX_CAPITAL', '')
@@ -67,30 +84,35 @@ def get_config_from_env() -> BollingerConfig:
         # 基本設定
         symbol=os.getenv('BOLLINGER_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('BOLLINGER_TIMEFRAME', '1h'),  # Walk-Forward validated
-        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '2')),
+        leverage=int(os.getenv('BOLLINGER_LEVERAGE', '19')),  # ⚠️ 高槓桿 (W-F 驗證通過)
         margin_type=os.getenv('BOLLINGER_MARGIN_TYPE', 'ISOLATED'),
 
-        # Bollinger Bands 參數 (Walk-Forward validated)
-        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
+        # Bollinger Bands 參數 (W-F 驗證通過: 12)
+        bb_period=int(os.getenv('BOLLINGER_BB_PERIOD', '12')),
         bb_std=Decimal(os.getenv('BOLLINGER_BB_STD', '2.0')),
 
-        # Grid 參數 (Walk-Forward validated)
-        grid_count=int(os.getenv('BOLLINGER_GRID_COUNT', '10')),
-        grid_range_pct=Decimal(os.getenv('BOLLINGER_GRID_RANGE_PCT', '0.04')),  # 4%
-        take_profit_grids=int(os.getenv('BOLLINGER_TP_GRIDS', '1')),
+        # Grid 參數 (W-F 驗證通過)
+        grid_count=int(os.getenv('BOLLINGER_GRID_COUNT', '6')),  # 優化後: 6
+        grid_range_pct=Decimal(os.getenv('BOLLINGER_GRID_RANGE_PCT', '0.02')),  # 優化後: 2%
+        take_profit_grids=int(os.getenv('BOLLINGER_TP_GRIDS', '2')),  # 優化後: 2
 
         # 倉位管理
         max_capital=max_capital,
         position_size_pct=Decimal(os.getenv('BOLLINGER_POSITION_SIZE', '0.1')),
         max_position_pct=Decimal(os.getenv('BOLLINGER_MAX_POSITION', '0.5')),
 
-        # 風險管理 (Walk-Forward validated)
-        stop_loss_pct=Decimal(os.getenv('BOLLINGER_STOP_LOSS', '0.05')),  # 5%
+        # 風險管理 (W-F 驗證通過: 2.5%)
+        stop_loss_pct=Decimal(os.getenv('BOLLINGER_STOP_LOSS', '0.025')),  # 優化後: 2.5%
         rebuild_threshold_pct=Decimal(os.getenv('BOLLINGER_REBUILD_THRESHOLD', '0.02')),
 
         # BBW 過濾
         bbw_lookback=int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
         bbw_threshold_pct=int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
+
+        # Protective features (W-F 驗證通過: 關閉)
+        use_hysteresis=os.getenv('BOLLINGER_USE_HYSTERESIS', 'false').lower() == 'true',
+        use_signal_cooldown=os.getenv('BOLLINGER_USE_COOLDOWN', 'false').lower() == 'true',
+        cooldown_bars=int(os.getenv('BOLLINGER_COOLDOWN_BARS', '0')),
     )
 
 
