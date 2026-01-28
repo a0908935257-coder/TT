@@ -61,7 +61,7 @@ risk:
   weekly_loss_limit: 15
   position_limit: 5
   max_position_size: 10
-  max_leverage: 10
+  max_leverage: 42                     # Grid Futures 42x, Bollinger 18x (W-F 驗證通過)
   liquidation_warning: 80
   margin_warning: 50
   min_order_interval: 1
@@ -78,36 +78,36 @@ fund_manager:
   strategy: fixed_ratio                # Allocation strategy: fixed_ratio, fixed_amount, dynamic_weight
 
   # Bot allocation configurations (總計 90%, 保留 10%)
-  # 根據 OOS 績效調整: Bollinger (+44.6%) > Grid > RSI > Supertrend (-2.8%)
+  # 實戰配置 (2026-01-28): 全策略 W-F 驗證通過
   allocations:
-    # Grid Futures - 網格合約策略
+    # Grid Futures - 積極策略 (42x, 年化 45.18%, W-F 88.9%)
     - bot_pattern: "grid_futures_*"
-      ratio: 0.30                      # 30%
+      ratio: 0.40                      # 40% (主力策略)
       min_capital: 100
       max_capital: 10000
-      priority: 4
+      priority: 10
       enabled: true
 
-    # Bollinger - 布林通道策略 (OOS +44.6%, 最佳績效)
+    # Bollinger BB_NEUTRAL_GRID (18x, 年化 44.30%, W-F 100%)
     - bot_pattern: "bollinger_*"
-      ratio: 0.30                      # 30% ↑ (原 20%)
+      ratio: 0.25                      # 25%
       min_capital: 50
       max_capital: 8000
-      priority: 3
+      priority: 9
       enabled: true
 
-    # RSI - RSI 均值回歸策略
+    # RSI-Grid Hybrid (2x, 年化 5.59%, W-F 50%)
     - bot_pattern: "rsi_*"
-      ratio: 0.15                      # 15%
+      ratio: 0.10                      # 10%
       min_capital: 50
-      max_capital: 3000
-      priority: 2
+      max_capital: 5000
+      priority: 8
       enabled: true
 
-    # Supertrend - 超級趨勢策略 (OOS -2.8%, 績效較差)
+    # Supertrend GRID (2x, 年化 8.69%, Monte Carlo ROBUST)
     - bot_pattern: "supertrend_*"
-      ratio: 0.15                      # 15% ↓ (原 25%)
+      ratio: 0.15                      # 15%
       min_capital: 100
       max_capital: 5000
-      priority: 1
+      priority: 7
       enabled: true

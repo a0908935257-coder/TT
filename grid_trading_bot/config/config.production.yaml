@@ -20,6 +20,6 @@ notification:
   min_level: info
 
 risk:
-  max_leverage: 10
+  max_leverage: 42                     # Grid Futures 42x, Bollinger 18x (W-F 驗證通過)
   circuit_breaker_enabled: true
   circuit_breaker_cooldown: 3600
