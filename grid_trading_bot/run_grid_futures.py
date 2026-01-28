@@ -6,17 +6,20 @@ Grid Futures Bot Runner.
 支援槓桿、雙向交易。
 
 ✅ Walk-Forward 驗證通過 (2024-01 ~ 2026-01, 2 年數據):
-- Walk-Forward 一致性: 100%
-- OOS Sharpe: 8.33
-- 報酬率: +376.5%
-- 勝率: 83.6%
-- 交易次數: 1,891
+- 年化報酬: 43.25%
+- 最大回撤: 3.74%
+- 勝率: 56.6%
+- 交易次數: 4,949
+- W-F 一致性: 100% (9/9)
+- Monte Carlo: 100%
 
-回測驗證參數:
-- leverage: 10x
+⚠️ 高槓桿高風險驗證參數:
+- leverage: 18x
 - direction: NEUTRAL (雙向交易)
-- grid_count: 10
-- atr_multiplier: 3.0
+- grid_count: 12
+- atr_period: 21
+- atr_multiplier: 6.0 (寬範圍)
+- stop_loss_pct: 0.5% (緊止損)
 
 Usage:
     python run_grid_futures.py
@@ -52,17 +55,25 @@ def get_config_from_env() -> GridFuturesConfig:
     """
     從環境變數讀取配置。
 
-    Walk-Forward 驗證通過的默認參數:
-    - leverage: 10x
-    - direction: NEUTRAL
-    - grid_count: 10
-    - atr_multiplier: 3.0
+    ✅ Walk-Forward 驗證通過的默認參數 (2026-01-27):
+    - leverage: 18x (⚠️ 高槓桿)
+    - direction: NEUTRAL (雙向交易)
+    - grid_count: 12
+    - atr_period: 21
+    - atr_multiplier: 6.0 (寬範圍)
+    - stop_loss_pct: 0.5% (緊止損)
+
+    驗證結果:
+    - 年化報酬: 43.25%
+    - 最大回撤: 3.74%
+    - 勝率: 56.6%
+    - W-F 一致性: 100% (9/9)
     """
     # 資金分配
     max_capital_str = os.getenv('GRID_FUTURES_MAX_CAPITAL', '')
     max_capital = Decimal(max_capital_str) if max_capital_str else None
 
-    # 方向模式 (默認 NEUTRAL - 回測驗證)
+    # 方向模式 (默認 NEUTRAL - W-F 驗證通過)
     direction_str = os.getenv('GRID_FUTURES_DIRECTION', 'neutral').lower()
     direction_map = {
         'long_only': GridDirection.LONG_ONLY,
@@ -73,24 +84,24 @@ def get_config_from_env() -> GridFuturesConfig:
     direction = direction_map.get(direction_str, GridDirection.NEUTRAL)
 
     return GridFuturesConfig(
-        # 基本設定 (Walk-Forward 驗證通過)
+        # 基本設定 (W-F 驗證通過)
         symbol=os.getenv('GRID_FUTURES_SYMBOL', 'BTCUSDT'),
         timeframe=os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-        leverage=int(os.getenv('GRID_FUTURES_LEVERAGE', '10')),  # 回測驗證: 10x
+        leverage=int(os.getenv('GRID_FUTURES_LEVERAGE', '18')),  # ⚠️ 高槓桿 (W-F 驗證通過)
         margin_type=os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
 
-        # 網格設定 (回測驗證: 10 格, NEUTRAL)
-        grid_count=int(os.getenv('GRID_FUTURES_COUNT', '10')),
+        # 網格設定 (W-F 驗證通過: 12 格, NEUTRAL)
+        grid_count=int(os.getenv('GRID_FUTURES_COUNT', '12')),
         direction=direction,
 
         # 趨勢過濾 (NEUTRAL 模式不使用趨勢過濾)
         use_trend_filter=os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
         trend_period=int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),
 
-        # 動態 ATR 範圍 (回測驗證: 乘數 3.0)
+        # 動態 ATR 範圍 (W-F 驗證通過: 21 週期, 6.0 乘數)
         use_atr_range=os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-        atr_period=int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
-        atr_multiplier=Decimal(os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '3.0')),
+        atr_period=int(os.getenv('GRID_FUTURES_ATR_PERIOD', '21')),
+        atr_multiplier=Decimal(os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '6.0')),
         fallback_range_pct=Decimal(os.getenv('GRID_FUTURES_RANGE_PCT', '0.08')),
 
         # 倉位管理 (10% 單次)
@@ -98,9 +109,15 @@ def get_config_from_env() -> GridFuturesConfig:
         position_size_pct=Decimal(os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1')),
         max_position_pct=Decimal(os.getenv('GRID_FUTURES_MAX_POSITION', '0.5')),
 
-        # 風險管理
-        stop_loss_pct=Decimal(os.getenv('GRID_FUTURES_STOP_LOSS', '0.05')),
+        # 風險管理 (W-F 驗證通過: 0.5% 緊止損)
+        stop_loss_pct=Decimal(os.getenv('GRID_FUTURES_STOP_LOSS', '0.005')),
         rebuild_threshold_pct=Decimal(os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02')),
+
+        # Protective features (W-F 驗證通過)
+        use_hysteresis=os.getenv('GRID_FUTURES_USE_HYSTERESIS', 'true').lower() == 'true',
+        hysteresis_pct=Decimal(os.getenv('GRID_FUTURES_HYSTERESIS_PCT', '0.002')),
+        use_signal_cooldown=os.getenv('GRID_FUTURES_USE_COOLDOWN', 'false').lower() == 'true',
+        cooldown_bars=int(os.getenv('GRID_FUTURES_COOLDOWN_BARS', '0')),
     )
 
 
