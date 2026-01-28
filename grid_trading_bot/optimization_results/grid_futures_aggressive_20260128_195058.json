@@ -1,0 +1,33 @@
+{
+  "optimization_date": "2026-01-28T19:50:58.695412",
+  "target": "maximize_annual_return_40.0%",
+  "data_file": "data/historical/BTCUSDT_1h_730d.json",
+  "trials": 200,
+  "result": {
+    "strategy": "grid_futures",
+    "target_annual_return": 40.0,
+    "target_met": true,
+    "best_params": {
+      "leverage": 42,
+      "grid_count": 18,
+      "atr_period": 28,
+      "atr_multiplier": 9.5,
+      "stop_loss_pct": 0.005,
+      "take_profit_grids": 1,
+      "direction": "NEUTRAL",
+      "trend_period": 24,
+      "use_hysteresis": true,
+      "hysteresis_pct": 0.001,
+      "use_signal_cooldown": true,
+      "cooldown_bars": 0
+    },
+    "metrics": {
+      "annual_return": 45.17714844031957,
+      "total_return": 110.5488950735043,
+      "max_drawdown": 3.785133917698252,
+      "sharpe": 10.29808896111825,
+      "win_rate": 55.76768488745981,
+      "trades": 4976
+    }
+  }
+}

@@ -4,21 +4,28 @@ Grid Futures Bot Data Models.
 Provides data models for futures-based grid trading with leverage
 and bidirectional trading support.
 
-✅ 參數優化 + Walk-Forward 驗證 (2026-01-27):
-- 年化報酬: 43.25%
-- 回撤: 3.74%
-- 勝率: 56.6%
-- 交易次數: 4,949/2年
-- W-F 一致性: 100% (9/9)
-- Monte Carlo: 100%
+✅ 積極策略優化 + Walk-Forward 驗證 (2026-01-28):
+- 年化報酬: 45.18%
+- 回撤: 3.79%
+- 勝率: 55.77%
+- 交易次數: 4,976/2年
+- W-F 一致性: 88.9% (8/9)
+- OOS/IS Sharpe: 0.72
+- Monte Carlo 獲利機率: 100%
 
-⚠️ 高槓桿高風險配置:
-- leverage: 18x
+⚠️ 超高槓桿高風險配置 (積極策略):
+- leverage: 42x
 - direction: NEUTRAL (雙向交易)
-- grid_count: 12
-- atr_period: 21
-- atr_multiplier: 6.0
+- grid_count: 18
+- atr_period: 28
+- atr_multiplier: 9.5 (超寬範圍)
 - stop_loss_pct: 0.5% (緊止損)
+
+⚠️ 風險警告:
+- 42x 槓桿在極端市場可能導致爆倉
+- 建議實戰時設置每日虧損上限 (如 -5%)
+- 設置連續虧損停止機制 (如連虧 5 次暫停)
+- 實戰初期建議先用較低資金測試
 """
 
 from dataclasses import dataclass, field
@@ -79,38 +86,40 @@ class GridFuturesConfig:
     """
     Grid Futures Bot configuration.
 
-    ✅ 參數優化 + Walk-Forward 驗證 (2026-01-27):
-    - 年化報酬: 43.25%
-    - 回撤: 3.74%
-    - 勝率: 56.6%
-    - W-F 一致性: 100%
+    ✅ 積極策略優化 + Walk-Forward 驗證 (2026-01-28):
+    - 年化報酬: 45.18%
+    - 回撤: 3.79%
+    - 勝率: 55.77%
+    - W-F 一致性: 88.9% (8/9)
+    - OOS/IS Sharpe: 0.72
+    - Monte Carlo 獲利機率: 100%
 
-    ⚠️ 高槓桿高風險配置:
-    - Leverage: 18x
+    ⚠️ 超高槓桿高風險配置 (積極策略):
+    - Leverage: 42x
     - Direction: NEUTRAL (雙向交易)
-    - Grid Count: 12
-    - ATR Period: 21
-    - ATR Multiplier: 6.0
+    - Grid Count: 18
+    - ATR Period: 28
+    - ATR Multiplier: 9.5 (超寬範圍)
     - Stop Loss: 0.5% (緊止損)
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe for indicators (default "1h")
-        leverage: Futures leverage (default 10, validated)
+        leverage: Futures leverage (default 42, validated)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # Grid settings
-        grid_count: Number of grid levels (default 10, validated)
+        grid_count: Number of grid levels (default 18, validated)
         direction: Trading direction mode (default NEUTRAL, validated)
 
         # Trend filter
         use_trend_filter: Enable trend-based direction (default False for NEUTRAL)
-        trend_period: SMA period for trend detection (default 20, validated)
+        trend_period: SMA period for trend detection (default 24, validated)
 
         # Dynamic range
         use_atr_range: Use ATR for dynamic grid range (default True)
-        atr_period: ATR calculation period (default 14)
-        atr_multiplier: ATR multiplier for range (default 3.0, validated)
+        atr_period: ATR calculation period (default 28, validated)
+        atr_multiplier: ATR multiplier for range (default 9.5, validated)
         fallback_range_pct: Range when ATR unavailable (default 8%)
 
         # Position sizing
@@ -119,38 +128,38 @@ class GridFuturesConfig:
         max_position_pct: Maximum total position as % of capital (default 50%)
 
         # Risk management
-        stop_loss_pct: Stop loss percentage per position (default 5%)
+        stop_loss_pct: Stop loss percentage per position (default 0.5%)
         rebuild_threshold_pct: Price deviation to trigger rebuild (default 2%)
 
     Example:
         >>> config = GridFuturesConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=18,  # W-F 驗證通過: 18x
-        ...     grid_count=12,  # W-F 驗證通過: 12
+        ...     leverage=42,  # W-F 驗證通過: 42x (積極策略)
+        ...     grid_count=18,  # W-F 驗證通過: 18
         ...     direction=GridDirection.NEUTRAL,
-        ...     atr_period=21,  # W-F 驗證通過: 21
-        ...     atr_multiplier=Decimal("6.0"),  # 寬範圍
+        ...     atr_period=28,  # W-F 驗證通過: 28
+        ...     atr_multiplier=Decimal("9.5"),  # 超寬範圍
         ...     stop_loss_pct=Decimal("0.005"),  # 0.5% 緊止損
         ... )
     """
 
     symbol: str
     timeframe: str = "1h"
-    leverage: int = 18  # ⚠️ 高槓桿 (W-F 驗證通過)
+    leverage: int = 42  # ⚠️ 超高槓桿 (W-F 驗證通過，積極策略)
     margin_type: str = "ISOLATED"
 
     # Grid settings (NEUTRAL 雙向交易)
-    grid_count: int = 12  # W-F 驗證通過: 12
+    grid_count: int = 18  # W-F 驗證通過: 18
     direction: GridDirection = GridDirection.NEUTRAL
 
     # Trend filter (NEUTRAL 模式不使用趨勢過濾)
     use_trend_filter: bool = False
-    trend_period: int = 20
+    trend_period: int = 24  # W-F 驗證通過: 24
 
     # Dynamic ATR range (W-F 驗證通過)
     use_atr_range: bool = True
-    atr_period: int = 21  # W-F 驗證通過: 21
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.0"))  # 寬範圍
+    atr_period: int = 28  # W-F 驗證通過: 28
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))  # 超寬範圍
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))
 
     # Position sizing (optimized: 10% per trade)
@@ -170,8 +179,8 @@ class GridFuturesConfig:
 
     # Protective features (W-F 驗證通過)
     use_hysteresis: bool = True  # 遲滯緩衝區 (啟用)
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))  # 0.2%
-    use_signal_cooldown: bool = False  # 禁用
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.001"))  # 0.1%
+    use_signal_cooldown: bool = True  # 啟用
     cooldown_bars: int = 0
 
     def __post_init__(self):

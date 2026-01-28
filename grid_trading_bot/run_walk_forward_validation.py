@@ -142,16 +142,22 @@ async def fetch_klines(symbol: str, interval: str, days: int, data_file: str = N
 
 def create_all_strategies() -> dict:
     """建立所有策略實例"""
-    # Grid Futures: 使用 settings.yaml 實盤參數
-    # leverage=2, direction=trend_follow, grid_count=10, atr_multiplier=3.0
+    # Grid Futures: 使用優化後的積極策略參數 (2026-01-28)
+    # 目標: 年化 40%+, 回撤容忍 30%
+    # 優化結果: 年化 45.18%, 回撤 3.79%, Sharpe 10.30
     grid_futures_config = GridFuturesStrategyConfig(
-        leverage=2,  # 實盤配置
-        direction=GridDirection.TREND_FOLLOW,  # 實盤配置
-        grid_count=10,
-        atr_multiplier=Decimal("3.0"),
-        trend_period=20,
-        atr_period=14,
-        stop_loss_pct=Decimal("0.05"),
+        leverage=42,  # 優化結果: 高槓桿
+        direction=GridDirection.NEUTRAL,  # 優化結果: 中性雙向
+        grid_count=18,  # 優化結果
+        atr_multiplier=Decimal("9.5"),  # 優化結果: 寬範圍
+        trend_period=24,  # 優化結果
+        atr_period=28,  # 優化結果
+        stop_loss_pct=Decimal("0.005"),  # 優化結果: 0.5% 緊止損
+        take_profit_grids=1,  # 優化結果
+        use_hysteresis=True,  # 優化結果
+        hysteresis_pct=Decimal("0.001"),  # 優化結果: 0.1%
+        use_signal_cooldown=True,  # 優化結果
+        cooldown_bars=0,  # 優化結果
     )
 
     # Supertrend: 使用默認配置 (已與實盤 Bot 一致)
