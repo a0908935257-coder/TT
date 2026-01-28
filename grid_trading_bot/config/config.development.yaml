@@ -16,5 +16,5 @@ notification:
   min_level: debug
 
 risk:
-  max_leverage: 5
+  max_leverage: 42
   circuit_breaker_cooldown: 300
