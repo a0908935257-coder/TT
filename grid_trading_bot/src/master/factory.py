@@ -228,11 +228,7 @@ class BotFactory:
         """
         Create a BollingerBot instance.
 
-        Walk-Forward 驗證通過的參數 (80% 一致性, OOS Sharpe 6.56):
-        - bb_period: 20, bb_std: 2.0
-        - grid_count: 10, grid_range_pct: 4%
-        - leverage: 2x
-        - 平均 OOS 報酬: 10.39%
+        默認值來自 BollingerConfig (實戰配置)，確保一致性。
 
         Args:
             bot_id: Bot identifier
@@ -247,34 +243,37 @@ class BotFactory:
         from src.bots.bollinger.bot import BollingerBot
         from src.bots.bollinger.models import BollingerConfig
 
-        # Build BollingerConfig from dict with walk-forward validated defaults
+        # 使用 BollingerConfig 默認值作為備用 (單一來源)
+        _defaults = BollingerConfig(symbol=config["symbol"])
+
+        # Build BollingerConfig from dict (未指定的參數使用實戰配置默認值)
         bollinger_config = BollingerConfig(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", "1h"),
-            # Bollinger Bands (Walk-Forward validated)
-            bb_period=int(config.get("bb_period", 20)),
-            bb_std=Decimal(str(config.get("bb_std", "2.0"))),
-            # Grid parameters (BB_TREND_GRID strategy)
-            grid_count=int(config.get("grid_count", 10)),
-            grid_range_pct=Decimal(str(config.get("grid_range_pct", "0.04"))),
-            take_profit_grids=int(config.get("take_profit_grids", 1)),
+            timeframe=config.get("timeframe", _defaults.timeframe),
+            # Bollinger Bands
+            bb_period=int(config.get("bb_period", _defaults.bb_period)),
+            bb_std=Decimal(str(config.get("bb_std", _defaults.bb_std))),
+            # Grid parameters
+            grid_count=int(config.get("grid_count", _defaults.grid_count)),
+            grid_range_pct=Decimal(str(config.get("grid_range_pct", _defaults.grid_range_pct))),
+            take_profit_grids=int(config.get("take_profit_grids", _defaults.take_profit_grids)),
             # Position settings
-            leverage=int(config.get("leverage", 2)),
-            margin_type=config.get("margin_type", "ISOLATED"),
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
+            leverage=int(config.get("leverage", _defaults.leverage)),
+            margin_type=config.get("margin_type", _defaults.margin_type),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else _defaults.max_capital,
+            position_size_pct=Decimal(str(config.get("position_size_pct", _defaults.position_size_pct))),
+            max_position_pct=Decimal(str(config.get("max_position_pct", _defaults.max_position_pct))),
             # Risk management
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),
-            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", "0.02"))),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", _defaults.stop_loss_pct))),
+            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", _defaults.rebuild_threshold_pct))),
             # BBW filter
-            bbw_lookback=int(config.get("bbw_lookback", 200)),
-            bbw_threshold_pct=int(config.get("bbw_threshold_pct", 20)),
+            bbw_lookback=int(config.get("bbw_lookback", _defaults.bbw_lookback)),
+            bbw_threshold_pct=int(config.get("bbw_threshold_pct", _defaults.bbw_threshold_pct)),
             # Protective features
-            use_hysteresis=config.get("use_hysteresis", False),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.002"))),
-            use_signal_cooldown=config.get("use_signal_cooldown", False),
-            cooldown_bars=int(config.get("cooldown_bars", 2)),
+            use_hysteresis=config.get("use_hysteresis", _defaults.use_hysteresis),
+            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", _defaults.hysteresis_pct))),
+            use_signal_cooldown=config.get("use_signal_cooldown", _defaults.use_signal_cooldown),
+            cooldown_bars=int(config.get("cooldown_bars", _defaults.cooldown_bars)),
         )
 
         # Create bot instance
@@ -369,15 +368,7 @@ class BotFactory:
         """
         Create a GridFuturesBot instance.
 
-        Walk-Forward 驗證通過的參數 (100% 一致性, Sharpe 8.33):
-        - leverage: 10x
-        - direction: NEUTRAL (雙向交易)
-        - grid_count: 10
-        - 報酬: +376.5% (2 年), 勝率: 83.6%
-
-        Protective Features (回測驗證啟用):
-        - use_hysteresis: true (提升收益 8.76%)
-        - use_signal_cooldown: true (回撤降低 15.78%)
+        默認值來自 GridFuturesConfig (實戰配置)，確保一致性。
 
         Args:
             bot_id: Bot identifier
@@ -392,35 +383,38 @@ class BotFactory:
         from src.bots.grid_futures.bot import GridFuturesBot
         from src.bots.grid_futures.models import GridFuturesConfig, GridDirection
 
-        # Parse direction (default to neutral for validated performance)
-        direction_str = config.get("direction", "neutral")
+        # 使用 GridFuturesConfig 默認值作為備用 (單一來源)
+        _defaults = GridFuturesConfig(symbol=config["symbol"])
+
+        # Parse direction
+        direction_str = config.get("direction", _defaults.direction.value)
         direction = GridDirection(direction_str)
 
-        # Build GridFuturesConfig from dict with walk-forward validated defaults
+        # Build GridFuturesConfig from dict (未指定的參數使用實戰配置默認值)
         grid_futures_config = GridFuturesConfig(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", "1h"),
-            leverage=int(config.get("leverage", 10)),  # Validated: 10x
-            margin_type=config.get("margin_type", "ISOLATED"),
-            grid_count=int(config.get("grid_count", 10)),  # Validated: 10 grids
+            timeframe=config.get("timeframe", _defaults.timeframe),
+            leverage=int(config.get("leverage", _defaults.leverage)),
+            margin_type=config.get("margin_type", _defaults.margin_type),
+            grid_count=int(config.get("grid_count", _defaults.grid_count)),
             direction=direction,
-            use_trend_filter=config.get("use_trend_filter", False),  # NEUTRAL 不用趨勢
-            trend_period=int(config.get("trend_period", 20)),
-            use_atr_range=config.get("use_atr_range", True),
-            atr_period=int(config.get("atr_period", 14)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", "3.0"))),
-            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", "0.08"))),
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),
-            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", "0.02"))),
-            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
-            # Protective Features (回測驗證: 啟用可提升表現)
-            use_hysteresis=config.get("use_hysteresis", True),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.002"))),
-            use_signal_cooldown=config.get("use_signal_cooldown", True),
-            cooldown_bars=int(config.get("cooldown_bars", 2)),
+            use_trend_filter=config.get("use_trend_filter", _defaults.use_trend_filter),
+            trend_period=int(config.get("trend_period", _defaults.trend_period)),
+            use_atr_range=config.get("use_atr_range", _defaults.use_atr_range),
+            atr_period=int(config.get("atr_period", _defaults.atr_period)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", _defaults.atr_multiplier))),
+            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", _defaults.fallback_range_pct))),
+            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else _defaults.max_capital,
+            position_size_pct=Decimal(str(config.get("position_size_pct", _defaults.position_size_pct))),
+            max_position_pct=Decimal(str(config.get("max_position_pct", _defaults.max_position_pct))),
+            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", _defaults.stop_loss_pct))),
+            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", _defaults.rebuild_threshold_pct))),
+            use_exchange_stop_loss=config.get("use_exchange_stop_loss", _defaults.use_exchange_stop_loss),
+            # Protective Features
+            use_hysteresis=config.get("use_hysteresis", _defaults.use_hysteresis),
+            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", _defaults.hysteresis_pct))),
+            use_signal_cooldown=config.get("use_signal_cooldown", _defaults.use_signal_cooldown),
+            cooldown_bars=int(config.get("cooldown_bars", _defaults.cooldown_bars)),
         )
 
         # Create bot instance

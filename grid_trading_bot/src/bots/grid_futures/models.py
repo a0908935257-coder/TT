@@ -210,8 +210,8 @@ class GridFuturesConfig:
         if self.atr_period < 5 or self.atr_period > 50:
             raise ValueError(f"atr_period must be 5-50, got {self.atr_period}")
 
-        if self.atr_multiplier < Decimal("0.5") or self.atr_multiplier > Decimal("5.0"):
-            raise ValueError(f"atr_multiplier must be 0.5-5.0, got {self.atr_multiplier}")
+        if self.atr_multiplier < Decimal("0.5") or self.atr_multiplier > Decimal("10.0"):
+            raise ValueError(f"atr_multiplier must be 0.5-10.0, got {self.atr_multiplier}")
 
         if self.position_size_pct < Decimal("0.01") or self.position_size_pct > Decimal("0.5"):
             raise ValueError(f"position_size_pct must be 1%-50%, got {self.position_size_pct}")

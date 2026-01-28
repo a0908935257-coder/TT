@@ -39,6 +39,7 @@ from enum import Enum
 from typing import List, Optional
 
 from ...bots.bollinger.indicators import BollingerCalculator
+from ...bots.bollinger.models import BollingerConfig as LiveBollingerConfig
 from ...core.models import Kline
 from ..order import Signal
 from ..position import Position
@@ -53,10 +54,16 @@ class BollingerMode(str, Enum):
     BB_NEUTRAL_GRID = "bb_neutral_grid"  # Neutral bi-directional grid (like Grid Futures)
 
 
+# 使用實戰配置的默認值作為回測默認值 (單一來源)
+_DEFAULT_LIVE_CONFIG = LiveBollingerConfig(symbol="BTCUSDT")
+
+
 @dataclass
 class BollingerStrategyConfig:
     """
     Configuration for Bollinger backtest strategy.
+
+    所有默認值均來自實戰配置 (BollingerConfig)，確保回測與實戰一致。
 
     Attributes:
         mode: Strategy mode (BB_TREND_GRID, BB_NEUTRAL_GRID, BB_RSI_MOMENTUM)
@@ -76,26 +83,24 @@ class BollingerStrategyConfig:
         fallback_range_pct: Fallback range when ATR unavailable
     """
 
-    # Walk-Forward 驗證通過參數 (2026-01-27)
-    # W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
-    # 年化: 17.39%, 回撤: 6.60%, Sharpe: 4.70
+    # 所有默認值來自實戰配置 (單一來源，確保一致性)
     mode: BollingerMode = BollingerMode.BB_TREND_GRID
-    bb_period: int = 12                                    # 優化後: 12 (原 20)
-    bb_std: Decimal = Decimal("2.0")
-    grid_count: int = 6                                    # 優化後: 6 (原 10)
-    grid_range_pct: Decimal = Decimal("0.02")              # 優化後: 2% (原 4%)
-    take_profit_grids: int = 2                             # 優化後: 2 (原 1)
-    stop_loss_pct: Decimal = Decimal("0.025")              # 優化後: 2.5% (原 5%)
-    # Protective features (驗證後: 關閉)
-    use_hysteresis: bool = False
-    hysteresis_pct: Decimal = Decimal("0.002")
-    use_signal_cooldown: bool = False
-    cooldown_bars: int = 0                                 # 優化後: 0 (原 2)
+    bb_period: int = _DEFAULT_LIVE_CONFIG.bb_period
+    bb_std: Decimal = _DEFAULT_LIVE_CONFIG.bb_std
+    grid_count: int = _DEFAULT_LIVE_CONFIG.grid_count
+    grid_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.grid_range_pct
+    take_profit_grids: int = _DEFAULT_LIVE_CONFIG.take_profit_grids
+    stop_loss_pct: Decimal = _DEFAULT_LIVE_CONFIG.stop_loss_pct
+    # Protective features
+    use_hysteresis: bool = _DEFAULT_LIVE_CONFIG.use_hysteresis
+    hysteresis_pct: Decimal = _DEFAULT_LIVE_CONFIG.hysteresis_pct
+    use_signal_cooldown: bool = _DEFAULT_LIVE_CONFIG.use_signal_cooldown
+    cooldown_bars: int = _DEFAULT_LIVE_CONFIG.cooldown_bars
     # ATR dynamic range (for BB_NEUTRAL_GRID mode)
-    use_atr_range: bool = False
-    atr_period: int = 21
-    atr_multiplier: Decimal = Decimal("4.0")
-    fallback_range_pct: Decimal = Decimal("0.04")
+    use_atr_range: bool = _DEFAULT_LIVE_CONFIG.use_atr_range
+    atr_period: int = _DEFAULT_LIVE_CONFIG.atr_period
+    atr_multiplier: Decimal = _DEFAULT_LIVE_CONFIG.atr_multiplier
+    fallback_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.fallback_range_pct
 
 
 @dataclass

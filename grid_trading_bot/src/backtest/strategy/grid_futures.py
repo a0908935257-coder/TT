@@ -31,6 +31,8 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
+from ...bots.grid_futures.models import GridFuturesConfig as LiveGridFuturesConfig
+from ...bots.grid_futures.models import GridDirection as LiveGridDirection
 from ...core.models import Kline
 from ..order import Signal
 from ..position import Position
@@ -45,44 +47,48 @@ class GridDirection(str, Enum):
     TREND_FOLLOW = "trend_follow"
 
 
+# 使用實戰配置的默認值作為回測默認值 (單一來源)
+_DEFAULT_LIVE_CONFIG = LiveGridFuturesConfig(symbol="BTCUSDT")
+
+
 @dataclass
 class GridFuturesStrategyConfig:
     """
     Configuration for Grid Futures backtest strategy.
 
-    ⚠️ W-F 驗證通過的高槓桿配置 (2026-01-27):
-    - 年化 43.25%, 回撤 3.74%, 一致性 100%
+    所有默認值均來自實戰配置 (GridFuturesConfig)，確保回測與實戰一致。
 
     Attributes:
-        grid_count: Number of grid levels (default 12, W-F validated)
-        direction: Trading direction mode (default NEUTRAL)
-        leverage: Leverage multiplier (default 18x, HIGH RISK)
-        trend_period: SMA period for trend detection (default 20)
-        atr_period: ATR calculation period (default 21, W-F validated)
-        atr_multiplier: ATR multiplier for range (default 6.0, wide range)
-        fallback_range_pct: Range when ATR unavailable (default 8%)
-        stop_loss_pct: Stop loss percentage (default 0.5%, TIGHT)
-        take_profit_grids: Number of grids for take profit (default 1)
-        use_hysteresis: Enable hysteresis buffer zone (default True)
-        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
-        use_signal_cooldown: Enable signal cooldown (default False)
-        cooldown_bars: Minimum bars between signals (default 0)
+        grid_count: Number of grid levels
+        direction: Trading direction mode
+        leverage: Leverage multiplier
+        trend_period: SMA period for trend detection
+        atr_period: ATR calculation period
+        atr_multiplier: ATR multiplier for range
+        fallback_range_pct: Range when ATR unavailable
+        stop_loss_pct: Stop loss percentage
+        take_profit_grids: Number of grids for take profit
+        use_hysteresis: Enable hysteresis buffer zone
+        hysteresis_pct: Hysteresis percentage
+        use_signal_cooldown: Enable signal cooldown
+        cooldown_bars: Minimum bars between signals
     """
 
-    grid_count: int = 12  # W-F 驗證通過
-    direction: GridDirection = GridDirection.NEUTRAL
-    leverage: int = 18  # ⚠️ 高槓桿 (W-F 驗證通過)
-    trend_period: int = 20
-    atr_period: int = 21  # W-F 驗證通過
-    atr_multiplier: Decimal = Decimal("6.0")  # 寬範圍
-    fallback_range_pct: Decimal = Decimal("0.08")
-    stop_loss_pct: Decimal = Decimal("0.005")  # ⚠️ 0.5% 緊止損
-    take_profit_grids: int = 1
-    # Protective features (W-F 驗證通過)
-    use_hysteresis: bool = True
-    hysteresis_pct: Decimal = Decimal("0.002")  # 0.2%
-    use_signal_cooldown: bool = False  # 禁用
-    cooldown_bars: int = 0
+    # 所有默認值來自實戰配置 (單一來源，確保一致性)
+    grid_count: int = _DEFAULT_LIVE_CONFIG.grid_count
+    direction: GridDirection = GridDirection.NEUTRAL  # 映射到本地 enum
+    leverage: int = _DEFAULT_LIVE_CONFIG.leverage
+    trend_period: int = _DEFAULT_LIVE_CONFIG.trend_period
+    atr_period: int = _DEFAULT_LIVE_CONFIG.atr_period
+    atr_multiplier: Decimal = _DEFAULT_LIVE_CONFIG.atr_multiplier
+    fallback_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.fallback_range_pct
+    stop_loss_pct: Decimal = _DEFAULT_LIVE_CONFIG.stop_loss_pct
+    take_profit_grids: int = 1  # 回測專用參數，實戰配置無此欄位
+    # Protective features
+    use_hysteresis: bool = _DEFAULT_LIVE_CONFIG.use_hysteresis
+    hysteresis_pct: Decimal = _DEFAULT_LIVE_CONFIG.hysteresis_pct
+    use_signal_cooldown: bool = _DEFAULT_LIVE_CONFIG.use_signal_cooldown
+    cooldown_bars: int = _DEFAULT_LIVE_CONFIG.cooldown_bars
 
     def __post_init__(self):
         if not isinstance(self.atr_multiplier, Decimal):
