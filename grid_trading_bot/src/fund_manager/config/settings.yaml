@@ -77,12 +77,13 @@ bots:
   # ===========================================================================
   # Bollinger Bot (BB_NEUTRAL_GRID 策略: 雙向中性網格交易)
   # ===========================================================================
-  # 參數優化 + Walk-Forward 驗證 (2026-01-27):
-  # - 年化報酬: 44.30%, Sharpe: 9.74, 回撤: 3.76%
+  # 多目標優化 + Walk-Forward 驗證 (2026-01-28):
+  # - 年化報酬: 53.23%, Sharpe: 11.83, 回撤: 2.12%
+  # - IS: 103.39%, OOS: 30.75%, OOS超額報酬: +44.90%
   # - W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
-  # - 勝率: 56.5%, 交易數: 4960/2年
+  # - 參數穩健性: 100% (CV=4.5%)
+  # - 勝率: 39.6%, 交易數: 5625/2年
   # ⚠️ 高槓桿配置 - 18x 槓桿 (驗證通過)
-  # 相比 BB_TREND_GRID: 年化 +155%, 回撤 -40%, Sharpe +107%
   # ===========================================================================
   - bot_id: bollinger_*
     name: "Bollinger BB_NEUTRAL_GRID Strategy"
@@ -94,7 +95,7 @@ bots:
     max_capital: 8000
     priority: 9
 
-    # --- 策略參數 (W-F 驗證通過 2026-01-27) ---
+    # --- 策略參數 (多目標優化 2026-01-28) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
@@ -104,35 +105,35 @@ bots:
       max_position_pct: 0.5
 
       # Strategy Mode (驗證通過)
-      mode: bb_neutral_grid               # 雙向中性網格 (年化 44.30%)
+      mode: bb_neutral_grid               # 雙向中性網格 (年化 53.23%)
 
       # Bollinger Bands (用於參考，不作為趨勢過濾)
-      bb_period: 20
+      bb_period: 31                       # 優化後: 31 (原 20)
       bb_std: 2.0
 
-      # Grid Parameters (驗證通過)
-      grid_count: 12                      # 驗證通過: 12
+      # Grid Parameters (優化後)
+      grid_count: 14                      # 優化後: 14 (原 12)
       take_profit_grids: 1                # 驗證通過: 1
 
-      # ATR Dynamic Range (驗證通過)
+      # ATR Dynamic Range (優化後)
       use_atr_range: true                 # 啟用 ATR 動態範圍
-      atr_period: 21                      # 驗證通過: 21
-      atr_multiplier: 6.0                 # 驗證通過: 6.0 (寬範圍)
+      atr_period: 29                      # 優化後: 29 (原 21)
+      atr_multiplier: 9.5                 # 優化後: 9.5 (原 6.0，更寬範圍)
       fallback_range_pct: 0.04            # ATR 不可用時的備用範圍
 
-      # Risk Management (驗證通過)
-      stop_loss_pct: 0.005                # ⚠️ 0.5% 緊止損 (驗證通過)
+      # Risk Management (優化後)
+      stop_loss_pct: 0.002                # 優化後: 0.2% (原 0.5%)
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (驗證通過)
+      # Protective Features (優化後)
       use_hysteresis: true                # 驗證通過: 啟用
-      hysteresis_pct: 0.002               # 0.2%
+      hysteresis_pct: 0.0025              # 優化後: 0.25% (原 0.2%)
       use_signal_cooldown: false          # 驗證通過: 關閉
-      cooldown_bars: 0
+      cooldown_bars: 1                    # 優化後: 1 (原 0)
 
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
@@ -295,12 +296,12 @@ bots:
       cooldown_bars: 4                   # 4 bars (原 2 → 4)
 
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
-# 預估組合年化報酬: ~40-45%
+# 預估組合年化報酬: ~40-50%
 #   - Grid Futures (40%): 45.18% 年化 (積極策略 42x)
-#   - Bollinger NEUTRAL (25%): 44.30% 年化
+#   - Bollinger NEUTRAL (25%): 53.23% 年化 (優化後 2026-01-28)
 #   - Supertrend (15%): 8.69% 年化
 #   - RSI-Grid (10%): 5.59% 年化
-# 加權平均: 0.4*45.18 + 0.25*44.30 + 0.15*8.69 + 0.10*5.59 = 31.4% (保守估計)
+# 加權平均: 0.4*45.18 + 0.25*53.23 + 0.15*8.69 + 0.10*5.59 = 33.6% (保守估計)
 # ⚠️ 超高槓桿風險配置 - Grid Futures 42x, Bollinger 18x
 
 # -----------------------------------------------------------------------------
