@@ -77,37 +77,6 @@ fund_manager:
   auto_dispatch: true                  # Automatically dispatch funds on deposit
   strategy: fixed_ratio                # Allocation strategy: fixed_ratio, fixed_amount, dynamic_weight
 
-  # Bot allocation configurations (總計 90%, 保留 10%)
-  # 實戰配置 (2026-01-28): 全策略 W-F 驗證通過
-  allocations:
-    # Grid Futures - 積極策略 (42x, 年化 45.18%, W-F 88.9%)
-    - bot_pattern: "grid_futures_*"
-      ratio: 0.40                      # 40% (主力策略)
-      min_capital: 100
-      max_capital: 10000
-      priority: 10
-      enabled: true
-
-    # Bollinger BB_NEUTRAL_GRID (18x, 年化 44.30%, W-F 100%)
-    - bot_pattern: "bollinger_*"
-      ratio: 0.25                      # 25%
-      min_capital: 50
-      max_capital: 8000
-      priority: 9
-      enabled: true
-
-    # RSI-Grid Hybrid (2x, 年化 5.59%, W-F 50%)
-    - bot_pattern: "rsi_*"
-      ratio: 0.10                      # 10%
-      min_capital: 50
-      max_capital: 5000
-      priority: 8
-      enabled: true
-
-    # Supertrend GRID (2x, 年化 8.69%, Monte Carlo ROBUST)
-    - bot_pattern: "supertrend_*"
-      ratio: 0.15                      # 15%
-      min_capital: 100
-      max_capital: 5000
-      priority: 7
-      enabled: true
+  # Bot allocations (ratio, priority, capital) 定義於:
+  # src/fund_manager/config/settings.yaml → bots[]
+  # 此處不再重複定義，避免不一致
