@@ -34,6 +34,8 @@ from src.backtest.strategy import (
     GridFuturesStrategyConfig,
     GridDirection,
 )
+from src.backtest.strategy.rsi_grid import RSIGridBacktestStrategy, RSIGridStrategyConfig
+from src.config import load_strategy_config
 from src.core.models import Kline
 from src.exchange import ExchangeClient
 
@@ -142,6 +144,30 @@ def create_strategy(strategy_name: str, params: dict):
         )
         return GridFuturesBacktestStrategy(config)
 
+    elif strategy_name == "rsi":
+        # RSI-Grid 策略 (從 settings.yaml 讀取實戰參數)
+        yaml_params = load_strategy_config("rsi_grid")
+        config = RSIGridStrategyConfig(
+            rsi_period=yaml_params.get("rsi_period", 14),
+            oversold_level=yaml_params.get("oversold_level", 33),
+            overbought_level=yaml_params.get("overbought_level", 66),
+            grid_count=yaml_params.get("grid_count", 8),
+            atr_period=yaml_params.get("atr_period", 22),
+            atr_multiplier=Decimal(str(yaml_params.get("atr_multiplier", "3.5"))),
+            trend_sma_period=yaml_params.get("trend_sma_period", 39),
+            use_trend_filter=yaml_params.get("use_trend_filter", False),
+            position_size_pct=Decimal(str(yaml_params.get("position_size_pct", "0.1"))),
+            stop_loss_atr_mult=Decimal(str(yaml_params.get("stop_loss_atr_mult", "2.0"))),
+            max_stop_loss_pct=Decimal(str(yaml_params.get("max_stop_loss_pct", "0.03"))),
+            take_profit_grids=yaml_params.get("take_profit_grids", 1),
+            max_positions=yaml_params.get("max_positions", 5),
+            use_hysteresis=yaml_params.get("use_hysteresis", False),
+            hysteresis_pct=Decimal(str(yaml_params.get("hysteresis_pct", "0.003"))),
+            use_signal_cooldown=yaml_params.get("use_signal_cooldown", False),
+            cooldown_bars=yaml_params.get("cooldown_bars", 2),
+        )
+        return RSIGridBacktestStrategy(config)
+
     else:
         raise ValueError(f"未知策略: {strategy_name}")
 
@@ -220,6 +246,11 @@ async def main():
     )
 
     args = parser.parse_args()
+
+    # RSI 策略：用 yaml leverage (2) 覆蓋 CLI 預設 (10)
+    if args.strategy == "rsi" and args.leverage == 10:
+        yaml_params = load_strategy_config("rsi_grid")
+        args.leverage = yaml_params.get("leverage", 2)
 
     print("\n" + "=" * 60)
     print("         統一回測系統 - Unified Backtest Runner")
