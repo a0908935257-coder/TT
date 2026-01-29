@@ -12,8 +12,8 @@ Supertrend TREND_GRID 策略多目標優化腳本.
 4. 回撤懲罰
 
 約束條件：
-- 最大回撤 <= 30%
-- IS 交易數 >= 280, OOS 交易數 >= 120
+- 最大回撤 <= 35%
+- IS 交易數 >= 200, OOS 交易數 >= 80
 - 移除 win_rate >= 50% 限制（允許低勝率高盈虧比）
 
 用法:
@@ -162,16 +162,16 @@ def create_multi_objective(
 
     優化目標:
     score = OOS_excess * 2           # OOS 超額報酬（最高權重）
-         + IS_excess * 0.5           # IS 超額報酬（輔助）
-         + OOS_sharpe * 10           # Sharpe 風險調整
-         + min(OOS_return, 50) * 0.5 # OOS 絕對報酬（封頂）
+         + IS_return * 0.5           # IS 絕對報酬
+         + OOS_return * 2.0          # OOS 絕對報酬（不封頂）
+         + OOS_sharpe * 5            # Sharpe 風險調整（降低權重）
          - max_drawdown * 0.3        # 回撤懲罰
          + consistency_bonus * 10    # 一致性獎勵
-         + trade_bonus               # 交易次數獎勵 log(total/400)*5
+         + trade_bonus               # 交易次數獎勵 log(total/400)*2
 
     約束條件:
-    - 最大回撤 <= 30%
-    - IS 交易數 >= 280, OOS 交易數 >= 120
+    - 最大回撤 <= 35%
+    - IS 交易數 >= 200, OOS 交易數 >= 80
     """
 
     def objective(trial: optuna.Trial) -> float:
@@ -232,15 +232,15 @@ def create_multi_objective(
         # ========== 約束條件 ==========
 
         # 交易數約束（要求充足交易，一年至少 200 筆）
-        if is_trades < 280:
+        if is_trades < 200:
             trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
             return -500 + is_trades
-        if oos_trades < 120:
+        if oos_trades < 80:
             trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
             return -500 + oos_trades
 
         # 回撤約束
-        if max_dd > 30:
+        if max_dd > 35:
             trial.set_user_attr("rejection_reason", f"回撤過大: {max_dd:.1f}%")
             return -100 - max_dd
 
@@ -249,14 +249,14 @@ def create_multi_objective(
         # 1. OOS 超額報酬（最重要）
         oos_excess_score = oos_excess * 2
 
-        # 2. IS 超額報酬（輔助）
-        is_excess_score = is_excess * 0.5
+        # 2. IS 絕對報酬（取代 IS 超額報酬，避免被市場漲幅拖累）
+        is_return_score = is_return * 0.5
 
-        # 3. OOS Sharpe（風險調整）
-        sharpe_score = oos_sharpe * 10
+        # 3. OOS 絕對報酬（不封頂，大幅提高權重）
+        oos_return_score = oos_return * 2.0
 
-        # 4. OOS 絕對報酬獎勵（封頂 50%）
-        oos_abs_score = min(oos_return, 50) * 0.5
+        # 4. OOS Sharpe（降低權重，避免過度偏好低波動）
+        sharpe_score = oos_sharpe * 5
 
         # 5. 回撤懲罰
         dd_penalty = max_dd * 0.3
@@ -266,12 +266,12 @@ def create_multi_objective(
         if is_excess > 0 and oos_excess > 0:
             consistency_bonus = 10
 
-        # 7. 交易次數獎勵（鼓勵更多交易）
+        # 7. 交易次數獎勵（降低權重，避免過度追求交易量）
         total_trades = is_trades + oos_trades
-        trade_bonus = math.log(total_trades / 400) * 5
+        trade_bonus = math.log(total_trades / 400) * 2
 
         # 總分
-        score = oos_excess_score + is_excess_score + sharpe_score + oos_abs_score - dd_penalty + consistency_bonus + trade_bonus
+        score = oos_excess_score + is_return_score + oos_return_score + sharpe_score - dd_penalty + consistency_bonus + trade_bonus
 
         # 記錄詳細指標
         trial.set_user_attr("is_return", is_return)
