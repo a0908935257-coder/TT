@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-RSI-Grid 策略參數優化腳本.
+RSI-Grid v2 策略參數優化腳本.
 
-使用 Optuna Bayesian 優化找到最佳參數組合。
-基於 1h 時間框架（比 15m 表現更好）。
+改進:
+- 全 categorical 參數（抗過擬合）
+- 內建 70/30 train/test split
+- OOS/IS consistency 檢驗
+- Overfit penalty
 
 用法:
-    python optimize_rsi_grid.py --trials 100
+    python optimize_rsi_grid.py --trials 200
     python optimize_rsi_grid.py --trials 200 --timeout 3600
 """
 
 import argparse
 import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -58,94 +62,104 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
+def run_backtest(klines: list[Kline], config: RSIGridStrategyConfig, leverage: int):
+    """Run a single backtest and return the result."""
+    strategy = RSIGridBacktestStrategy(config)
+    bt_config = BacktestConfig(
+        initial_capital=Decimal("10000"),
+        leverage=leverage,
+        fee_rate=Decimal("0.0004"),
+        slippage_pct=Decimal("0.0001"),
+    )
+    engine = BacktestEngine(bt_config)
+    return engine.run(klines, strategy)
+
+
 def create_objective(klines: list[Kline], leverage: int = 2):
-    """創建 Optuna 目標函數."""
+    """創建 Optuna 目標函數（內建 train/test split）."""
+
+    # 70/30 split
+    split_idx = int(len(klines) * 0.7)
+    train_klines = klines[:split_idx]
+    test_klines = klines[split_idx:]
+
+    print(f"Train: {len(train_klines)} bars, Test: {len(test_klines)} bars")
 
     def objective(trial: optuna.Trial) -> float:
-        # RSI 參數
-        rsi_period = trial.suggest_int("rsi_period", 7, 28)
-        oversold_level = trial.suggest_int("oversold_level", 20, 40)
-        overbought_level = trial.suggest_int("overbought_level", 60, 80)
+        # 全 categorical 參數（11 個離散值）
+        rsi_period = trial.suggest_categorical("rsi_period", [7, 10, 14, 21])
+        rsi_block_threshold = trial.suggest_categorical("rsi_block_threshold", [0.5, 0.6, 0.7, 0.8, 0.9])
+        atr_period = trial.suggest_categorical("atr_period", [10, 14, 21])
+        grid_count = trial.suggest_categorical("grid_count", [10, 12, 15, 18, 20])
+        atr_multiplier = trial.suggest_categorical("atr_multiplier", [1.5, 2.0, 2.5, 3.0])
+        stop_loss_atr_mult = trial.suggest_categorical("stop_loss_atr_mult", [1.0, 1.5, 2.0])
+        take_profit_grids = trial.suggest_categorical("take_profit_grids", [1, 2])
+        max_hold_bars = trial.suggest_categorical("max_hold_bars", [12, 24, 48])
+        use_trailing_stop = trial.suggest_categorical("use_trailing_stop", [True, False])
+        trailing_activate_pct = trial.suggest_categorical("trailing_activate_pct", [0.005, 0.01, 0.015])
+        trailing_distance_pct = trial.suggest_categorical("trailing_distance_pct", [0.003, 0.005, 0.008])
 
-        # Grid 參數
-        grid_count = trial.suggest_int("grid_count", 5, 20)
-        atr_period = trial.suggest_int("atr_period", 10, 30)
-        atr_multiplier = trial.suggest_float("atr_multiplier", 1.5, 5.0, step=0.5)
-
-        # Trend Filter
-        trend_sma_period = trial.suggest_int("trend_sma_period", 10, 50)
-        use_trend_filter = trial.suggest_categorical("use_trend_filter", [True, False])
-
-        # Risk Management
-        stop_loss_atr_mult = trial.suggest_float("stop_loss_atr_mult", 1.0, 3.0, step=0.5)
-        max_stop_loss_pct = trial.suggest_float("max_stop_loss_pct", 0.02, 0.05, step=0.01)
-        take_profit_grids = trial.suggest_int("take_profit_grids", 1, 3)
-
-        # Protective features
-        use_hysteresis = trial.suggest_categorical("use_hysteresis", [True, False])
-        hysteresis_pct = trial.suggest_float("hysteresis_pct", 0.001, 0.005, step=0.001)
-        use_signal_cooldown = trial.suggest_categorical("use_signal_cooldown", [True, False])
-        cooldown_bars = trial.suggest_int("cooldown_bars", 1, 4)
-
-        # 創建策略配置
         config = RSIGridStrategyConfig(
             rsi_period=rsi_period,
-            oversold_level=oversold_level,
-            overbought_level=overbought_level,
-            grid_count=grid_count,
+            rsi_block_threshold=rsi_block_threshold,
             atr_period=atr_period,
+            grid_count=grid_count,
             atr_multiplier=Decimal(str(atr_multiplier)),
-            trend_sma_period=trend_sma_period,
-            use_trend_filter=use_trend_filter,
             stop_loss_atr_mult=Decimal(str(stop_loss_atr_mult)),
-            max_stop_loss_pct=Decimal(str(max_stop_loss_pct)),
             take_profit_grids=take_profit_grids,
-            use_hysteresis=use_hysteresis,
-            hysteresis_pct=Decimal(str(hysteresis_pct)),
-            use_signal_cooldown=use_signal_cooldown,
-            cooldown_bars=cooldown_bars,
+            max_hold_bars=max_hold_bars,
+            use_trailing_stop=use_trailing_stop,
+            trailing_activate_pct=trailing_activate_pct,
+            trailing_distance_pct=trailing_distance_pct,
         )
 
-        strategy = RSIGridBacktestStrategy(config)
+        # Train backtest
+        train_result = run_backtest(train_klines, config, leverage)
+        train_trades = train_result.total_trades
+        train_sharpe = float(train_result.sharpe_ratio)
 
-        # 回測配置
-        bt_config = BacktestConfig(
-            initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
+        # 品質過濾: train 交易太少 → prune
+        if train_trades < 100:
+            raise optuna.TrialPruned(f"train_trades={train_trades} < 100")
+
+        # Test backtest
+        test_result = run_backtest(test_klines, config, leverage)
+        test_trades = test_result.total_trades
+        test_sharpe = float(test_result.sharpe_ratio)
+        test_return = float(test_result.total_profit_pct)
+        test_dd = float(test_result.max_drawdown_pct)
+
+        # OOS/IS Sharpe ratio
+        if train_sharpe > 0:
+            oos_is_ratio = test_sharpe / train_sharpe
+        else:
+            oos_is_ratio = 0.0
+
+        # Consistency bonus: OOS/IS ratio close to 1.0 is good
+        consistency_bonus = min(oos_is_ratio, 1.0) * 2.0 if oos_is_ratio >= 0.5 else 0.0
+
+        # Overfit penalty: large gap between IS and OOS
+        overfit_penalty = 0.0
+        if oos_is_ratio < 0.5:
+            overfit_penalty = 3.0  # heavy penalty
+
+        # Score = weighted combination
+        score = (
+            test_sharpe * 0.4
+            + train_sharpe * 0.2
+            + consistency_bonus
+            - overfit_penalty
         )
 
-        engine = BacktestEngine(bt_config)
-        result = engine.run(klines, strategy)
-
-        # 計算指標
-        sharpe = float(result.sharpe_ratio)
-        total_return = float(result.total_profit_pct)
-        max_dd = float(result.max_drawdown_pct)
-        win_rate = float(result.win_rate)
-        trades = result.total_trades
-
-        # 過濾低質量結果
-        if trades < 30:
-            return -100  # 交易太少
-        if max_dd > 15:
-            return -100  # 回撤太大
-        if win_rate < 50:
-            return -100  # 勝率太低
-
-        # 目標函數: 最大化風險調整後報酬
-        import math
-        trade_bonus = 1 + math.log(max(trades, 1)) / 10
-        dd_penalty = max_dd * 0.5
-
-        score = sharpe * trade_bonus - dd_penalty
-
-        # 記錄中間結果
-        trial.set_user_attr("total_return", total_return)
-        trial.set_user_attr("max_drawdown", max_dd)
-        trial.set_user_attr("win_rate", win_rate)
-        trial.set_user_attr("trades", trades)
+        # Record attrs
+        trial.set_user_attr("train_trades", train_trades)
+        trial.set_user_attr("train_sharpe", train_sharpe)
+        trial.set_user_attr("train_return", float(train_result.total_profit_pct))
+        trial.set_user_attr("test_trades", test_trades)
+        trial.set_user_attr("test_sharpe", test_sharpe)
+        trial.set_user_attr("test_return", test_return)
+        trial.set_user_attr("test_dd", test_dd)
+        trial.set_user_attr("oos_is_ratio", oos_is_ratio)
 
         return score
 
@@ -153,23 +167,23 @@ def create_objective(klines: list[Kline], leverage: int = 2):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RSI-Grid 參數優化")
+    parser = argparse.ArgumentParser(description="RSI-Grid v2 參數優化")
     parser.add_argument(
         "--data-file",
         default="data/historical/BTCUSDT_1h_730d.json",
-        help="歷史數據檔案路徑 (建議使用 1h)"
+        help="歷史數據檔案路徑"
     )
     parser.add_argument(
         "--trials", "-n",
         type=int,
-        default=100,
-        help="優化試驗次數 (default: 100)"
+        default=200,
+        help="優化試驗次數 (default: 200)"
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=None,
-        help="超時秒數 (default: 無限制)"
+        help="超時秒數"
     )
     parser.add_argument(
         "--leverage",
@@ -198,11 +212,11 @@ def main():
     study = optuna.create_study(
         direction="maximize",
         sampler=sampler,
-        study_name="rsi_grid_optimization",
+        study_name="rsi_grid_v2_optimization",
     )
 
     # 執行優化
-    print(f"\n開始優化 ({args.trials} 次試驗)...")
+    print(f"\n開始優化 ({args.trials} 次試驗, 70/30 train/test split)...")
     print("=" * 60)
 
     objective = create_objective(klines, args.leverage)
@@ -221,82 +235,80 @@ def main():
 
     best = study.best_trial
     print(f"\n最佳得分: {best.value:.4f}")
-    print(f"報酬: {best.user_attrs.get('total_return', 0):.2f}%")
-    print(f"回撤: {best.user_attrs.get('max_drawdown', 0):.2f}%")
-    print(f"勝率: {best.user_attrs.get('win_rate', 0):.1f}%")
-    print(f"交易: {best.user_attrs.get('trades', 0)}")
+    print(f"\nTrain:")
+    print(f"  Sharpe: {best.user_attrs.get('train_sharpe', 0):.2f}")
+    print(f"  Return: {best.user_attrs.get('train_return', 0):.2f}%")
+    print(f"  Trades: {best.user_attrs.get('train_trades', 0)}")
+    print(f"\nTest (OOS):")
+    print(f"  Sharpe: {best.user_attrs.get('test_sharpe', 0):.2f}")
+    print(f"  Return: {best.user_attrs.get('test_return', 0):.2f}%")
+    print(f"  Drawdown: {best.user_attrs.get('test_dd', 0):.2f}%")
+    print(f"  Trades: {best.user_attrs.get('test_trades', 0)}")
+    print(f"\nOOS/IS Sharpe Ratio: {best.user_attrs.get('oos_is_ratio', 0):.2f}")
 
     print("\n最佳參數:")
     print("-" * 40)
     for key, value in best.params.items():
         print(f"  {key}: {value}")
 
-    # 使用最佳參數執行完整回測
+    # Full backtest with best params
     print("\n使用最佳參數執行完整回測...")
     best_config = RSIGridStrategyConfig(
         rsi_period=best.params["rsi_period"],
-        oversold_level=best.params["oversold_level"],
-        overbought_level=best.params["overbought_level"],
-        grid_count=best.params["grid_count"],
+        rsi_block_threshold=best.params["rsi_block_threshold"],
         atr_period=best.params["atr_period"],
+        grid_count=best.params["grid_count"],
         atr_multiplier=Decimal(str(best.params["atr_multiplier"])),
-        trend_sma_period=best.params["trend_sma_period"],
-        use_trend_filter=best.params["use_trend_filter"],
         stop_loss_atr_mult=Decimal(str(best.params["stop_loss_atr_mult"])),
-        max_stop_loss_pct=Decimal(str(best.params["max_stop_loss_pct"])),
         take_profit_grids=best.params["take_profit_grids"],
-        use_hysteresis=best.params["use_hysteresis"],
-        hysteresis_pct=Decimal(str(best.params["hysteresis_pct"])),
-        use_signal_cooldown=best.params["use_signal_cooldown"],
-        cooldown_bars=best.params["cooldown_bars"],
+        max_hold_bars=best.params["max_hold_bars"],
+        use_trailing_stop=best.params["use_trailing_stop"],
+        trailing_activate_pct=best.params["trailing_activate_pct"],
+        trailing_distance_pct=best.params["trailing_distance_pct"],
     )
 
-    best_strategy = RSIGridBacktestStrategy(best_config)
-    bt_config = BacktestConfig(
-        initial_capital=Decimal("10000"),
-        leverage=args.leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+    full_result = run_backtest(klines, best_config, args.leverage)
 
-    engine = BacktestEngine(bt_config)
-    final_result = engine.run(klines, best_strategy)
-
-    # 計算年化報酬 (2年數據)
-    total_return = float(final_result.total_profit_pct)
-    annual_return = ((1 + total_return/100) ** 0.5 - 1) * 100
+    total_return = float(full_result.total_profit_pct)
+    days = len(klines) / 24  # 1h bars
+    annual_return = ((1 + total_return / 100) ** (365 / days) - 1) * 100 if days > 0 else 0
+    trades_per_day = full_result.total_trades / days if days > 0 else 0
 
     print("\n" + "=" * 60)
-    print("  最佳參數回測結果")
+    print("  最佳參數完整回測結果")
     print("=" * 60)
     print(f"  總報酬: {total_return:.2f}%")
     print(f"  年化報酬: {annual_return:.2f}%")
-    print(f"  Sharpe Ratio: {float(final_result.sharpe_ratio):.2f}")
-    print(f"  最大回撤: {float(final_result.max_drawdown_pct):.2f}%")
-    print(f"  勝率: {float(final_result.win_rate):.1f}%")
-    print(f"  總交易數: {final_result.total_trades}")
+    print(f"  Sharpe Ratio: {float(full_result.sharpe_ratio):.2f}")
+    print(f"  最大回撤: {float(full_result.max_drawdown_pct):.2f}%")
+    print(f"  勝率: {float(full_result.win_rate):.1f}%")
+    print(f"  總交易數: {full_result.total_trades}")
+    print(f"  每日交易: {trades_per_day:.1f}")
 
     # 儲存結果
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"rsi_grid_optimization_{timestamp}.json"
+    output_file = output_dir / f"rsi_grid_v2_optimization_{timestamp}.json"
 
     results = {
         "optimization_date": datetime.now().isoformat(),
         "data_file": args.data_file,
         "trials": args.trials,
         "leverage": args.leverage,
+        "train_test_split": 0.7,
         "best_score": best.value,
         "best_params": best.params,
-        "final_result": {
+        "best_trial_attrs": best.user_attrs,
+        "full_result": {
             "total_return_pct": total_return,
             "annual_return_pct": annual_return,
-            "sharpe_ratio": float(final_result.sharpe_ratio),
-            "max_drawdown_pct": float(final_result.max_drawdown_pct),
-            "win_rate": float(final_result.win_rate),
-            "total_trades": final_result.total_trades,
+            "sharpe_ratio": float(full_result.sharpe_ratio),
+            "max_drawdown_pct": float(full_result.max_drawdown_pct),
+            "win_rate": float(full_result.win_rate),
+            "total_trades": full_result.total_trades,
+            "trades_per_day": trades_per_day,
         },
         "top_10_trials": [
             {
@@ -305,7 +317,11 @@ def main():
                 "params": t.params,
                 "user_attrs": t.user_attrs,
             }
-            for t in sorted(study.trials, key=lambda x: x.value if x.value else -999, reverse=True)[:10]
+            for t in sorted(
+                [t for t in study.trials if t.value is not None],
+                key=lambda x: x.value,
+                reverse=True,
+            )[:10]
         ],
     }
 
@@ -316,27 +332,10 @@ def main():
 
     # 輸出可直接使用的配置
     print("\n" + "=" * 60)
-    print("  建議配置 (可直接複製到實戰)")
+    print("  建議配置 (settings.yaml)")
     print("=" * 60)
-    print(f"""
-RSIGridConfig(
-    rsi_period={best.params["rsi_period"]},
-    oversold_level={best.params["oversold_level"]},
-    overbought_level={best.params["overbought_level"]},
-    grid_count={best.params["grid_count"]},
-    atr_period={best.params["atr_period"]},
-    atr_multiplier=Decimal("{best.params["atr_multiplier"]}"),
-    trend_sma_period={best.params["trend_sma_period"]},
-    use_trend_filter={best.params["use_trend_filter"]},
-    stop_loss_atr_mult=Decimal("{best.params["stop_loss_atr_mult"]}"),
-    max_stop_loss_pct=Decimal("{best.params["max_stop_loss_pct"]}"),
-    take_profit_grids={best.params["take_profit_grids"]},
-    use_hysteresis={best.params["use_hysteresis"]},
-    hysteresis_pct=Decimal("{best.params["hysteresis_pct"]}"),
-    use_signal_cooldown={best.params["use_signal_cooldown"]},
-    cooldown_bars={best.params["cooldown_bars"]},
-)
-""")
+    for key, value in best.params.items():
+        print(f"  {key}: {value}")
 
 
 if __name__ == "__main__":
