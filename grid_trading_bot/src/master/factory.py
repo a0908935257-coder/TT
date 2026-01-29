@@ -269,6 +269,13 @@ class BotFactory:
             # BBW filter
             bbw_lookback=int(config.get("bbw_lookback", _defaults.bbw_lookback)),
             bbw_threshold_pct=int(config.get("bbw_threshold_pct", _defaults.bbw_threshold_pct)),
+            # ATR dynamic range (BB_NEUTRAL_GRID mode)
+            use_atr_range=config.get("use_atr_range", _defaults.use_atr_range),
+            atr_period=int(config.get("atr_period", _defaults.atr_period)),
+            atr_multiplier=Decimal(str(config.get("atr_multiplier", _defaults.atr_multiplier))),
+            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", _defaults.fallback_range_pct))),
+            # Strategy mode
+            mode=config.get("mode", _defaults.mode),
             # Protective features
             use_hysteresis=config.get("use_hysteresis", _defaults.use_hysteresis),
             hysteresis_pct=Decimal(str(config.get("hysteresis_pct", _defaults.hysteresis_pct))),
