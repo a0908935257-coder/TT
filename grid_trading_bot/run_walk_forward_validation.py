@@ -173,17 +173,21 @@ def create_all_strategies() -> dict:
         "supertrend": SupertrendBacktestStrategy(supertrend_config),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
         "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig(
-            rsi_period=7,
-            rsi_block_threshold=0.9,
+            rsi_period=14,
+            rsi_block_threshold=0.7,
             atr_period=10,
-            grid_count=10,
-            atr_multiplier=Decimal("2.5"),
+            grid_count=12,
+            atr_multiplier=Decimal("4.0"),
             stop_loss_atr_mult=Decimal("1.5"),
-            take_profit_grids=1,
-            max_hold_bars=12,
-            use_trailing_stop=True,
+            take_profit_grids=2,
+            max_hold_bars=16,
+            use_trailing_stop=False,
             trailing_activate_pct=0.01,
-            trailing_distance_pct=0.008,
+            trailing_distance_pct=0.005,
+            use_volatility_filter=True,
+            vol_atr_baseline_period=100,
+            vol_ratio_low=0.7,
+            vol_ratio_high=2.5,
         )),
         "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),
     }
@@ -560,7 +564,7 @@ async def main():
 
         # 策略對應的槓桿倍數
         strategy_leverage = {
-            "rsi_grid": 5,
+            "rsi_grid": 7,
             "grid_futures": 42,
             "bollinger": 18,
             "supertrend": 18,
