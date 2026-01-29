@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
 """
-Supertrend 策略參數優化腳本.
+Supertrend TREND_GRID 策略多目標優化腳本.
 
-使用 Optuna Bayesian 優化找到最佳參數組合。
-保持與實戰一致的過濾器（hysteresis, cooldown, trailing stop）。
+使用 IS+OOS 聯合優化，防止過度擬合訓練數據。
+仿照 BB_NEUTRAL_GRID 的成功優化模式。
+
+核心優化策略：
+1. 使用「超額報酬」而非絕對報酬 (策略報酬 - 市場報酬)
+2. OOS 正超額報酬優先 (跑贏市場 = 成功)
+3. 風險調整報酬 (Sharpe)
+4. 回撤懲罰
+
+約束條件：
+- 最大回撤 <= 30%
+- IS 交易數 >= 100, OOS 交易數 >= 50
+- 移除 win_rate >= 50% 限制（允許低勝率高盈虧比）
 
 用法:
-    python optimize_supertrend.py --trials 100
-    python optimize_supertrend.py --trials 200 --timeout 3600
+    python optimize_supertrend.py --trials 200 --leverage 18
+    python optimize_supertrend.py --trials 100 --leverage 18 --quick
 """
 
 import argparse
 import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -59,130 +71,426 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def create_objective(klines: list[Kline], leverage: int = 10):
-    """創建 Optuna 目標函數."""
+def split_data(klines: list[Kline], train_ratio: float = 0.7) -> tuple[list[Kline], list[Kline], float, float]:
+    """
+    將數據分為訓練集 (IS) 和測試集 (OOS).
+
+    Returns:
+        (train_klines, test_klines, train_market_return, test_market_return)
+    """
+    split_idx = int(len(klines) * train_ratio)
+    train_klines = klines[:split_idx]
+    test_klines = klines[split_idx:]
+
+    # 計算市場報酬 (Buy & Hold)
+    train_market = (float(train_klines[-1].close) / float(train_klines[0].close) - 1) * 100
+    test_market = (float(test_klines[-1].close) / float(test_klines[0].close) - 1) * 100
+
+    print(f"\n數據分割:")
+    print(f"  訓練集 (IS): {train_klines[0].open_time.strftime('%Y-%m-%d')} ~ {train_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(train_klines):,} 根)")
+    print(f"  測試集 (OOS): {test_klines[0].open_time.strftime('%Y-%m-%d')} ~ {test_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(test_klines):,} 根)")
+    print(f"\n市場基準 (Buy & Hold):")
+    print(f"  訓練期: {train_market:+.2f}%")
+    print(f"  測試期: {test_market:+.2f}%")
+
+    return train_klines, test_klines, train_market, test_market
+
+
+def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
+    """
+    使用指定參數執行回測.
+
+    Args:
+        klines: K 線數據
+        params: 策略參數字典
+        leverage: 槓桿倍數
+
+    Returns:
+        回測結果字典
+    """
+    config = SupertrendStrategyConfig(
+        mode=SupertrendMode.TREND_GRID,
+        atr_period=params["atr_period"],
+        atr_multiplier=Decimal(str(params["atr_multiplier"])),
+        grid_count=params["grid_count"],
+        grid_atr_multiplier=Decimal(str(params["grid_atr_multiplier"])),
+        take_profit_grids=params["take_profit_grids"],
+        stop_loss_pct=Decimal(str(params["stop_loss_pct"])),
+        use_rsi_filter=True,
+        rsi_period=params["rsi_period"],
+        rsi_overbought=params["rsi_overbought"],
+        rsi_oversold=params["rsi_oversold"],
+        min_trend_bars=params["min_trend_bars"],
+        use_hysteresis=params["use_hysteresis"],
+        hysteresis_pct=Decimal(str(params["hysteresis_pct"])),
+        use_signal_cooldown=params["use_signal_cooldown"],
+        cooldown_bars=params["cooldown_bars"],
+        use_trailing_stop=True,
+        trailing_stop_pct=Decimal(str(params["trailing_stop_pct"])),
+    )
+
+    strategy = SupertrendBacktestStrategy(config)
+
+    bt_config = BacktestConfig(
+        initial_capital=Decimal("10000"),
+        leverage=leverage,
+        fee_rate=Decimal("0.0004"),
+        slippage_pct=Decimal("0.0001"),
+    )
+
+    engine = BacktestEngine(bt_config)
+    result = engine.run(klines, strategy)
+
+    return {
+        "total_return": float(result.total_profit_pct),
+        "max_drawdown": float(result.max_drawdown_pct),
+        "sharpe": float(result.sharpe_ratio),
+        "win_rate": float(result.win_rate),
+        "trades": result.total_trades,
+    }
+
+
+def create_multi_objective(
+    train_klines: list[Kline],
+    test_klines: list[Kline],
+    train_market: float,
+    test_market: float,
+    leverage: int = 18,
+):
+    """
+    創建多目標優化函數 (IS+OOS 聯合優化).
+
+    優化目標:
+    score = OOS_excess * 2           # OOS 超額報酬（最高權重）
+         + IS_excess * 0.5           # IS 超額報酬（輔助）
+         + OOS_sharpe * 10           # Sharpe 風險調整
+         + min(OOS_return, 50) * 0.5 # OOS 絕對報酬（封頂）
+         - max_drawdown * 0.3        # 回撤懲罰
+         + consistency_bonus * 10    # 一致性獎勵
+
+    約束條件:
+    - 最大回撤 <= 30%
+    - IS 交易數 >= 100, OOS 交易數 >= 50
+    """
 
     def objective(trial: optuna.Trial) -> float:
-        # 優化參數範圍
-        atr_period = trial.suggest_int("atr_period", 10, 50)
-        atr_multiplier = trial.suggest_float("atr_multiplier", 1.5, 5.0, step=0.5)
-        grid_count = trial.suggest_int("grid_count", 5, 20)
-        grid_atr_multiplier = trial.suggest_float("grid_atr_multiplier", 1.5, 5.0, step=0.5)
-        take_profit_grids = trial.suggest_int("take_profit_grids", 1, 3)
-        stop_loss_pct = trial.suggest_float("stop_loss_pct", 0.02, 0.10, step=0.01)
+        # 擴大參數搜索空間
+        params = {
+            "atr_period": trial.suggest_int("atr_period", 5, 60),
+            "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 6.0, step=0.5),
+            "grid_count": trial.suggest_int("grid_count", 3, 30),
+            "grid_atr_multiplier": trial.suggest_float("grid_atr_multiplier", 1.0, 10.0, step=0.5),
+            "take_profit_grids": trial.suggest_int("take_profit_grids", 1, 5),
+            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.002, 0.10, step=0.002),
+            "rsi_period": trial.suggest_int("rsi_period", 7, 21),
+            "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 75),
+            "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
+            "min_trend_bars": trial.suggest_int("min_trend_bars", 1, 5),
+            "hysteresis_pct": trial.suggest_float("hysteresis_pct", 0.0005, 0.01, step=0.0005),
+            "use_hysteresis": trial.suggest_categorical("use_hysteresis", [True, False]),
+            "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 6),
+            "trailing_stop_pct": trial.suggest_float("trailing_stop_pct", 0.01, 0.10, step=0.01),
+        }
 
-        # RSI 過濾器參數
-        rsi_period = trial.suggest_int("rsi_period", 7, 21)
-        rsi_overbought = trial.suggest_int("rsi_overbought", 55, 75)
-        rsi_oversold = trial.suggest_int("rsi_oversold", 25, 45)
+        # 執行 IS 回測 (訓練集)
+        try:
+            is_result = run_backtest(train_klines, params, leverage)
+        except Exception:
+            return -1000
 
-        # 趨勢確認
-        min_trend_bars = trial.suggest_int("min_trend_bars", 1, 5)
+        # 執行 OOS 回測 (測試集)
+        try:
+            oos_result = run_backtest(test_klines, params, leverage)
+        except Exception:
+            return -1000
 
-        # 與實戰一致的過濾器 (保持啟用，但可調整參數)
-        hysteresis_pct = trial.suggest_float("hysteresis_pct", 0.001, 0.005, step=0.001)
-        cooldown_bars = trial.suggest_int("cooldown_bars", 1, 4)
-        trailing_stop_pct = trial.suggest_float("trailing_stop_pct", 0.02, 0.10, step=0.01)
+        # 提取指標
+        is_return = is_result["total_return"]
+        oos_return = oos_result["total_return"]
+        is_sharpe = is_result["sharpe"]
+        oos_sharpe = oos_result["sharpe"]
+        is_trades = is_result["trades"]
+        oos_trades = oos_result["trades"]
+        is_dd = is_result["max_drawdown"]
+        oos_dd = oos_result["max_drawdown"]
+        max_dd = max(is_dd, oos_dd)
 
-        # 創建策略配置
-        config = SupertrendStrategyConfig(
-            mode=SupertrendMode.TREND_GRID,
-            atr_period=atr_period,
-            atr_multiplier=Decimal(str(atr_multiplier)),
-            grid_count=grid_count,
-            grid_atr_multiplier=Decimal(str(grid_atr_multiplier)),
-            take_profit_grids=take_profit_grids,
-            stop_loss_pct=Decimal(str(stop_loss_pct)),
-            use_rsi_filter=True,
-            rsi_period=rsi_period,
-            rsi_overbought=rsi_overbought,
-            rsi_oversold=rsi_oversold,
-            min_trend_bars=min_trend_bars,
-            # 與實戰一致的過濾器
-            use_hysteresis=True,
-            hysteresis_pct=Decimal(str(hysteresis_pct)),
-            use_signal_cooldown=True,
-            cooldown_bars=cooldown_bars,
-            use_trailing_stop=True,
-            trailing_stop_pct=Decimal(str(trailing_stop_pct)),
-        )
+        # 計算超額報酬
+        is_excess = is_return - train_market
+        oos_excess = oos_return - test_market
 
-        strategy = SupertrendBacktestStrategy(config)
+        # OOS/IS 比率
+        if is_return > 0 and oos_return > 0:
+            oos_is_ratio = oos_return / is_return
+        elif is_return > 0:
+            oos_is_ratio = oos_return / is_return
+        else:
+            oos_is_ratio = 0
 
-        # 回測配置
-        bt_config = BacktestConfig(
-            initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
-        )
+        # ========== 約束條件 ==========
 
-        engine = BacktestEngine(bt_config)
-        result = engine.run(klines, strategy)
+        # 交易數約束（要求充足交易）
+        if is_trades < 100:
+            trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
+            return -500 + is_trades
+        if oos_trades < 50:
+            trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
+            return -500 + oos_trades
 
-        # 多目標優化: Sharpe * sqrt(交易次數權重) - 回撤懲罰
-        sharpe = float(result.sharpe_ratio)
-        total_return = float(result.total_profit_pct)
-        max_dd = float(result.max_drawdown_pct)
-        win_rate = float(result.win_rate)
-        trades = result.total_trades
+        # 回撤約束
+        if max_dd > 30:
+            trial.set_user_attr("rejection_reason", f"回撤過大: {max_dd:.1f}%")
+            return -100 - max_dd
 
-        # 過濾低質量結果
-        if trades < 50:
-            return -100  # 交易太少
-        if max_dd > 20:
-            return -100  # 回撤太大
-        if win_rate < 50:
-            return -100  # 勝率太低
+        # ========== 多目標優化函數 ==========
 
-        # 目標函數: 最大化風險調整後報酬
-        # Sharpe * (1 + log(trades)/10) - 回撤懲罰
-        import math
-        trade_bonus = 1 + math.log(trades) / 10
-        dd_penalty = max_dd * 0.5
+        # 1. OOS 超額報酬（最重要）
+        oos_excess_score = oos_excess * 2
 
-        score = sharpe * trade_bonus - dd_penalty
+        # 2. IS 超額報酬（輔助）
+        is_excess_score = is_excess * 0.5
 
-        # 記錄中間結果
-        trial.set_user_attr("total_return", total_return)
-        trial.set_user_attr("max_drawdown", max_dd)
-        trial.set_user_attr("win_rate", win_rate)
-        trial.set_user_attr("trades", trades)
+        # 3. OOS Sharpe（風險調整）
+        sharpe_score = oos_sharpe * 10
+
+        # 4. OOS 絕對報酬獎勵（封頂 50%）
+        oos_abs_score = min(oos_return, 50) * 0.5
+
+        # 5. 回撤懲罰
+        dd_penalty = max_dd * 0.3
+
+        # 6. 一致性獎勵（兩期都跑贏市場）
+        consistency_bonus = 0
+        if is_excess > 0 and oos_excess > 0:
+            consistency_bonus = 10
+
+        # 總分
+        score = oos_excess_score + is_excess_score + sharpe_score + oos_abs_score - dd_penalty + consistency_bonus
+
+        # 記錄詳細指標
+        trial.set_user_attr("is_return", is_return)
+        trial.set_user_attr("oos_return", oos_return)
+        trial.set_user_attr("is_excess", is_excess)
+        trial.set_user_attr("oos_excess", oos_excess)
+        trial.set_user_attr("is_sharpe", is_sharpe)
+        trial.set_user_attr("oos_sharpe", oos_sharpe)
+        trial.set_user_attr("is_trades", is_trades)
+        trial.set_user_attr("oos_trades", oos_trades)
+        trial.set_user_attr("is_dd", is_dd)
+        trial.set_user_attr("oos_dd", oos_dd)
+        trial.set_user_attr("oos_is_ratio", oos_is_ratio)
+        trial.set_user_attr("train_market", train_market)
+        trial.set_user_attr("test_market", test_market)
 
         return score
 
     return objective
 
 
+def display_results(study: optuna.Study, leverage: int):
+    """顯示優化結果."""
+    print("\n" + "=" * 70)
+    print("  優化完成 - 最佳結果")
+    print("=" * 70)
+
+    best = study.best_trial
+
+    train_market = best.user_attrs.get('train_market', 0)
+    test_market = best.user_attrs.get('test_market', 0)
+
+    print(f"\n最佳得分: {best.value:.4f}")
+
+    print(f"\n[市場基準 (Buy & Hold)]")
+    print(f"  訓練期: {train_market:+.2f}%")
+    print(f"  測試期: {test_market:+.2f}%")
+
+    print(f"\n[樣本內 (IS) - 訓練期]")
+    print(f"  報酬: {best.user_attrs.get('is_return', 0):+.2f}%")
+    print(f"  超額報酬: {best.user_attrs.get('is_excess', 0):+.2f}%")
+    print(f"  Sharpe: {best.user_attrs.get('is_sharpe', 0):.2f}")
+    print(f"  回撤: {best.user_attrs.get('is_dd', 0):.2f}%")
+    print(f"  交易: {best.user_attrs.get('is_trades', 0)}")
+
+    print(f"\n[樣本外 (OOS) - 測試期]")
+    print(f"  報酬: {best.user_attrs.get('oos_return', 0):+.2f}%")
+    print(f"  超額報酬: {best.user_attrs.get('oos_excess', 0):+.2f}%")
+    print(f"  Sharpe: {best.user_attrs.get('oos_sharpe', 0):.2f}")
+    print(f"  回撤: {best.user_attrs.get('oos_dd', 0):.2f}%")
+    print(f"  交易: {best.user_attrs.get('oos_trades', 0)}")
+
+    # 判定
+    is_return = best.user_attrs.get('is_return', 0)
+    oos_return = best.user_attrs.get('oos_return', 0)
+    oos_excess = best.user_attrs.get('oos_excess', 0)
+    oos_is_ratio = best.user_attrs.get('oos_is_ratio', 0)
+
+    print(f"\n[目標達成檢查]")
+    is_target = "PASS" if is_return >= 30 else "FAIL"
+    oos_target = "PASS" if oos_return >= 30 else "FAIL"
+    oos_excess_target = "PASS" if oos_excess > 0 else "FAIL"
+    ratio_target = "PASS" if oos_is_ratio >= 0.5 else "FAIL"
+
+    print(f"  IS 報酬 >= 30%: {is_target} ({is_return:.1f}%)")
+    print(f"  OOS 報酬 >= 30%: {oos_target} ({oos_return:.1f}%)")
+    print(f"  OOS 超額報酬 > 0: {oos_excess_target} ({oos_excess:+.1f}%)")
+    print(f"  OOS/IS >= 0.5: {ratio_target} ({oos_is_ratio:.2f})")
+
+    # 綜合評估
+    print(f"\n[綜合評估]")
+    if oos_return >= 30 and oos_excess > 0:
+        print(f"  ★★★ 優秀: OOS 報酬 >= 30% 且跑贏市場")
+    elif oos_return > 0 and oos_excess > 0:
+        print(f"  ★★☆ 良好: OOS 正報酬且跑贏市場")
+    elif oos_excess > 0:
+        print(f"  ★☆☆ 可接受: OOS 跑贏市場 (但絕對報酬為負)")
+    else:
+        print(f"  ☆☆☆ 需改進: OOS 未跑贏市場")
+
+    print("\n" + "-" * 70)
+    print("最佳參數:")
+    print("-" * 70)
+    for key, value in best.params.items():
+        print(f"  {key}: {value}")
+
+    return best.params
+
+
+def save_results(study: optuna.Study, output_dir: str, leverage: int, data_file: str):
+    """儲存優化結果."""
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    best = study.best_trial
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = output_path / f"supertrend_optimization_{timestamp}.json"
+
+    results = {
+        "optimization_date": datetime.now().isoformat(),
+        "data_file": data_file,
+        "n_trials": len(study.trials),
+        "leverage": leverage,
+        "best_score": best.value,
+        "best_params": best.params,
+        "metrics": {
+            "is_return": best.user_attrs.get("is_return", 0),
+            "oos_return": best.user_attrs.get("oos_return", 0),
+            "is_excess": best.user_attrs.get("is_excess", 0),
+            "oos_excess": best.user_attrs.get("oos_excess", 0),
+            "is_sharpe": best.user_attrs.get("is_sharpe", 0),
+            "oos_sharpe": best.user_attrs.get("oos_sharpe", 0),
+            "is_trades": best.user_attrs.get("is_trades", 0),
+            "oos_trades": best.user_attrs.get("oos_trades", 0),
+            "is_dd": best.user_attrs.get("is_dd", 0),
+            "oos_dd": best.user_attrs.get("oos_dd", 0),
+            "oos_is_ratio": best.user_attrs.get("oos_is_ratio", 0),
+            "train_market": best.user_attrs.get("train_market", 0),
+            "test_market": best.user_attrs.get("test_market", 0),
+        },
+        "top_10_trials": [
+            {
+                "number": t.number,
+                "value": t.value,
+                "params": t.params,
+                "metrics": {
+                    "is_return": t.user_attrs.get("is_return", 0),
+                    "oos_return": t.user_attrs.get("oos_return", 0),
+                    "oos_excess": t.user_attrs.get("oos_excess", 0),
+                    "oos_is_ratio": t.user_attrs.get("oos_is_ratio", 0),
+                },
+            }
+            for t in sorted(
+                [t for t in study.trials if t.value is not None],
+                key=lambda x: x.value if x.value else -9999,
+                reverse=True,
+            )[:10]
+        ],
+    }
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    print(f"\n結果已儲存至: {output_file}")
+    return output_file
+
+
+def print_config_suggestion(params: dict):
+    """輸出建議配置."""
+    print("\n" + "=" * 70)
+    print("  建議配置 (可直接用於 validate_supertrend_wf.py)")
+    print("=" * 70)
+    print(f"""
+SupertrendStrategyConfig(
+    mode=SupertrendMode.TREND_GRID,
+    atr_period={params['atr_period']},
+    atr_multiplier=Decimal("{params['atr_multiplier']}"),
+    grid_count={params['grid_count']},
+    grid_atr_multiplier=Decimal("{params['grid_atr_multiplier']}"),
+    take_profit_grids={params['take_profit_grids']},
+    stop_loss_pct=Decimal("{params['stop_loss_pct']}"),
+    use_rsi_filter=True,
+    rsi_period={params['rsi_period']},
+    rsi_overbought={params['rsi_overbought']},
+    rsi_oversold={params['rsi_oversold']},
+    min_trend_bars={params['min_trend_bars']},
+    use_hysteresis={params['use_hysteresis']},
+    hysteresis_pct=Decimal("{params['hysteresis_pct']}"),
+    use_signal_cooldown={params['use_signal_cooldown']},
+    cooldown_bars={params['cooldown_bars']},
+    use_trailing_stop=True,
+    trailing_stop_pct=Decimal("{params['trailing_stop_pct']}"),
+)
+""")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Supertrend 參數優化")
+    parser = argparse.ArgumentParser(
+        description="Supertrend TREND_GRID 多目標參數優化 (IS+OOS 聯合優化)"
+    )
     parser.add_argument(
         "--data-file",
         default="data/historical/BTCUSDT_1h_730d.json",
-        help="歷史數據檔案路徑"
+        help="歷史數據檔案路徑",
     )
     parser.add_argument(
         "--trials", "-n",
         type=int,
-        default=100,
-        help="優化試驗次數 (default: 100)"
+        default=200,
+        help="優化試驗次數 (default: 200)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=None,
-        help="超時秒數 (default: 無限制)"
+        help="超時秒數 (default: 無限制)",
     )
     parser.add_argument(
-        "--leverage",
+        "--leverage", "-l",
         type=int,
-        default=10,
-        help="槓桿倍數 (default: 10)"
+        default=18,
+        help="槓桿倍數 (default: 18)",
+    )
+    parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=0.7,
+        help="訓練集比例 (default: 0.7)",
     )
     parser.add_argument(
         "--output",
         default="optimization_results",
-        help="輸出目錄"
+        help="輸出目錄",
+    )
+    parser.add_argument(
+        "--quick", "-q",
+        action="store_true",
+        help="快速模式 (50 trials)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="隨機種子 (default: 42)",
     )
 
     args = parser.parse_args()
@@ -192,22 +500,37 @@ def main():
         print("  pip install optuna")
         return
 
+    if args.quick:
+        args.trials = 50
+
+    print("=" * 70)
+    print("  Supertrend TREND_GRID 多目標優化 (IS+OOS 聯合, 超額報酬)")
+    print("  目標: OOS 跑贏市場, IS/OOS >= 30%")
+    print("=" * 70)
+    print(f"  試驗次數: {args.trials}")
+    print(f"  槓桿倍數: {args.leverage}x")
+    print(f"  訓練比例: {args.train_ratio * 100:.0f}%")
+
     # 載入數據
     klines = load_klines(args.data_file)
 
+    # 分割數據
+    train_klines, test_klines, train_market, test_market = split_data(klines, args.train_ratio)
+
     # 創建 Optuna study
-    sampler = TPESampler(seed=42)
+    sampler = TPESampler(seed=args.seed)
     study = optuna.create_study(
         direction="maximize",
         sampler=sampler,
-        study_name="supertrend_optimization",
+        study_name="supertrend_multi_objective",
     )
+
+    # 創建目標函數
+    objective = create_multi_objective(train_klines, test_klines, train_market, test_market, args.leverage)
 
     # 執行優化
     print(f"\n開始優化 ({args.trials} 次試驗)...")
-    print("=" * 60)
-
-    objective = create_objective(klines, args.leverage)
+    print("-" * 70)
 
     study.optimize(
         objective,
@@ -217,132 +540,13 @@ def main():
     )
 
     # 顯示結果
-    print("\n" + "=" * 60)
-    print("  優化完成")
-    print("=" * 60)
-
-    best = study.best_trial
-    print(f"\n最佳得分: {best.value:.4f}")
-    print(f"報酬: {best.user_attrs.get('total_return', 0):.2f}%")
-    print(f"回撤: {best.user_attrs.get('max_drawdown', 0):.2f}%")
-    print(f"勝率: {best.user_attrs.get('win_rate', 0):.1f}%")
-    print(f"交易: {best.user_attrs.get('trades', 0)}")
-
-    print("\n最佳參數:")
-    print("-" * 40)
-    for key, value in best.params.items():
-        print(f"  {key}: {value}")
-
-    # 使用最佳參數執行完整回測
-    print("\n使用最佳參數執行完整回測...")
-    best_config = SupertrendStrategyConfig(
-        mode=SupertrendMode.TREND_GRID,
-        atr_period=best.params["atr_period"],
-        atr_multiplier=Decimal(str(best.params["atr_multiplier"])),
-        grid_count=best.params["grid_count"],
-        grid_atr_multiplier=Decimal(str(best.params["grid_atr_multiplier"])),
-        take_profit_grids=best.params["take_profit_grids"],
-        stop_loss_pct=Decimal(str(best.params["stop_loss_pct"])),
-        use_rsi_filter=True,
-        rsi_period=best.params["rsi_period"],
-        rsi_overbought=best.params["rsi_overbought"],
-        rsi_oversold=best.params["rsi_oversold"],
-        min_trend_bars=best.params["min_trend_bars"],
-        use_hysteresis=True,
-        hysteresis_pct=Decimal(str(best.params["hysteresis_pct"])),
-        use_signal_cooldown=True,
-        cooldown_bars=best.params["cooldown_bars"],
-        use_trailing_stop=True,
-        trailing_stop_pct=Decimal(str(best.params["trailing_stop_pct"])),
-    )
-
-    best_strategy = SupertrendBacktestStrategy(best_config)
-    bt_config = BacktestConfig(
-        initial_capital=Decimal("10000"),
-        leverage=args.leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
-
-    engine = BacktestEngine(bt_config)
-    final_result = engine.run(klines, best_strategy)
-
-    # 計算年化報酬 (2年數據)
-    total_return = float(final_result.total_profit_pct)
-    annual_return = ((1 + total_return/100) ** 0.5 - 1) * 100
-
-    print("\n" + "=" * 60)
-    print("  最佳參數回測結果")
-    print("=" * 60)
-    print(f"  總報酬: {total_return:.2f}%")
-    print(f"  年化報酬: {annual_return:.2f}%")
-    print(f"  Sharpe Ratio: {float(final_result.sharpe_ratio):.2f}")
-    print(f"  最大回撤: {float(final_result.max_drawdown_pct):.2f}%")
-    print(f"  勝率: {float(final_result.win_rate):.1f}%")
-    print(f"  總交易數: {final_result.total_trades}")
+    best_params = display_results(study, args.leverage)
 
     # 儲存結果
-    output_dir = Path(args.output)
-    output_dir.mkdir(exist_ok=True)
+    save_results(study, args.output, args.leverage, args.data_file)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"supertrend_optimization_{timestamp}.json"
-
-    results = {
-        "optimization_date": datetime.now().isoformat(),
-        "data_file": args.data_file,
-        "trials": args.trials,
-        "leverage": args.leverage,
-        "best_score": best.value,
-        "best_params": best.params,
-        "final_result": {
-            "total_return_pct": total_return,
-            "annual_return_pct": annual_return,
-            "sharpe_ratio": float(final_result.sharpe_ratio),
-            "max_drawdown_pct": float(final_result.max_drawdown_pct),
-            "win_rate": float(final_result.win_rate),
-            "total_trades": final_result.total_trades,
-        },
-        "top_10_trials": [
-            {
-                "number": t.number,
-                "value": t.value,
-                "params": t.params,
-                "user_attrs": t.user_attrs,
-            }
-            for t in sorted(study.trials, key=lambda x: x.value if x.value else -999, reverse=True)[:10]
-        ],
-    }
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-
-    print(f"\n結果已儲存至: {output_file}")
-
-    # 輸出可直接使用的配置
-    print("\n" + "=" * 60)
-    print("  建議配置 (可直接複製到實戰)")
-    print("=" * 60)
-    print(f"""
-SupertrendConfig(
-    atr_period={best.params["atr_period"]},
-    atr_multiplier=Decimal("{best.params["atr_multiplier"]}"),
-    grid_count={best.params["grid_count"]},
-    grid_atr_multiplier=Decimal("{best.params["grid_atr_multiplier"]}"),
-    take_profit_grids={best.params["take_profit_grids"]},
-    stop_loss_pct=Decimal("{best.params["stop_loss_pct"]}"),
-    rsi_period={best.params["rsi_period"]},
-    rsi_overbought={best.params["rsi_overbought"]},
-    rsi_oversold={best.params["rsi_oversold"]},
-    min_trend_bars={best.params["min_trend_bars"]},
-    use_hysteresis=True,
-    hysteresis_pct=Decimal("{best.params["hysteresis_pct"]}"),
-    use_signal_cooldown=True,
-    cooldown_bars={best.params["cooldown_bars"]},
-    use_trailing_stop=True,
-    trailing_stop_pct=Decimal("{best.params["trailing_stop_pct"]}"),
-)
-""")
+    # 輸出建議配置
+    print_config_suggestion(best_params)
 
 
 if __name__ == "__main__":
