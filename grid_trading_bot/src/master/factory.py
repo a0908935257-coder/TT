@@ -346,6 +346,13 @@ class BotFactory:
             trailing_stop_pct=Decimal(str(config.get("trailing_stop_pct", "0.02"))),
             use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
             stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.05"))),  # Walk-Forward: 5%
+            # HYBRID_GRID mode (v3)
+            mode=config.get("mode", "hybrid_grid"),
+            hybrid_grid_bias_pct=Decimal(str(config.get("hybrid_grid_bias_pct", "0.75"))),
+            hybrid_tp_multiplier_trend=Decimal(str(config.get("hybrid_tp_multiplier_trend", "1.25"))),
+            hybrid_tp_multiplier_counter=Decimal(str(config.get("hybrid_tp_multiplier_counter", "0.75"))),
+            hybrid_sl_multiplier_counter=Decimal(str(config.get("hybrid_sl_multiplier_counter", "0.5"))),
+            hybrid_rsi_asymmetric=config.get("hybrid_rsi_asymmetric", True),
         )
 
         # Create bot instance

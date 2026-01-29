@@ -124,6 +124,14 @@ class SupertrendConfig:
     use_signal_cooldown: bool = True  # 訊號冷卻 (啟用)
     cooldown_bars: int = 4  # 優化後: 4 (原 2)
 
+    # HYBRID_GRID mode (v3)
+    mode: str = "hybrid_grid"  # "trend_grid" or "hybrid_grid"
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.75"))
+    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.25"))
+    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.75"))
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))
+    hybrid_rsi_asymmetric: bool = True
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.atr_multiplier, Decimal):
@@ -144,13 +152,21 @@ class SupertrendConfig:
             self.max_capital = Decimal(str(self.max_capital))
         if not isinstance(self.hysteresis_pct, Decimal):
             self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
+        if not isinstance(self.hybrid_grid_bias_pct, Decimal):
+            self.hybrid_grid_bias_pct = Decimal(str(self.hybrid_grid_bias_pct))
+        if not isinstance(self.hybrid_tp_multiplier_trend, Decimal):
+            self.hybrid_tp_multiplier_trend = Decimal(str(self.hybrid_tp_multiplier_trend))
+        if not isinstance(self.hybrid_tp_multiplier_counter, Decimal):
+            self.hybrid_tp_multiplier_counter = Decimal(str(self.hybrid_tp_multiplier_counter))
+        if not isinstance(self.hybrid_sl_multiplier_counter, Decimal):
+            self.hybrid_sl_multiplier_counter = Decimal(str(self.hybrid_sl_multiplier_counter))
 
         self._validate()
 
     def _validate(self) -> None:
         """Validate configuration parameters."""
-        if self.atr_period < 5 or self.atr_period > 50:
-            raise ValueError(f"atr_period must be 5-50, got {self.atr_period}")
+        if self.atr_period < 2 or self.atr_period > 60:
+            raise ValueError(f"atr_period must be 2-60, got {self.atr_period}")
 
         if self.atr_multiplier < Decimal("1.0") or self.atr_multiplier > Decimal("10.0"):
             raise ValueError(f"atr_multiplier must be 1.0-10.0, got {self.atr_multiplier}")

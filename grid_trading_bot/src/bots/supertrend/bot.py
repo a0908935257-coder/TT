@@ -269,12 +269,18 @@ class SupertrendBot(BaseBot):
         )
 
         logger.info(f"Supertrend Bot initialized successfully")
+        logger.info(f"  Mode: {self._config.mode.upper()}")
         logger.info(f"  Symbol: {self._config.symbol}")
         logger.info(f"  Timeframe: {self._config.timeframe}")
         logger.info(f"  ATR Period: {self._config.atr_period}")
         logger.info(f"  ATR Multiplier: {self._config.atr_multiplier}")
         logger.info(f"  Leverage: {self._config.leverage}x")
         logger.info(f"  Initial Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}")
+        if self._config.mode == "hybrid_grid":
+            logger.info(f"  Hybrid Bias: {self._config.hybrid_grid_bias_pct}")
+            logger.info(f"  Hybrid TP Trend/Counter: {self._config.hybrid_tp_multiplier_trend}/{self._config.hybrid_tp_multiplier_counter}")
+            logger.info(f"  Hybrid SL Counter: {self._config.hybrid_sl_multiplier_counter}")
+            logger.info(f"  Hybrid RSI Asymmetric: {self._config.hybrid_rsi_asymmetric}")
 
         if self._notifier:
             await self._notifier.send_info(
@@ -833,6 +839,181 @@ class SupertrendBot(BaseBot):
 
         return False
 
+    def _initialize_hybrid_grid(self, current_price: Decimal) -> None:
+        """Initialize asymmetric grid levels for HYBRID_GRID mode."""
+        atr = self._calculate_atr(self._config.atr_period)
+        self._current_atr = atr
+
+        if atr and atr > 0:
+            range_size = atr * self._config.grid_atr_multiplier
+        else:
+            range_size = current_price * Decimal("0.05")
+
+        bias = self._config.hybrid_grid_bias_pct
+
+        if self._current_trend == 1:
+            self._lower_price = current_price - range_size * bias
+            self._upper_price = current_price + range_size * (Decimal("1") - bias)
+        elif self._current_trend == -1:
+            self._lower_price = current_price - range_size * (Decimal("1") - bias)
+            self._upper_price = current_price + range_size * bias
+        else:
+            self._lower_price = current_price - range_size
+            self._upper_price = current_price + range_size
+
+        if self._config.grid_count <= 0:
+            self._grid_spacing = range_size
+        else:
+            self._grid_spacing = (self._upper_price - self._lower_price) / Decimal(self._config.grid_count)
+
+        self._grid_levels = []
+        for i in range(self._config.grid_count + 1):
+            price = self._lower_price + (self._grid_spacing * Decimal(i))
+            self._grid_levels.append(GridLevel(index=i, price=price))
+
+        self._grid_initialized = True
+        logger.info(
+            f"HYBRID_GRID initialized: {self._lower_price:.2f} - {self._upper_price:.2f}, "
+            f"{self._config.grid_count} levels, bias={bias}, trend={self._current_trend}"
+        )
+
+    def _reset_filled_levels(self) -> None:
+        """Reset all grid levels to unfilled."""
+        for level in self._grid_levels:
+            level.is_filled = False
+
+    async def _on_kline_hybrid_grid(self, kline: Kline, current_price: Decimal) -> None:
+        """
+        HYBRID_GRID mode: bidirectional trading with trend bias.
+
+        Both long and short allowed regardless of trend.
+        Trend direction gets favorable TP/SL; counter-trend gets tighter risk.
+        """
+        # Initialize or rebuild grid
+        if self._should_rebuild_grid(current_price):
+            self._initialize_hybrid_grid(current_price)
+            # Don't return - continue to entry logic
+
+        # Reset filled levels when no position
+        if not self._position:
+            self._reset_filled_levels()
+
+        # Check signal cooldown
+        if self._signal_cooldown > 0:
+            logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
+            return
+
+        # Trend status: treat unestablished trend as neutral (counter-trend params)
+        if self._current_trend == 0 or self._trend_bars < getattr(self._config, 'min_trend_bars', 2):
+            is_bullish = False  # No trend, use counter-trend params for all
+        else:
+            is_bullish = self._current_trend == 1
+
+        level_idx = self._find_current_grid_level(current_price)
+        if level_idx is None:
+            return
+
+        # Try LONG entry (buy dip at grid level below)
+        if level_idx > 0:
+            entry_level = self._grid_levels[level_idx]
+            if not entry_level.is_filled and kline.low <= entry_level.price:
+                if self._config.hybrid_rsi_asymmetric and not is_bullish:
+                    # Counter-trend long: must be oversold
+                    if self._current_rsi is not None and float(self._current_rsi) > self._config.rsi_oversold:
+                        pass  # blocked
+                    else:
+                        await self._try_hybrid_entry(
+                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long"
+                        )
+                        return
+                else:
+                    if self._check_rsi_filter(PositionSide.LONG):
+                        await self._try_hybrid_entry(
+                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long"
+                        )
+                        return
+
+        # Try SHORT entry (sell rally at grid level above)
+        if level_idx < len(self._grid_levels) - 1:
+            entry_level = self._grid_levels[level_idx + 1]
+            if not entry_level.is_filled and kline.high >= entry_level.price:
+                if self._config.hybrid_rsi_asymmetric and is_bullish:
+                    # Counter-trend short: must be overbought
+                    if self._current_rsi is not None and float(self._current_rsi) < self._config.rsi_overbought:
+                        pass  # blocked
+                    else:
+                        await self._try_hybrid_entry(
+                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short"
+                        )
+                else:
+                    if self._check_rsi_filter(PositionSide.SHORT):
+                        await self._try_hybrid_entry(
+                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short"
+                        )
+
+    async def _try_hybrid_entry(
+        self,
+        entry_level: GridLevel,
+        level_idx: int,
+        side: PositionSide,
+        is_with_trend: bool,
+        hysteresis_side: str,
+    ) -> None:
+        """Attempt a hybrid grid entry with differentiated TP/SL."""
+        current_price = entry_level.price
+
+        if not self._check_hysteresis(level_idx, hysteresis_side, current_price, current_price):
+            return
+
+        entry_level.is_filled = True
+        self._last_triggered_level = level_idx
+
+        # Determine TP/SL multipliers based on trend alignment
+        if is_with_trend:
+            tp_mult = self._config.hybrid_tp_multiplier_trend
+            sl_mult = Decimal("1")
+        else:
+            tp_mult = self._config.hybrid_tp_multiplier_counter
+            sl_mult = self._config.hybrid_sl_multiplier_counter
+
+        min_tp_distance = current_price * Decimal("0.001")
+
+        if side == PositionSide.LONG:
+            tp_level = min(
+                level_idx + int(self._config.take_profit_grids * tp_mult),
+                len(self._grid_levels) - 1,
+            )
+            if tp_level <= level_idx:
+                tp_level = min(level_idx + 1, len(self._grid_levels) - 1)
+            tp_price = self._grid_levels[tp_level].price
+            if tp_price - current_price < min_tp_distance:
+                tp_price = current_price + min_tp_distance
+
+            reason = "hybrid_grid_long" if is_with_trend else "hybrid_grid_long_counter"
+        else:
+            tp_level = max(
+                level_idx - int(self._config.take_profit_grids * tp_mult),
+                0,
+            )
+            if tp_level >= level_idx:
+                tp_level = max(level_idx - 1, 0)
+            tp_price = self._grid_levels[tp_level].price
+            if current_price - tp_price < min_tp_distance:
+                tp_price = current_price - min_tp_distance
+
+            reason = "hybrid_grid_short" if is_with_trend else "hybrid_grid_short_counter"
+
+        logger.info(
+            f"HYBRID_GRID {side.value} signal ({reason}): price={current_price:.2f}, "
+            f"grid_level={level_idx}, TP={tp_price:.2f}, "
+            f"trend={'WITH' if is_with_trend else 'COUNTER'}"
+            + (f", RSI={self._current_rsi:.1f}" if self._current_rsi else "")
+        )
+
+        success = await self._open_position(side, current_price, tp_price)
+        if success:
+            self._signal_cooldown = self._cooldown_bars
+
     async def _on_kline(self, kline: Kline) -> None:
         """
         Handle new kline data (TREND_GRID mode).
@@ -937,21 +1118,27 @@ class SupertrendBot(BaseBot):
                         self.clear_stop_loss_sync()
                         return
 
-                # Check for trend flip exit
-                if self._position.side == PositionSide.LONG and self._current_trend == -1:
-                    logger.info(f"Trend flip to BEARISH - closing LONG position")
-                    await self._close_position(ExitReason.SIGNAL_FLIP)
-                elif self._position.side == PositionSide.SHORT and self._current_trend == 1:
-                    logger.info(f"Trend flip to BULLISH - closing SHORT position")
-                    await self._close_position(ExitReason.SIGNAL_FLIP)
+                # Check for trend flip exit (TREND_GRID only; HYBRID_GRID uses TP/SL)
+                if self._config.mode != "hybrid_grid":
+                    if self._position.side == PositionSide.LONG and self._current_trend == -1:
+                        logger.info(f"Trend flip to BEARISH - closing LONG position")
+                        await self._close_position(ExitReason.SIGNAL_FLIP)
+                    elif self._position.side == PositionSide.SHORT and self._current_trend == 1:
+                        logger.info(f"Trend flip to BULLISH - closing SHORT position")
+                        await self._close_position(ExitReason.SIGNAL_FLIP)
 
                 return  # Skip entry if already in position
 
-            # === TREND_GRID Entry Logic ===
+            # === Entry Logic ===
 
             # Decrement signal cooldown
             if self._signal_cooldown > 0:
                 self._signal_cooldown -= 1
+
+            # HYBRID_GRID mode branch
+            if self._config.mode == "hybrid_grid":
+                await self._on_kline_hybrid_grid(kline, current_price)
+                return
 
             # Initialize or rebuild grid if needed
             if self._should_rebuild_grid(current_price):

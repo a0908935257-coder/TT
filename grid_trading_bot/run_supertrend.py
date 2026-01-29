@@ -112,6 +112,14 @@ def get_config_from_env() -> SupertrendConfig:
         hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.004))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
         cooldown_bars=int(params.get('cooldown_bars', 4)),
+
+        # HYBRID_GRID mode (v3)
+        mode=params.get('mode', 'hybrid_grid'),
+        hybrid_grid_bias_pct=Decimal(str(params.get('hybrid_grid_bias_pct', 0.75))),
+        hybrid_tp_multiplier_trend=Decimal(str(params.get('hybrid_tp_multiplier_trend', 1.25))),
+        hybrid_tp_multiplier_counter=Decimal(str(params.get('hybrid_tp_multiplier_counter', 0.75))),
+        hybrid_sl_multiplier_counter=Decimal(str(params.get('hybrid_sl_multiplier_counter', 0.5))),
+        hybrid_rsi_asymmetric=bool(params.get('hybrid_rsi_asymmetric', True)),
     )
 
 
