@@ -99,6 +99,12 @@ def create_objective(klines: list[Kline], leverage: int = 5):
         trailing_activate_pct = trial.suggest_categorical("trailing_activate_pct", [0.005, 0.01, 0.015])
         trailing_distance_pct = trial.suggest_categorical("trailing_distance_pct", [0.003, 0.005, 0.008])
 
+        # Volatility Regime Filter
+        use_volatility_filter = True  # 強制啟用
+        vol_atr_baseline_period = trial.suggest_categorical("vol_atr_baseline_period", [100, 150, 200, 300])
+        vol_ratio_low = trial.suggest_categorical("vol_ratio_low", [0.3, 0.4, 0.5, 0.6, 0.7])
+        vol_ratio_high = trial.suggest_categorical("vol_ratio_high", [1.5, 1.8, 2.0, 2.5, 3.0])
+
         config = RSIGridStrategyConfig(
             rsi_period=rsi_period,
             rsi_block_threshold=rsi_block_threshold,
@@ -111,6 +117,10 @@ def create_objective(klines: list[Kline], leverage: int = 5):
             use_trailing_stop=use_trailing_stop,
             trailing_activate_pct=trailing_activate_pct,
             trailing_distance_pct=trailing_distance_pct,
+            use_volatility_filter=use_volatility_filter,
+            vol_atr_baseline_period=vol_atr_baseline_period,
+            vol_ratio_low=vol_ratio_low,
+            vol_ratio_high=vol_ratio_high,
         )
 
         # Train backtest
@@ -274,6 +284,10 @@ def main():
         use_trailing_stop=best.params["use_trailing_stop"],
         trailing_activate_pct=best.params["trailing_activate_pct"],
         trailing_distance_pct=best.params["trailing_distance_pct"],
+        use_volatility_filter=True,
+        vol_atr_baseline_period=best.params["vol_atr_baseline_period"],
+        vol_ratio_low=best.params["vol_ratio_low"],
+        vol_ratio_high=best.params["vol_ratio_high"],
     )
 
     full_result = run_backtest(klines, best_config, args.leverage)

@@ -188,6 +188,12 @@ bots:
       use_signal_cooldown: false
       cooldown_bars: 2
 
+      # Volatility Regime Filter (v2 改進)
+      use_volatility_filter: true
+      vol_atr_baseline_period: 200
+      vol_ratio_low: 0.5
+      vol_ratio_high: 2.0
+
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略) - 積極版
   # ===========================================================================

@@ -55,6 +55,12 @@ class RSIGridStrategyConfig:
     trailing_activate_pct: float = 0.01   # activate after 1% profit
     trailing_distance_pct: float = 0.005  # trail by 0.5%
 
+    # Volatility Regime Filter
+    use_volatility_filter: bool = True
+    vol_atr_baseline_period: int = 200    # 長期 ATR 基線
+    vol_ratio_low: float = 0.5           # ATR ratio 下限
+    vol_ratio_high: float = 2.0          # ATR ratio 上限
+
     def __post_init__(self):
         """Normalize Decimal types."""
         for field_name in ['atr_multiplier', 'stop_loss_atr_mult']:
@@ -102,6 +108,10 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         # Position tracking
         self._entry_bar_index: int = 0
 
+        # Volatility filter state
+        self._atr_history: List[Decimal] = []
+        self._atr_baseline: Optional[Decimal] = None
+
     def warmup_period(self) -> int:
         return max(self._config.rsi_period, self._config.atr_period) + 10
 
@@ -116,6 +126,8 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         self._current_atr = None
         self._grid_initialized = False
         self._entry_bar_index = 0
+        self._atr_history = []
+        self._atr_baseline = None
 
     def _calculate_rsi(self, closes: List[Decimal]) -> Optional[Decimal]:
         """Calculate RSI using Wilder's smoothing."""
@@ -246,6 +258,24 @@ class RSIGridBacktestStrategy(BacktestStrategy):
 
         return 0
 
+    def _update_volatility_baseline(self, current_atr: Decimal) -> None:
+        """更新 ATR 滾動歷史，計算基線。"""
+        self._atr_history.append(current_atr)
+        bp = self._config.vol_atr_baseline_period
+        if len(self._atr_history) > bp:
+            self._atr_history = self._atr_history[-bp:]
+        if len(self._atr_history) >= bp:
+            self._atr_baseline = sum(self._atr_history) / Decimal(len(self._atr_history))
+
+    def _check_volatility_regime(self) -> bool:
+        """檢查當前波動率是否在可交易範圍內。"""
+        if not self._config.use_volatility_filter:
+            return True
+        if self._atr_baseline is None or self._atr_baseline == 0:
+            return True  # 數據不足時不過濾
+        ratio = float(self._current_atr / self._atr_baseline)
+        return self._config.vol_ratio_low <= ratio <= self._config.vol_ratio_high
+
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
         Process kline and generate signal.
@@ -272,6 +302,17 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             self._initialize_grid(klines_window, current_price)
+            # Update volatility baseline even when rebuilding
+            if self._current_atr:
+                self._update_volatility_baseline(self._current_atr)
+            return None
+
+        # Update volatility baseline
+        if self._current_atr:
+            self._update_volatility_baseline(self._current_atr)
+
+        # Volatility regime filter — block entry if outside range
+        if not self._check_volatility_regime():
             return None
 
         # Already have position - don't generate new signals

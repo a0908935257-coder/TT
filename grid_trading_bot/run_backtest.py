@@ -228,6 +228,10 @@ def create_strategy(strategy_name: str, params: dict):
             use_trailing_stop=yaml_params.get("use_trailing_stop", False),
             trailing_activate_pct=yaml_params.get("trailing_activate_pct", 0.01),
             trailing_distance_pct=yaml_params.get("trailing_distance_pct", 0.005),
+            use_volatility_filter=yaml_params.get("use_volatility_filter", True),
+            vol_atr_baseline_period=yaml_params.get("vol_atr_baseline_period", 200),
+            vol_ratio_low=yaml_params.get("vol_ratio_low", 0.5),
+            vol_ratio_high=yaml_params.get("vol_ratio_high", 2.0),
         )
         return RSIGridBacktestStrategy(config)
 
