@@ -1,0 +1,32 @@
+{
+  "optimization_date": "2026-01-28T23:25:21.831982",
+  "data_file": "data/historical/BTCUSDT_1h_730d.json",
+  "n_trials": 100,
+  "leverage": 18,
+  "best_score": -40.34723531470926,
+  "best_params": {
+    "bb_period": 17,
+    "grid_count": 17,
+    "atr_period": 24,
+    "atr_multiplier": 4.0,
+    "stop_loss_pct": 0.013000000000000001,
+    "take_profit_grids": 3,
+    "hysteresis_pct": 0.004,
+    "use_hysteresis": false,
+    "use_signal_cooldown": true,
+    "cooldown_bars": 2
+  },
+  "metrics": {
+    "is_return": 0,
+    "oos_return": 0,
+    "is_sharpe": 0,
+    "oos_sharpe": 0,
+    "is_trades": 0,
+    "oos_trades": 0,
+    "is_dd": 0,
+    "oos_dd": 0,
+    "oos_is_ratio": 0,
+    "geometric_mean": 0
+  },
+  "top_10_trials": []
+}

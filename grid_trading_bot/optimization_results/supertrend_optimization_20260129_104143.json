@@ -1,0 +1,311 @@
+{
+  "optimization_date": "2026-01-29T10:41:43.430753",
+  "data_file": "data/historical/BTCUSDT_1h_730d.json",
+  "n_trials": 200,
+  "leverage": 18,
+  "best_score": 10.997360411505374,
+  "best_params": {
+    "atr_period": 59,
+    "atr_multiplier": 3.0,
+    "grid_count": 7,
+    "grid_atr_multiplier": 7.5,
+    "take_profit_grids": 3,
+    "stop_loss_pct": 0.008,
+    "rsi_period": 9,
+    "rsi_overbought": 64,
+    "rsi_oversold": 31,
+    "min_trend_bars": 2,
+    "hysteresis_pct": 0.004,
+    "use_hysteresis": true,
+    "use_signal_cooldown": true,
+    "cooldown_bars": 5,
+    "trailing_stop_pct": 0.09
+  },
+  "metrics": {
+    "is_return": 6.021780599723172,
+    "oos_return": 4.631800923740228,
+    "is_excess": -156.33228672163068,
+    "oos_excess": 18.776960310884682,
+    "is_sharpe": 1.6291740841733946,
+    "oos_sharpe": 5.314529578705386,
+    "is_trades": 236,
+    "oos_trades": 59,
+    "is_dd": 12.838710327908755,
+    "oos_dd": 9.820952317151693,
+    "oos_is_ratio": 0.7691746397989253,
+    "train_market": 162.35406732135385,
+    "test_market": -14.145159387144457
+  },
+  "top_10_trials": [
+    {
+      "number": 183,
+      "value": 10.997360411505374,
+      "params": {
+        "atr_period": 59,
+        "atr_multiplier": 3.0,
+        "grid_count": 7,
+        "grid_atr_multiplier": 7.5,
+        "take_profit_grids": 3,
+        "stop_loss_pct": 0.008,
+        "rsi_period": 9,
+        "rsi_overbought": 64,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.004,
+        "use_hysteresis": true,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 6.021780599723172,
+        "oos_return": 4.631800923740228,
+        "oos_excess": 18.776960310884682,
+        "oos_is_ratio": 0.7691746397989253
+      }
+    },
+    {
+      "number": 65,
+      "value": 5.215212552349674,
+      "params": {
+        "atr_period": 59,
+        "atr_multiplier": 2.5,
+        "grid_count": 8,
+        "grid_atr_multiplier": 7.0,
+        "take_profit_grids": 1,
+        "stop_loss_pct": 0.006,
+        "rsi_period": 10,
+        "rsi_overbought": 65,
+        "rsi_oversold": 30,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.004,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 4,
+        "trailing_stop_pct": 0.08
+      },
+      "metrics": {
+        "is_return": 8.360939165346316,
+        "oos_return": 4.002624389769808,
+        "oos_excess": 18.147783776914267,
+        "oos_is_ratio": 0.47872904115359827
+      }
+    },
+    {
+      "number": 163,
+      "value": 4.594195920077727,
+      "params": {
+        "atr_period": 56,
+        "atr_multiplier": 2.5,
+        "grid_count": 7,
+        "grid_atr_multiplier": 8.0,
+        "take_profit_grids": 1,
+        "stop_loss_pct": 0.008,
+        "rsi_period": 9,
+        "rsi_overbought": 67,
+        "rsi_oversold": 32,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.004,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 4.581355194596582,
+        "oos_return": 2.8242668530409683,
+        "oos_excess": 16.969426240185424,
+        "oos_is_ratio": 0.6164697416109566
+      }
+    },
+    {
+      "number": 173,
+      "value": 3.2070124032138936,
+      "params": {
+        "atr_period": 57,
+        "atr_multiplier": 2.5,
+        "grid_count": 15,
+        "grid_atr_multiplier": 6.5,
+        "take_profit_grids": 3,
+        "stop_loss_pct": 0.006,
+        "rsi_period": 8,
+        "rsi_overbought": 65,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.004,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 5.477184619674186,
+        "oos_return": 5.942442235577199,
+        "oos_excess": 20.087601622721657,
+        "oos_is_ratio": 1.0849446655918438
+      }
+    },
+    {
+      "number": 123,
+      "value": 3.042385880710344,
+      "params": {
+        "atr_period": 6,
+        "atr_multiplier": 2.5,
+        "grid_count": 7,
+        "grid_atr_multiplier": 6.0,
+        "take_profit_grids": 1,
+        "stop_loss_pct": 0.012,
+        "rsi_period": 9,
+        "rsi_overbought": 68,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.0045000000000000005,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 4,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 1.783761115773581,
+        "oos_return": 4.320401143949055,
+        "oos_excess": 18.465560531093512,
+        "oos_is_ratio": 2.422073844835094
+      }
+    },
+    {
+      "number": 141,
+      "value": 2.5612511930945425,
+      "params": {
+        "atr_period": 58,
+        "atr_multiplier": 2.5,
+        "grid_count": 8,
+        "grid_atr_multiplier": 8.0,
+        "take_profit_grids": 1,
+        "stop_loss_pct": 0.014,
+        "rsi_period": 10,
+        "rsi_overbought": 65,
+        "rsi_oversold": 30,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.0045000000000000005,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.08
+      },
+      "metrics": {
+        "is_return": 6.138105354379779,
+        "oos_return": 3.5697488681601968,
+        "oos_excess": 17.714908255304653,
+        "oos_is_ratio": 0.5815717818549727
+      }
+    },
+    {
+      "number": 194,
+      "value": 0.005807804614501144,
+      "params": {
+        "atr_period": 59,
+        "atr_multiplier": 2.5,
+        "grid_count": 7,
+        "grid_atr_multiplier": 8.0,
+        "take_profit_grids": 3,
+        "stop_loss_pct": 0.012,
+        "rsi_period": 9,
+        "rsi_overbought": 70,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.0045000000000000005,
+        "use_hysteresis": true,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 3.934949384715496,
+        "oos_return": 4.588990217669261,
+        "oos_excess": 18.734149604813716,
+        "oos_is_ratio": 1.16621327722645
+      }
+    },
+    {
+      "number": 189,
+      "value": -1.1869018431982303,
+      "params": {
+        "atr_period": 59,
+        "atr_multiplier": 2.5,
+        "grid_count": 19,
+        "grid_atr_multiplier": 7.5,
+        "take_profit_grids": 3,
+        "stop_loss_pct": 0.006,
+        "rsi_period": 8,
+        "rsi_overbought": 68,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.0045000000000000005,
+        "use_hysteresis": true,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 7.383086739801938,
+        "oos_return": 5.334045663841001,
+        "oos_excess": 19.479205050985456,
+        "oos_is_ratio": 0.722468237449435
+      }
+    },
+    {
+      "number": 165,
+      "value": -1.4242406120202937,
+      "params": {
+        "atr_period": 55,
+        "atr_multiplier": 2.5,
+        "grid_count": 17,
+        "grid_atr_multiplier": 7.0,
+        "take_profit_grids": 3,
+        "stop_loss_pct": 0.008,
+        "rsi_period": 9,
+        "rsi_overbought": 68,
+        "rsi_oversold": 31,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.004,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 6.647200980443689,
+        "oos_return": 5.906763884869566,
+        "oos_excess": 20.051923272014022,
+        "oos_is_ratio": 0.8886091908831226
+      }
+    },
+    {
+      "number": 55,
+      "value": -1.7837239695785927,
+      "params": {
+        "atr_period": 13,
+        "atr_multiplier": 3.0,
+        "grid_count": 7,
+        "grid_atr_multiplier": 6.5,
+        "take_profit_grids": 1,
+        "stop_loss_pct": 0.014,
+        "rsi_period": 9,
+        "rsi_overbought": 68,
+        "rsi_oversold": 35,
+        "min_trend_bars": 2,
+        "hysteresis_pct": 0.008,
+        "use_hysteresis": false,
+        "use_signal_cooldown": true,
+        "cooldown_bars": 5,
+        "trailing_stop_pct": 0.09
+      },
+      "metrics": {
+        "is_return": 7.567388432485087,
+        "oos_return": 3.256714292812224,
+        "oos_excess": 17.40187367995668,
+        "oos_is_ratio": 0.4303617188238793
+      }
+    }
+  ]
+}
