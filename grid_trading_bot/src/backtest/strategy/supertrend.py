@@ -419,7 +419,7 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         # HYBRID_GRID mode
         if self._config.mode == SupertrendMode.HYBRID_GRID:
-            return self._on_kline_hybrid_grid(kline, klines, current_price)
+            return self._on_kline_hybrid_grid(kline, klines, current_price, context)
 
         # TREND_GRID mode
         # Initialize or rebuild grid if needed
@@ -555,8 +555,14 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         self._grid_initialized = True
 
+    def _reset_filled_levels(self) -> None:
+        """Reset all grid levels to unfilled (allows re-trading same levels)."""
+        for level in self._grid_levels:
+            level.is_filled = False
+
     def _on_kline_hybrid_grid(
-        self, kline: Kline, klines: List[Kline], current_price: Decimal
+        self, kline: Kline, klines: List[Kline], current_price: Decimal,
+        context: BacktestContext = None,
     ) -> Optional[Signal]:
         """
         HYBRID_GRID mode: bidirectional trading with trend bias.
@@ -568,6 +574,10 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         if self._should_rebuild_grid(current_price):
             self._initialize_hybrid_grid(klines, current_price)
             return None
+
+        # Reset filled levels when no position (like BB_NEUTRAL_GRID)
+        if context is not None and not context.has_position:
+            self._reset_filled_levels()
 
         if self._current_trend == 0:
             return None

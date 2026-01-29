@@ -185,10 +185,10 @@ def create_multi_objective(
         params = {
             "atr_period": trial.suggest_int("atr_period", 5, 60),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 6.0, step=0.5),
-            "grid_count": trial.suggest_int("grid_count", 3, 30),
-            "grid_atr_multiplier": trial.suggest_float("grid_atr_multiplier", 1.0, 10.0, step=0.5),
-            "take_profit_grids": trial.suggest_int("take_profit_grids", 1, 5),
-            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.002, 0.10, step=0.002),
+            "grid_count": trial.suggest_int("grid_count", 8, 25),
+            "grid_atr_multiplier": trial.suggest_float("grid_atr_multiplier", 4.0, 12.0, step=0.5),
+            "take_profit_grids": trial.suggest_int("take_profit_grids", 1, 3),
+            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.001, 0.01, step=0.001),
             "rsi_period": trial.suggest_int("rsi_period", 7, 21),
             "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 75),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
@@ -243,11 +243,11 @@ def create_multi_objective(
 
         # ========== 約束條件 ==========
 
-        # 交易數約束（HYBRID_GRID 預期更多交易）
-        if is_trades < 800:
+        # 交易數約束（HYBRID_GRID 雙向交易）
+        if is_trades < 300:
             trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
             return -500 + is_trades
-        if oos_trades < 350:
+        if oos_trades < 120:
             trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
             return -500 + oos_trades
 
