@@ -191,7 +191,7 @@ bots:
       # Volatility Regime Filter (v2 改進)
       use_volatility_filter: true
       vol_atr_baseline_period: 200
-      vol_ratio_low: 0.5
+      vol_ratio_low: 0.4
       vol_ratio_high: 2.0
 
   # ===========================================================================

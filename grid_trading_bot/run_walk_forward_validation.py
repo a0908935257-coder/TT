@@ -186,8 +186,8 @@ def create_all_strategies() -> dict:
             trailing_distance_pct=0.005,
             use_volatility_filter=True,
             vol_atr_baseline_period=100,
-            vol_ratio_low=0.7,
-            vol_ratio_high=2.5,
+            vol_ratio_low=0.4,
+            vol_ratio_high=2.0,
         )),
         "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),
     }
