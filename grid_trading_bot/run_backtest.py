@@ -45,7 +45,7 @@ async def fetch_klines(
     interval: str,
     days: int,
 ) -> list[Kline]:
-    """從交易所獲取歷史 K 線數據"""
+    """從交易所分批獲取歷史 K 線數據（突破 1000 根限制）"""
     print(f"正在獲取 {symbol} {interval} 數據 ({days} 天)...")
 
     client = ExchangeClient(
@@ -63,16 +63,57 @@ async def fetch_klines(
             "1h": 1, "2h": 2, "4h": 4, "1d": 24
         }
         hours_per_bar = interval_hours.get(interval, 1)
-        limit = min(int(days * 24 / hours_per_bar), 1000)
+        total_needed = int(days * 24 / hours_per_bar)
 
-        klines = await client.get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-        )
+        if total_needed <= 1000:
+            klines = await client.get_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=total_needed,
+            )
+            print(f"獲取 {len(klines)} 根 K 線")
+            return klines
 
-        print(f"獲取 {len(klines)} 根 K 線")
-        return klines
+        # 分批取得：從 start_time 往後每次取 1000 根
+        interval_ms = int(hours_per_bar * 3600 * 1000)
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start_ms = now_ms - int(days * 24 * 3600 * 1000)
+
+        all_klines: list[Kline] = []
+        batch_start = start_ms
+        batch_num = 0
+
+        while batch_start < now_ms:
+            batch_num += 1
+            batch = await client.spot.get_klines(
+                symbol=symbol,
+                interval=interval,
+                limit=1000,
+                start_time=batch_start,
+            )
+            if not batch:
+                break
+
+            all_klines.extend(batch)
+            # 下一批從最後一根 K 線的下一個 interval 開始
+            last_open_ms = int(batch[-1].open_time.timestamp() * 1000)
+            batch_start = last_open_ms + interval_ms
+            print(f"  批次 {batch_num}: +{len(batch)} 根 (累計 {len(all_klines)})")
+
+            if len(batch) < 1000:
+                break
+
+        # 去重（按 open_time）
+        seen = set()
+        unique_klines = []
+        for k in all_klines:
+            ot = k.open_time
+            if ot not in seen:
+                seen.add(ot)
+                unique_klines.append(k)
+
+        print(f"獲取 {len(unique_klines)} 根 K 線 (共 {batch_num} 批)")
+        return unique_klines
 
     finally:
         await client.close()
