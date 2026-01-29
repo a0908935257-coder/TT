@@ -192,7 +192,7 @@ def create_multi_objective(
             "rsi_period": trial.suggest_int("rsi_period", 7, 21),
             "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 75),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
-            "min_trend_bars": trial.suggest_int("min_trend_bars", 1, 3),
+            "min_trend_bars": 1,  # 固定為 1（結構改動已處理趨勢未確立情況）
             "hysteresis_pct": trial.suggest_float("hysteresis_pct", 0.0005, 0.01, step=0.0005),
             "use_hysteresis": trial.suggest_categorical("use_hysteresis", [True, False]),
             "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),

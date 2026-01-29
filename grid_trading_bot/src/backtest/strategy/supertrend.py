@@ -573,23 +573,21 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Initialize or rebuild grid
         if self._should_rebuild_grid(current_price):
             self._initialize_hybrid_grid(klines, current_price)
-            return None
+            # 不 return，繼續執行進場邏輯
 
         # Reset filled levels when no position (like BB_NEUTRAL_GRID)
         if context is not None and not context.has_position:
             self._reset_filled_levels()
 
-        if self._current_trend == 0:
-            return None
-
-        if self._trend_bars < self._config.min_trend_bars:
-            return None
+        # 趨勢未確立時視為中性，仍允許交易（用逆勢參數）
+        if self._current_trend == 0 or self._trend_bars < self._config.min_trend_bars:
+            is_bullish = False  # 當作無趨勢，所有方向用逆勢參數
+        else:
+            is_bullish = self._current_trend == 1
 
         level_idx = self._find_current_grid_level(current_price)
         if level_idx is None:
             return None
-
-        is_bullish = self._current_trend == 1
 
         # Try LONG entry (buy dip at grid level below)
         if level_idx > 0:
@@ -668,6 +666,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             tp_mult = self._config.hybrid_tp_multiplier_counter
             sl_mult = self._config.hybrid_sl_multiplier_counter  # Tighter SL
 
+        # 動態 TP 下限：確保 TP 至少覆蓋手續費+滑點 (0.1%)
+        min_tp_distance = current_price * Decimal("0.001")
+
         if side == "LONG":
             tp_level = min(
                 level_idx + int(self._config.take_profit_grids * tp_mult),
@@ -677,6 +678,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             if tp_level <= level_idx:
                 tp_level = min(level_idx + 1, len(self._grid_levels) - 1)
             tp_price = self._grid_levels[tp_level].price
+            # 確保 TP 距離至少 0.1%
+            if tp_price - current_price < min_tp_distance:
+                tp_price = current_price + min_tp_distance
             sl_price = current_price * (Decimal("1") - self._config.stop_loss_pct * sl_mult)
 
             return Signal.long_entry(
@@ -693,6 +697,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             if tp_level >= level_idx:
                 tp_level = max(level_idx - 1, 0)
             tp_price = self._grid_levels[tp_level].price
+            # 確保 TP 距離至少 0.1%
+            if current_price - tp_price < min_tp_distance:
+                tp_price = current_price - min_tp_distance
             sl_price = current_price * (Decimal("1") + self._config.stop_loss_pct * sl_mult)
 
             return Signal.short_entry(
