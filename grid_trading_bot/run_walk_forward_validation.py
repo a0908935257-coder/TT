@@ -560,7 +560,7 @@ async def main():
 
         # 策略對應的槓桿倍數
         strategy_leverage = {
-            "rsi_grid": 2,
+            "rsi_grid": 5,
             "grid_futures": 42,
             "bollinger": 18,
             "supertrend": 18,

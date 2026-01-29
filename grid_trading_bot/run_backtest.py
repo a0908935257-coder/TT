@@ -12,10 +12,12 @@ Unified Backtest Runner.
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -117,6 +119,32 @@ async def fetch_klines(
 
     finally:
         await client.close()
+
+
+def _load_klines_from_file(filepath: str) -> list[Kline]:
+    """從本地 JSON 檔案載入 K 線數據."""
+    print(f"從檔案載入數據: {filepath}")
+    with open(filepath, "r") as f:
+        data = json.load(f)
+
+    klines = []
+    for k in data["klines"]:
+        klines.append(Kline(
+            symbol=data["metadata"]["symbol"],
+            interval=data["metadata"]["interval"],
+            open_time=datetime.fromisoformat(k["open_time"]),
+            close_time=datetime.fromisoformat(k["close_time"]),
+            open=Decimal(k["open"]),
+            high=Decimal(k["high"]),
+            low=Decimal(k["low"]),
+            close=Decimal(k["close"]),
+            volume=Decimal(k["volume"]),
+        ))
+
+    print(f"載入 {len(klines):,} 根 K 線")
+    if klines:
+        print(f"  範圍: {klines[0].open_time.strftime('%Y-%m-%d')} ~ {klines[-1].open_time.strftime('%Y-%m-%d')}")
+    return klines
 
 
 def create_strategy(strategy_name: str, params: dict):
@@ -279,13 +307,18 @@ async def main():
         default=10,
         help="槓桿倍數 (default: 10)"
     )
+    parser.add_argument(
+        "--data-file",
+        default=None,
+        help="本地數據檔案路徑（跳過 API 取資料）"
+    )
 
     args = parser.parse_args()
 
-    # RSI 策略：用 yaml leverage (2) 覆蓋 CLI 預設 (10)
+    # RSI 策略：用 yaml leverage (5) 覆蓋 CLI 預設 (10)
     if args.strategy == "rsi" and args.leverage == 10:
         yaml_params = load_strategy_config("rsi_grid")
-        args.leverage = yaml_params.get("leverage", 2)
+        args.leverage = yaml_params.get("leverage", 5)
 
     print("\n" + "=" * 60)
     print("         統一回測系統 - Unified Backtest Runner")
@@ -300,7 +333,10 @@ async def main():
 
     try:
         # 1. 獲取數據
-        klines = await fetch_klines(args.symbol, args.interval, args.days)
+        if args.data_file:
+            klines = _load_klines_from_file(args.data_file)
+        else:
+            klines = await fetch_klines(args.symbol, args.interval, args.days)
 
         if len(klines) < 50:
             print("錯誤: K 線數據不足 (需要至少 50 根)")
