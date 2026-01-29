@@ -231,11 +231,11 @@ def create_multi_objective(
 
         # ========== 約束條件 ==========
 
-        # 交易數約束（要求充足交易，一年至少 200 筆）
-        if is_trades < 200:
+        # 交易數約束（降低門檻，允許少量高利潤交易）
+        if is_trades < 150:
             trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
             return -500 + is_trades
-        if oos_trades < 80:
+        if oos_trades < 60:
             trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
             return -500 + oos_trades
 
@@ -244,34 +244,47 @@ def create_multi_objective(
             trial.set_user_attr("rejection_reason", f"回撤過大: {max_dd:.1f}%")
             return -100 - max_dd
 
-        # ========== 多目標優化函數 ==========
+        # ========== 多目標優化函數（v3：強制達成絕對報酬目標）==========
 
-        # 1. OOS 超額報酬（最重要）
-        oos_excess_score = oos_excess * 2
+        # 1. IS 絕對報酬（大幅提高權重）
+        is_return_score = is_return * 1.5
 
-        # 2. IS 絕對報酬（取代 IS 超額報酬，避免被市場漲幅拖累）
-        is_return_score = is_return * 0.5
+        # 2. OOS 絕對報酬（壓倒性權重）
+        oos_return_score = oos_return * 3.0
 
-        # 3. OOS 絕對報酬（不封頂，大幅提高權重）
-        oos_return_score = oos_return * 2.0
+        # 3. OOS 超額報酬（維持但降低）
+        oos_excess_score = oos_excess * 1.0
 
-        # 4. OOS Sharpe（降低權重，避免過度偏好低波動）
-        sharpe_score = oos_sharpe * 5
+        # 4. Sharpe（大幅削弱，幾乎不影響）
+        sharpe_score = oos_sharpe * 1
 
-        # 5. 回撤懲罰
-        dd_penalty = max_dd * 0.3
+        # 5. 回撤懲罰（僅懲罰 >15% 的部分，鼓勵用回撤換報酬）
+        dd_penalty = max(0, max_dd - 15) * 0.5
 
         # 6. 一致性獎勵（兩期都跑贏市場）
         consistency_bonus = 0
         if is_excess > 0 and oos_excess > 0:
             consistency_bonus = 10
 
-        # 7. 交易次數獎勵（降低權重，避免過度追求交易量）
+        # 7. 交易次數獎勵（進一步降低）
         total_trades = is_trades + oos_trades
-        trade_bonus = math.log(total_trades / 400) * 2
+        trade_bonus = math.log(total_trades / 400) * 1
+
+        # 8. 里程碑獎勵（直接獎勵達標）
+        milestone_bonus = 0
+        if is_return >= 30:
+            milestone_bonus += 30
+        elif is_return >= 20:
+            milestone_bonus += 15
+        if oos_return >= 30:
+            milestone_bonus += 40
+        elif oos_return >= 15:
+            milestone_bonus += 20
 
         # 總分
-        score = oos_excess_score + is_return_score + oos_return_score + sharpe_score - dd_penalty + consistency_bonus + trade_bonus
+        score = (is_return_score + oos_return_score + oos_excess_score
+                 + sharpe_score - dd_penalty + consistency_bonus
+                 + trade_bonus + milestone_bonus)
 
         # 記錄詳細指標
         trial.set_user_attr("is_return", is_return)
