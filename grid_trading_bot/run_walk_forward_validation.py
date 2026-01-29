@@ -172,7 +172,19 @@ def create_all_strategies() -> dict:
         "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig()),
         "supertrend": SupertrendBacktestStrategy(supertrend_config),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
-        "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig()),
+        "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig(
+            rsi_period=7,
+            rsi_block_threshold=0.9,
+            atr_period=10,
+            grid_count=10,
+            atr_multiplier=Decimal("2.5"),
+            stop_loss_atr_mult=Decimal("1.5"),
+            take_profit_grids=1,
+            max_hold_bars=12,
+            use_trailing_stop=True,
+            trailing_activate_pct=0.01,
+            trailing_distance_pct=0.008,
+        )),
         "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),
     }
 
@@ -183,6 +195,7 @@ def run_walk_forward_validation(
     strategy_name: str,
     periods: int = 6,
     is_ratio: float = 0.7,
+    leverage: int = 10,
 ) -> dict:
     """執行 Walk-Forward 驗證"""
 
@@ -192,7 +205,7 @@ def run_walk_forward_validation(
 
     config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=10,
+        leverage=leverage,
         fee_rate=Decimal("0.0004"),
         slippage_pct=Decimal("0.0001"),
     )
@@ -322,6 +335,7 @@ def run_monte_carlo_validation_for_strategy(
     strategy,
     strategy_name: str,
     n_simulations: int = 500,
+    leverage: int = 10,
 ) -> dict:
     """執行 Monte Carlo 穩健性驗證"""
 
@@ -331,7 +345,7 @@ def run_monte_carlo_validation_for_strategy(
 
     config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=10,
+        leverage=leverage,
         fee_rate=Decimal("0.0004"),
         slippage_pct=Decimal("0.0001"),
     )
@@ -544,21 +558,34 @@ async def main():
         else:
             strategies_to_test = {args.strategy: all_strategies[args.strategy]}
 
+        # 策略對應的槓桿倍數
+        strategy_leverage = {
+            "rsi_grid": 2,
+            "grid_futures": 42,
+            "bollinger": 18,
+            "supertrend": 18,
+            "grid": 10,
+        }
+
         all_results = []
 
         for name, strategy in strategies_to_test.items():
+            lev = strategy_leverage.get(name, 10)
+
             # Walk-Forward 驗證
             wf_result = run_walk_forward_validation(
                 klines=klines,
                 strategy=strategy,
                 strategy_name=name,
                 periods=args.periods,
+                leverage=lev,
             )
 
             result = {
                 "strategy": name,
                 "symbol": args.symbol,
                 "interval": args.interval,
+                "leverage": lev,
                 "walk_forward": wf_result.get("walk_forward", {}),
                 "overfitting_analysis": wf_result.get("overfitting_analysis", {}),
             }
@@ -572,6 +599,7 @@ async def main():
                     strategy=strategy,
                     strategy_name=name,
                     n_simulations=args.mc_iterations,
+                    leverage=lev,
                 )
                 result["monte_carlo"] = mc_result
 
