@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Supertrend TREND_GRID 策略多目標優化腳本.
+Supertrend HYBRID_GRID 策略多目標優化腳本.
 
 使用 IS+OOS 聯合優化，防止過度擬合訓練數據。
-仿照 BB_NEUTRAL_GRID 的成功優化模式。
+HYBRID_GRID: 雙向交易 + Supertrend 趨勢偏移。
 
 核心優化策略：
 1. 使用「超額報酬」而非絕對報酬 (策略報酬 - 市場報酬)
@@ -13,11 +13,11 @@ Supertrend TREND_GRID 策略多目標優化腳本.
 
 約束條件：
 - 最大回撤 <= 35%
-- IS 交易數 >= 200, OOS 交易數 >= 80
+- IS 交易數 >= 800, OOS 交易數 >= 350
 - 移除 win_rate >= 50% 限制（允許低勝率高盈虧比）
 
 用法:
-    python optimize_supertrend.py --trials 200 --leverage 18
+    python optimize_supertrend.py --trials 300 --leverage 18
     python optimize_supertrend.py --trials 100 --leverage 18 --quick
 """
 
@@ -109,7 +109,7 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
         回測結果字典
     """
     config = SupertrendStrategyConfig(
-        mode=SupertrendMode.TREND_GRID,
+        mode=SupertrendMode.HYBRID_GRID,
         atr_period=params["atr_period"],
         atr_multiplier=Decimal(str(params["atr_multiplier"])),
         grid_count=params["grid_count"],
@@ -127,6 +127,12 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
         cooldown_bars=params["cooldown_bars"],
         use_trailing_stop=True,
         trailing_stop_pct=Decimal(str(params["trailing_stop_pct"])),
+        # HYBRID_GRID specific
+        hybrid_grid_bias_pct=Decimal(str(params["hybrid_grid_bias_pct"])),
+        hybrid_tp_multiplier_trend=Decimal(str(params["hybrid_tp_multiplier_trend"])),
+        hybrid_tp_multiplier_counter=Decimal(str(params["hybrid_tp_multiplier_counter"])),
+        hybrid_sl_multiplier_counter=Decimal(str(params["hybrid_sl_multiplier_counter"])),
+        hybrid_rsi_asymmetric=params["hybrid_rsi_asymmetric"],
     )
 
     strategy = SupertrendBacktestStrategy(config)
@@ -192,6 +198,12 @@ def create_multi_objective(
             "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 3),
             "trailing_stop_pct": trial.suggest_float("trailing_stop_pct", 0.01, 0.10, step=0.01),
+            # HYBRID_GRID specific
+            "hybrid_grid_bias_pct": trial.suggest_float("hybrid_grid_bias_pct", 0.55, 0.75, step=0.05),
+            "hybrid_tp_multiplier_trend": trial.suggest_float("hybrid_tp_multiplier_trend", 1.0, 2.0, step=0.25),
+            "hybrid_tp_multiplier_counter": trial.suggest_float("hybrid_tp_multiplier_counter", 0.5, 1.0, step=0.25),
+            "hybrid_sl_multiplier_counter": trial.suggest_float("hybrid_sl_multiplier_counter", 0.5, 1.0, step=0.1),
+            "hybrid_rsi_asymmetric": trial.suggest_categorical("hybrid_rsi_asymmetric", [True, False]),
         }
 
         # 執行 IS 回測 (訓練集)
@@ -231,11 +243,11 @@ def create_multi_objective(
 
         # ========== 約束條件 ==========
 
-        # 交易數約束（降低門檻，允許少量高利潤交易）
-        if is_trades < 150:
+        # 交易數約束（HYBRID_GRID 預期更多交易）
+        if is_trades < 800:
             trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
             return -500 + is_trades
-        if oos_trades < 60:
+        if oos_trades < 350:
             trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
             return -500 + oos_trades
 
@@ -268,7 +280,7 @@ def create_multi_objective(
 
         # 7. 交易次數獎勵（進一步降低）
         total_trades = is_trades + oos_trades
-        trade_bonus = math.log(total_trades / 400) * 1
+        trade_bonus = math.log(total_trades / 1000) * 1
 
         # 8. 里程碑獎勵（直接獎勵達標）
         milestone_bonus = 0
@@ -439,7 +451,7 @@ def print_config_suggestion(params: dict):
     print("=" * 70)
     print(f"""
 SupertrendStrategyConfig(
-    mode=SupertrendMode.TREND_GRID,
+    mode=SupertrendMode.HYBRID_GRID,
     atr_period={params['atr_period']},
     atr_multiplier=Decimal("{params['atr_multiplier']}"),
     grid_count={params['grid_count']},
@@ -457,13 +469,18 @@ SupertrendStrategyConfig(
     cooldown_bars={params['cooldown_bars']},
     use_trailing_stop=True,
     trailing_stop_pct=Decimal("{params['trailing_stop_pct']}"),
+    hybrid_grid_bias_pct=Decimal("{params['hybrid_grid_bias_pct']}"),
+    hybrid_tp_multiplier_trend=Decimal("{params['hybrid_tp_multiplier_trend']}"),
+    hybrid_tp_multiplier_counter=Decimal("{params['hybrid_tp_multiplier_counter']}"),
+    hybrid_sl_multiplier_counter=Decimal("{params['hybrid_sl_multiplier_counter']}"),
+    hybrid_rsi_asymmetric={params['hybrid_rsi_asymmetric']},
 )
 """)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Supertrend TREND_GRID 多目標參數優化 (IS+OOS 聯合優化)"
+        description="Supertrend HYBRID_GRID 多目標參數優化 (IS+OOS 聯合優化)"
     )
     parser.add_argument(
         "--data-file",
@@ -522,8 +539,8 @@ def main():
         args.trials = 50
 
     print("=" * 70)
-    print("  Supertrend TREND_GRID 多目標優化 (IS+OOS 聯合, 超額報酬)")
-    print("  目標: OOS 跑贏市場, IS/OOS >= 30%")
+    print("  Supertrend HYBRID_GRID 多目標優化 (IS+OOS 聯合, 超額報酬)")
+    print("  目標: OOS >= 15%, IS >= 40%, 交易數 >= 1000")
     print("=" * 70)
     print(f"  試驗次數: {args.trials}")
     print(f"  槓桿倍數: {args.leverage}x")

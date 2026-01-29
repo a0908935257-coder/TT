@@ -55,7 +55,8 @@ from .base import BacktestContext, BacktestStrategy
 class SupertrendMode(str, Enum):
     """Supertrend strategy modes."""
     TREND_FLIP = "trend_flip"      # Legacy: trade on flip (NOT VALIDATED)
-    TREND_GRID = "trend_grid"      # New: grid trading in trend direction
+    TREND_GRID = "trend_grid"      # Grid trading in trend direction only
+    HYBRID_GRID = "hybrid_grid"    # Bidirectional grid with trend bias
 
 
 @dataclass
@@ -105,6 +106,12 @@ class SupertrendStrategyConfig:
     # Trailing stop (like live bot)
     use_trailing_stop: bool = True  # 新增：與實戰一致
     trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
+    # HYBRID_GRID parameters
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.6"))  # 趨勢方向網格比例
+    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.0"))  # 順勢 TP 倍數
+    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 逆勢 TP 倍數
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.7"))  # 逆勢 SL 倍數
+    hybrid_rsi_asymmetric: bool = True  # RSI 非對稱過濾
 
 
 @dataclass
@@ -410,6 +417,10 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         if self._config.mode == SupertrendMode.TREND_FLIP:
             return self._on_kline_trend_flip(kline, current_price)
 
+        # HYBRID_GRID mode
+        if self._config.mode == SupertrendMode.HYBRID_GRID:
+            return self._on_kline_hybrid_grid(kline, klines, current_price)
+
         # TREND_GRID mode
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
@@ -501,6 +512,186 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         return None
 
+    def _initialize_hybrid_grid(self, klines: List[Kline], current_price: Decimal) -> None:
+        """
+        Initialize asymmetric grid levels for HYBRID_GRID mode.
+
+        Allocates more grid levels in the trend direction:
+        - Bullish: more grids below price (more long opportunities)
+        - Bearish: more grids above price (more short opportunities)
+        """
+        atr = self._calculate_atr(klines, self._config.atr_period)
+        self._current_atr = atr
+
+        if atr and atr > 0:
+            range_size = atr * self._config.grid_atr_multiplier
+        else:
+            range_size = current_price * Decimal("0.05")
+
+        bias = self._config.hybrid_grid_bias_pct  # e.g. 0.6
+
+        if self._current_trend == 1:
+            # Bullish: 60% range below, 40% above
+            self._lower_price = current_price - range_size * bias
+            self._upper_price = current_price + range_size * (Decimal("1") - bias)
+        elif self._current_trend == -1:
+            # Bearish: 60% range above, 40% below
+            self._lower_price = current_price - range_size * (Decimal("1") - bias)
+            self._upper_price = current_price + range_size * bias
+        else:
+            # No trend: symmetric
+            self._lower_price = current_price - range_size
+            self._upper_price = current_price + range_size
+
+        if self._config.grid_count <= 0:
+            self._grid_spacing = range_size
+        else:
+            self._grid_spacing = (self._upper_price - self._lower_price) / Decimal(self._config.grid_count)
+
+        self._grid_levels = []
+        for i in range(self._config.grid_count + 1):
+            price = self._lower_price + (self._grid_spacing * Decimal(i))
+            self._grid_levels.append(GridLevel(index=i, price=price))
+
+        self._grid_initialized = True
+
+    def _on_kline_hybrid_grid(
+        self, kline: Kline, klines: List[Kline], current_price: Decimal
+    ) -> Optional[Signal]:
+        """
+        HYBRID_GRID mode: bidirectional trading with trend bias.
+
+        Both long and short are allowed regardless of trend.
+        Trend direction gets favorable TP/SL; counter-trend gets tighter risk.
+        """
+        # Initialize or rebuild grid
+        if self._should_rebuild_grid(current_price):
+            self._initialize_hybrid_grid(klines, current_price)
+            return None
+
+        if self._current_trend == 0:
+            return None
+
+        if self._trend_bars < self._config.min_trend_bars:
+            return None
+
+        level_idx = self._find_current_grid_level(current_price)
+        if level_idx is None:
+            return None
+
+        is_bullish = self._current_trend == 1
+
+        # Try LONG entry (buy dip at grid level below)
+        if level_idx > 0:
+            entry_level = self._grid_levels[level_idx]
+            if not entry_level.is_filled and kline.low <= entry_level.price:
+                # RSI filter — asymmetric if enabled
+                if self._config.hybrid_rsi_asymmetric and not is_bullish:
+                    # Counter-trend long: stricter RSI (must be oversold)
+                    if self._current_rsi is not None and float(self._current_rsi) > self._config.rsi_oversold:
+                        pass  # blocked
+                    else:
+                        return self._try_hybrid_entry(
+                            entry_level, level_idx, "LONG", is_bullish, "long"
+                        )
+                else:
+                    if self._check_rsi_filter("LONG"):
+                        return self._try_hybrid_entry(
+                            entry_level, level_idx, "LONG", is_bullish, "long"
+                        )
+
+        # Try SHORT entry (sell rally at grid level above)
+        if level_idx < len(self._grid_levels) - 1:
+            entry_level = self._grid_levels[level_idx + 1]
+            if not entry_level.is_filled and kline.high >= entry_level.price:
+                if self._config.hybrid_rsi_asymmetric and is_bullish:
+                    # Counter-trend short: stricter RSI (must be overbought)
+                    if self._current_rsi is not None and float(self._current_rsi) < self._config.rsi_overbought:
+                        pass  # blocked
+                    else:
+                        return self._try_hybrid_entry(
+                            entry_level, level_idx + 1, "SHORT", not is_bullish, "short"
+                        )
+                else:
+                    if self._check_rsi_filter("SHORT"):
+                        return self._try_hybrid_entry(
+                            entry_level, level_idx + 1, "SHORT", not is_bullish, "short"
+                        )
+
+        return None
+
+    def _try_hybrid_entry(
+        self,
+        entry_level: GridLevel,
+        level_idx: int,
+        side: str,
+        is_with_trend: bool,
+        hysteresis_side: str,
+    ) -> Optional[Signal]:
+        """
+        Attempt a hybrid grid entry with differentiated TP/SL.
+
+        Args:
+            entry_level: The grid level to enter at
+            level_idx: Grid level index
+            side: "LONG" or "SHORT"
+            is_with_trend: Whether this trade is in the trend direction
+            hysteresis_side: "long" or "short" for hysteresis check
+        """
+        current_price = entry_level.price
+
+        if not self._check_hysteresis(level_idx, hysteresis_side, current_price, current_price):
+            return None
+
+        entry_level.is_filled = True
+        self._last_triggered_level = level_idx
+        self._last_triggered_side = hysteresis_side
+
+        if self._config.use_signal_cooldown:
+            self._signal_cooldown = self._config.cooldown_bars
+
+        # Determine TP/SL multipliers based on trend alignment
+        if is_with_trend:
+            tp_mult = self._config.hybrid_tp_multiplier_trend
+            sl_mult = Decimal("1")  # Normal SL for trend trades
+        else:
+            tp_mult = self._config.hybrid_tp_multiplier_counter
+            sl_mult = self._config.hybrid_sl_multiplier_counter  # Tighter SL
+
+        if side == "LONG":
+            tp_level = min(
+                level_idx + int(self._config.take_profit_grids * tp_mult),
+                len(self._grid_levels) - 1,
+            )
+            # Ensure at least 1 grid for TP
+            if tp_level <= level_idx:
+                tp_level = min(level_idx + 1, len(self._grid_levels) - 1)
+            tp_price = self._grid_levels[tp_level].price
+            sl_price = current_price * (Decimal("1") - self._config.stop_loss_pct * sl_mult)
+
+            return Signal.long_entry(
+                price=current_price,
+                stop_loss=sl_price,
+                take_profit=tp_price,
+                reason="hybrid_grid_long" if is_with_trend else "hybrid_grid_long_counter",
+            )
+        else:  # SHORT
+            tp_level = max(
+                level_idx - int(self._config.take_profit_grids * tp_mult),
+                0,
+            )
+            if tp_level >= level_idx:
+                tp_level = max(level_idx - 1, 0)
+            tp_price = self._grid_levels[tp_level].price
+            sl_price = current_price * (Decimal("1") + self._config.stop_loss_pct * sl_mult)
+
+            return Signal.short_entry(
+                price=current_price,
+                stop_loss=sl_price,
+                take_profit=tp_price,
+                reason="hybrid_grid_short" if is_with_trend else "hybrid_grid_short_counter",
+            )
+
     def _on_kline_trend_flip(self, kline: Kline, current_price: Decimal) -> Optional[Signal]:
         """
         TREND_FLIP mode - trade on Supertrend direction flip with RSI filter.
@@ -566,6 +757,10 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                 stop_price = self._position_min_price * (Decimal("1") + self._config.trailing_stop_pct)
                 if current_price >= stop_price:
                     return Signal.close_all(reason="trailing_stop")
+
+        # HYBRID_GRID: no trend-flip forced close (rely on TP/SL)
+        if self._config.mode == SupertrendMode.HYBRID_GRID:
+            return None
 
         # Exit if trend flipped against position
         if position.side == "LONG" and self._current_trend == -1:
