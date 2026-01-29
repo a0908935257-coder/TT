@@ -503,6 +503,11 @@ class BotFactory:
             take_profit_grids=int(config.get("take_profit_grids", 1)),
             max_positions=int(config.get("max_positions", 5)),
             use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
+            # Protective Features
+            use_hysteresis=config.get("use_hysteresis", False),
+            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.002"))),
+            use_signal_cooldown=config.get("use_signal_cooldown", False),
+            cooldown_bars=int(config.get("cooldown_bars", 2)),
         )
 
         # Create bot instance
