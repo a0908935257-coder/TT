@@ -13,7 +13,7 @@ Supertrend TREND_GRID 策略多目標優化腳本.
 
 約束條件：
 - 最大回撤 <= 30%
-- IS 交易數 >= 100, OOS 交易數 >= 50
+- IS 交易數 >= 280, OOS 交易數 >= 120
 - 移除 win_rate >= 50% 限制（允許低勝率高盈虧比）
 
 用法:
@@ -167,10 +167,11 @@ def create_multi_objective(
          + min(OOS_return, 50) * 0.5 # OOS 絕對報酬（封頂）
          - max_drawdown * 0.3        # 回撤懲罰
          + consistency_bonus * 10    # 一致性獎勵
+         + trade_bonus               # 交易次數獎勵 log(total/400)*5
 
     約束條件:
     - 最大回撤 <= 30%
-    - IS 交易數 >= 100, OOS 交易數 >= 50
+    - IS 交易數 >= 280, OOS 交易數 >= 120
     """
 
     def objective(trial: optuna.Trial) -> float:
@@ -185,11 +186,11 @@ def create_multi_objective(
             "rsi_period": trial.suggest_int("rsi_period", 7, 21),
             "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 75),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
-            "min_trend_bars": trial.suggest_int("min_trend_bars", 1, 5),
+            "min_trend_bars": trial.suggest_int("min_trend_bars", 1, 3),
             "hysteresis_pct": trial.suggest_float("hysteresis_pct", 0.0005, 0.01, step=0.0005),
             "use_hysteresis": trial.suggest_categorical("use_hysteresis", [True, False]),
             "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 6),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 3),
             "trailing_stop_pct": trial.suggest_float("trailing_stop_pct", 0.01, 0.10, step=0.01),
         }
 
@@ -230,11 +231,11 @@ def create_multi_objective(
 
         # ========== 約束條件 ==========
 
-        # 交易數約束（要求充足交易）
-        if is_trades < 100:
+        # 交易數約束（要求充足交易，一年至少 200 筆）
+        if is_trades < 280:
             trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
             return -500 + is_trades
-        if oos_trades < 50:
+        if oos_trades < 120:
             trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
             return -500 + oos_trades
 
@@ -265,8 +266,12 @@ def create_multi_objective(
         if is_excess > 0 and oos_excess > 0:
             consistency_bonus = 10
 
+        # 7. 交易次數獎勵（鼓勵更多交易）
+        total_trades = is_trades + oos_trades
+        trade_bonus = math.log(total_trades / 400) * 5
+
         # 總分
-        score = oos_excess_score + is_excess_score + sharpe_score + oos_abs_score - dd_penalty + consistency_bonus
+        score = oos_excess_score + is_excess_score + sharpe_score + oos_abs_score - dd_penalty + consistency_bonus + trade_bonus
 
         # 記錄詳細指標
         trial.set_user_attr("is_return", is_return)
