@@ -153,44 +153,38 @@ bots:
     max_capital: 5000
     priority: 8
 
-    # --- 策略參數 (Optuna 優化 2026-01-27) ---
+    # --- 策略參數 (v2 Vol Filter 優化 2026-01-30) ---
+    # WF 一致性: 77.8% (7/9), OOS Sharpe: 2.89
+    # MC: shuffle 100%, bootstrap 94.4%, ROBUST
+    # 年化: 12.09%, Sharpe: 1.90, 回撤: 9.78%
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 1h                      # 優化後: 1h (原 15m)
-      leverage: 2
+      timeframe: 15m                     # v2: 15m
+      leverage: 10                       # v2: 10x (WF 驗證通過)
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # RSI Parameters (優化後)
+      # RSI Parameters (v2 優化)
       rsi_period: 14
-      oversold_level: 33                 # 優化後: 33 (原 30)
-      overbought_level: 66               # 優化後: 66 (原 70)
+      rsi_block_threshold: 0.7          # v2: tanh score 閾值
 
-      # Grid Parameters (優化後)
-      grid_count: 8                      # 優化後: 8 (原 10)
-      atr_period: 22                     # 優化後: 22 (原 14)
-      atr_multiplier: 3.5                # 優化後: 3.5 (原 3.0)
+      # Grid Parameters (v2 優化)
+      grid_count: 12                     # v2: 12
+      atr_period: 10                     # v2: 10
+      atr_multiplier: 4.0               # v2: 4.0
 
-      # Trend Filter (優化後: 關閉)
-      trend_sma_period: 39               # 優化後: 39 (原 20)
-      use_trend_filter: false            # 優化後: 關閉 (原 true)
+      # Risk Management (v2 優化)
+      stop_loss_atr_mult: 1.5           # v2: 1.5
+      take_profit_grids: 1              # v2: 1 (WF 77.8%)
+      max_hold_bars: 16                 # v2: timeout 16 bars
 
-      # Risk Management (優化後)
-      stop_loss_atr_mult: 2.0            # 優化後: 2.0 (原 1.5)
-      max_stop_loss_pct: 0.03            # 3%
-      take_profit_grids: 1
-      max_positions: 5
+      # Trailing Stop (v2: 關閉)
+      use_trailing_stop: false
 
-      # Protective Features (優化後: 保持關閉)
-      use_hysteresis: false
-      hysteresis_pct: 0.003              # 優化後: 0.3%
-      use_signal_cooldown: false
-      cooldown_bars: 2
-
-      # Volatility Regime Filter (v2 改進)
+      # Volatility Regime Filter (v2 核心改進)
       use_volatility_filter: true
-      vol_atr_baseline_period: 200
+      vol_atr_baseline_period: 100
       vol_ratio_low: 0.4
       vol_ratio_high: 2.0
 

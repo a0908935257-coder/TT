@@ -179,7 +179,7 @@ def create_all_strategies() -> dict:
             grid_count=12,
             atr_multiplier=Decimal("4.0"),
             stop_loss_atr_mult=Decimal("1.5"),
-            take_profit_grids=2,
+            take_profit_grids=1,
             max_hold_bars=16,
             use_trailing_stop=False,
             trailing_activate_pct=0.01,
@@ -564,7 +564,7 @@ async def main():
 
         # 策略對應的槓桿倍數
         strategy_leverage = {
-            "rsi_grid": 7,
+            "rsi_grid": 10,
             "grid_futures": 42,
             "bollinger": 18,
             "supertrend": 18,
