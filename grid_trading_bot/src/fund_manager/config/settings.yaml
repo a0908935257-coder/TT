@@ -243,11 +243,12 @@ bots:
   # ===========================================================================
   # Supertrend HYBRID_GRID Bot (超級趨勢 + 雙向網格 + 趨勢偏移)
   # ===========================================================================
-  # HYBRID_GRID v3 優化 (2026-01-29):
-  # - IS: 91.72%, OOS: 24.61%, OOS超額報酬: +38.76%
-  # - Sharpe: IS=11.46, OOS=9.98
-  # - 回撤: IS=3.91%, OOS=2.53%
-  # - 交易數: IS=5137, OOS=2131
+  # 嚴格成本約束優化 + Walk-Forward 驗證 (2026-01-30):
+  # 成本模型: 手續費 0.06% + 滑價 0.05%
+  # - 年化報酬: 227.32%, Sharpe: 9.64, 回撤: 1.80%
+  # - 勝率: 63.2%, 交易數: 4681/2年
+  # - W-F 一致性: 100% (9/9), Monte Carlo: 100%
+  # - OOS/IS Sharpe: 0.96, 參數穩定度: 93.2%
   # ===========================================================================
   - bot_id: supertrend_*
     name: "Supertrend HYBRID_GRID Strategy"
@@ -259,60 +260,68 @@ bots:
     max_capital: 5000
     priority: 7
 
-    # --- 策略參數 (HYBRID_GRID v3 優化 2026-01-29) ---
+    # --- 策略參數 (嚴格成本約束優化 2026-01-30) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 18                       # ⚠️ 高槓桿 (v3 優化)
+      leverage: 10                       # 10x (嚴格約束優化)
       margin_type: ISOLATED
       position_size_pct: 0.1
 
       # Strategy Mode
       mode: hybrid_grid                  # 雙向交易 + 趨勢偏移
 
-      # Supertrend Settings (v3 優化)
-      atr_period: 5                      # ATR 週期 (v3: 5)
-      atr_multiplier: 1.0                # ATR 乘數 (v3: 1.0)
+      # Supertrend Settings (2026-01-30 優化)
+      atr_period: 25                     # ATR 週期
+      atr_multiplier: 3.5               # ATR 乘數
 
       # Grid Settings (HYBRID_GRID 模式)
-      grid_count: 9                      # 網格數量 (v3: 9)
-      grid_atr_multiplier: 8.0           # 網格範圍 ATR 乘數 (v3: 8.0)
+      grid_count: 10                     # 網格數量
+      grid_atr_multiplier: 9.5           # 網格範圍 ATR 乘數
       take_profit_grids: 1               # 止盈網格數
 
-      # RSI Filter (v3 優化)
+      # RSI Filter (優化後)
       use_rsi_filter: true
-      rsi_period: 19                     # RSI 週期 (v3: 19)
-      rsi_overbought: 73                 # RSI > 73 不做多 (v3: 73)
-      rsi_oversold: 27                   # RSI < 27 不做空 (v3: 27)
+      rsi_period: 21                     # RSI 週期
+      rsi_overbought: 71                 # RSI > 71 不做多
+      rsi_oversold: 31                   # RSI < 31 不做空
 
       # Trend confirmation
-      min_trend_bars: 1                  # 固定為 1 (v3 結構改動)
+      min_trend_bars: 1
 
-      # Risk Management (v3 優化)
-      stop_loss_pct: 0.001               # 0.1% (v3: 緊止損)
+      # Risk Management (優化後)
+      stop_loss_pct: 0.01                # 1% (嚴格約束: SL >= 1%)
       use_trailing_stop: true            # 啟用追蹤止損
-      trailing_stop_pct: 0.02            # 2% (v3: 0.02)
+      trailing_stop_pct: 0.03            # 3%
 
-      # Protective Features (v3 優化)
-      use_hysteresis: false              # v3: 關閉
-      hysteresis_pct: 0.0065             # 0.65% (v3: 0.0065)
-      use_signal_cooldown: false         # v3: 關閉
-      cooldown_bars: 3                   # v3: 3
+      # Protective Features (優化後: 均關閉)
+      use_hysteresis: false
+      hysteresis_pct: 0.008
+      use_signal_cooldown: false
+      cooldown_bars: 0
 
-      # HYBRID_GRID Specific (v3 優化)
-      hybrid_grid_bias_pct: 0.75         # 趨勢方向網格比例 (v3: 0.75)
-      hybrid_tp_multiplier_trend: 1.25   # 順勢 TP 倍數 (v3: 1.25)
-      hybrid_tp_multiplier_counter: 0.75 # 逆勢 TP 倍數 (v3: 0.75)
-      hybrid_sl_multiplier_counter: 0.5  # 逆勢 SL 倍數 (v3: 0.5)
-      hybrid_rsi_asymmetric: true        # RSI 非對稱過濾 (v3: true)
+      # Volatility Regime Filter (優化後: 關閉)
+      use_volatility_filter: false
+      vol_ratio_low: 0.6
+      vol_ratio_high: 2.5
+
+      # Timeout Exit
+      max_hold_bars: 12                  # 最大持倉 12 bars
+
+      # HYBRID_GRID Specific (優化後)
+      hybrid_grid_bias_pct: 0.75         # 趨勢方向網格比例
+      hybrid_tp_multiplier_trend: 1.75   # 順勢 TP 倍數
+      hybrid_tp_multiplier_counter: 0.5  # 逆勢 TP 倍數
+      hybrid_sl_multiplier_counter: 0.5  # 逆勢 SL 倍數
+      hybrid_rsi_asymmetric: false       # RSI 非對稱過濾: 關閉
 
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
 # 預估組合年化報酬: ~40-50%
 #   - Grid Futures (40%): 45.18% 年化 (積極策略 42x)
 #   - Bollinger NEUTRAL (25%): 53.23% 年化 (優化後 2026-01-28)
-#   - Supertrend HYBRID_GRID (15%): IS=91.7%, OOS=24.6%, 超額+38.8% (v3 2026-01-29, 18x)
-#   - RSI-Grid (10%): 5.59% 年化
-# ⚠️ 超高槓桿風險配置 - Grid Futures 42x, Bollinger 18x, Supertrend 18x
+#   - Supertrend HYBRID_GRID (15%): 年化 227%, Sharpe 9.64, WF 100% (嚴格成本約束 2026-01-30, 10x)
+#   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
+# ⚠️ 高槓桿風險配置 - Grid Futures 42x, Bollinger 18x, Supertrend 10x
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)
