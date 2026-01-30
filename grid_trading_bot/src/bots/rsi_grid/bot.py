@@ -23,6 +23,7 @@ Design Goals:
 """
 
 import asyncio
+import math
 import time
 import uuid
 from datetime import datetime, timezone
@@ -530,20 +531,18 @@ class RSIGridBot(BaseBot):
     # =========================================================================
 
     def _initialize_grid(self, center_price: Decimal) -> None:
-        """Initialize grid levels around center price."""
+        """Initialize grid levels around center price (symmetric ATR-based)."""
         atr_value = self._atr_calc.atr if self._atr_calc else None
 
-        # Calculate range
+        # Symmetric ATR-based range (aligned with backtest strategy)
         if atr_value and atr_value > 0:
-            range_value = atr_value * self._config.atr_multiplier
-            range_pct = range_value / center_price
-            # Clamp between 3% and 20%
-            range_pct = min(max(range_pct, Decimal("0.03")), Decimal("0.20"))
+            range_size = atr_value * self._config.atr_multiplier
         else:
-            range_pct = Decimal("0.08")  # Fallback 8%
+            range_size = center_price * Decimal("0.05")
 
-        upper_price = center_price * (Decimal("1") + range_pct)
-        lower_price = center_price * (Decimal("1") - range_pct)
+        upper_price = center_price + range_size
+        lower_price = center_price - range_size
+        range_pct = range_size / center_price if center_price > 0 else Decimal("0")
 
         # Guard against division by zero
         if self._config.grid_count <= 0:
@@ -583,15 +582,13 @@ class RSIGridBot(BaseBot):
         )
 
     def _check_rebuild_needed(self, current_price: Decimal) -> bool:
-        """Check if grid needs rebuilding (price out of range)."""
+        """Check if grid needs rebuilding (price out of range, no buffer)."""
         if not self._grid:
             return True
 
-        threshold = Decimal("1.1")  # 10% beyond range
-
-        if current_price > self._grid.upper_price * threshold:
+        if current_price > self._grid.upper_price:
             return True
-        if current_price < self._grid.lower_price / threshold:
+        if current_price < self._grid.lower_price:
             return True
 
         return False
@@ -618,6 +615,31 @@ class RSIGridBot(BaseBot):
                 elif trend < 0:
                     return "short_only"
             return "both"
+
+    def _rsi_score(self, rsi: Decimal) -> float:
+        """Continuous RSI bias score using tanh. Returns [-1, +1]."""
+        return math.tanh((float(rsi) - 50) / 50 * 1.5)
+
+    def _find_current_grid_index(self, price: Decimal) -> Optional[int]:
+        """Find the grid level index for the current price."""
+        if not self._grid or not self._grid.levels:
+            return None
+
+        for i, level in enumerate(self._grid.levels):
+            if i < len(self._grid.levels) - 1:
+                if level.price <= price < self._grid.levels[i + 1].price:
+                    return i
+
+        if price >= self._grid.levels[-1].price:
+            return len(self._grid.levels) - 1
+
+        return 0
+
+    def _reset_filled_levels(self) -> None:
+        """Reset all filled grid levels when no position is held."""
+        if self._grid:
+            for level in self._grid.levels:
+                level.state = GridLevelState.EMPTY
 
     # =========================================================================
     # Position Management
@@ -1463,6 +1485,10 @@ class RSIGridBot(BaseBot):
         # v2: Increment bar counter
         self._current_bar += 1
 
+        # Reset filled levels when no position (aligned with backtest)
+        if not self._position:
+            self._reset_filled_levels()
+
         # v2: Update volatility baseline
         atr = self._atr_calc.atr if self._atr_calc else None
         if atr:
@@ -1566,7 +1592,7 @@ class RSIGridBot(BaseBot):
         rsi: Decimal,
         rsi_zone: RSIZone,
     ) -> None:
-        """Check for entry signals with optional hysteresis protection."""
+        """Check for entry signals using tanh RSI score + grid index (aligned with backtest)."""
         if not self._grid:
             return
 
@@ -1579,65 +1605,71 @@ class RSIGridBot(BaseBot):
         if not self._check_volatility_regime():
             return
 
-        allowed_dir = self._get_allowed_direction(rsi_zone, self._current_trend)
-        if allowed_dir == "none":
+        # Use tanh RSI score instead of zone-based direction (aligned with backtest)
+        score = self._rsi_score(rsi)
+        threshold = self._config.rsi_block_threshold
+        can_long = score < threshold    # block long when RSI too high
+        can_short = score > -threshold  # block short when RSI too low
+
+        if not can_long and not can_short:
+            return
+
+        # Find current grid level index (aligned with backtest)
+        level_idx = self._find_current_grid_index(current_price)
+        if level_idx is None:
             return
 
         curr_low = kline.low
         curr_high = kline.high
 
-        # Calculate stop loss distance for take profit
-        atr = self._atr_calc.atr if self._atr_calc else current_price * self._config.max_stop_loss_pct
-        tp_distance = self._grid.grid_spacing * Decimal(self._config.take_profit_grids)
-
-        # Long entry: price dips to touch grid level
-        if allowed_dir in ["long_only", "both"]:
-            for level in self._grid.levels:
-                if level.state == GridLevelState.EMPTY and curr_low <= level.price:
-                    # Check hysteresis to prevent oscillation
-                    if not self._check_hysteresis(level.index, "long", level.price, current_price):
-                        continue
-
-                    level.state = GridLevelState.LONG_FILLED
-                    level.filled_at = datetime.now(timezone.utc)
+        # Long entry: grid_levels[level_idx] (current level, price dips to touch)
+        if can_long and level_idx > 0:
+            entry_level = self._grid.levels[level_idx]
+            if entry_level.state == GridLevelState.EMPTY and curr_low <= entry_level.price:
+                # Check hysteresis to prevent oscillation
+                if not self._check_hysteresis(entry_level.index, "long", entry_level.price, current_price):
+                    pass
+                else:
+                    entry_level.state = GridLevelState.LONG_FILLED
+                    entry_level.filled_at = datetime.now(timezone.utc)
 
                     success = await self._open_position(
                         side=PositionSide.LONG,
-                        price=level.price,
+                        price=entry_level.price,
                         rsi=rsi,
                         rsi_zone=rsi_zone,
-                        grid_level=level.index,
+                        grid_level=entry_level.index,
                     )
                     if success:
                         if self._config.use_signal_cooldown:
-                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                            self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
-                            self._last_triggered_level = level.index  # Track for hysteresis
+                            self._last_triggered_level = entry_level.index
                         return
 
-        # Short entry: price rises to touch grid level
-        if allowed_dir in ["short_only", "both"]:
-            for level in reversed(self._grid.levels):
-                if level.state == GridLevelState.EMPTY and curr_high >= level.price:
-                    # Check hysteresis to prevent oscillation
-                    if not self._check_hysteresis(level.index, "short", level.price, current_price):
-                        continue
-
-                    level.state = GridLevelState.SHORT_FILLED
-                    level.filled_at = datetime.now(timezone.utc)
+        # Short entry: grid_levels[level_idx + 1] (upper level, price rises to touch)
+        if can_short and level_idx < len(self._grid.levels) - 1:
+            entry_level = self._grid.levels[level_idx + 1]
+            if entry_level.state == GridLevelState.EMPTY and curr_high >= entry_level.price:
+                # Check hysteresis to prevent oscillation
+                if not self._check_hysteresis(entry_level.index, "short", entry_level.price, current_price):
+                    pass
+                else:
+                    entry_level.state = GridLevelState.SHORT_FILLED
+                    entry_level.filled_at = datetime.now(timezone.utc)
 
                     success = await self._open_position(
                         side=PositionSide.SHORT,
-                        price=level.price,
+                        price=entry_level.price,
                         rsi=rsi,
                         rsi_zone=rsi_zone,
-                        grid_level=level.index,
+                        grid_level=entry_level.index,
                     )
                     if success:
                         if self._config.use_signal_cooldown:
-                            self._signal_cooldown = self._cooldown_bars  # Reset cooldown
+                            self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
-                            self._last_triggered_level = level.index  # Track for hysteresis
+                            self._last_triggered_level = entry_level.index
                         return
 
     async def _check_exit(
@@ -1650,13 +1682,13 @@ class RSIGridBot(BaseBot):
         if not self._position:
             return
 
-        # RSI-based exit
+        # RSI extreme reversal exit (aligned with backtest: hard thresholds)
         if self._position.side == PositionSide.LONG:
-            if rsi_zone == RSIZone.OVERBOUGHT:
+            if rsi > Decimal("75"):
                 await self._close_position(current_price, ExitReason.RSI_EXIT)
                 return
         else:  # SHORT
-            if rsi_zone == RSIZone.OVERSOLD:
+            if rsi < Decimal("25"):
                 await self._close_position(current_price, ExitReason.RSI_EXIT)
                 return
 

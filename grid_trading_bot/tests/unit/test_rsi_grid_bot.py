@@ -352,3 +352,181 @@ class TestCheckTrailingStop:
         )
         # max_price is None (no update_extremes called)
         assert bot._check_trailing_stop(Decimal("40000")) is False
+
+
+# =============================================================================
+# Backtest Alignment Tests (tanh RSI, grid index, reset, rebuild)
+# =============================================================================
+
+
+class TestRSIScore:
+    """Test _rsi_score (tanh continuous RSI bias)."""
+
+    def test_neutral_at_50(self):
+        bot = _make_bot()
+        score = bot._rsi_score(Decimal("50"))
+        assert abs(score) < 0.01
+
+    def test_positive_above_50(self):
+        bot = _make_bot()
+        score = bot._rsi_score(Decimal("70"))
+        assert score > 0.3
+
+    def test_negative_below_50(self):
+        bot = _make_bot()
+        score = bot._rsi_score(Decimal("30"))
+        assert score < -0.3
+
+    def test_extreme_high(self):
+        bot = _make_bot()
+        score = bot._rsi_score(Decimal("90"))
+        assert score > 0.7
+
+    def test_extreme_low(self):
+        bot = _make_bot()
+        score = bot._rsi_score(Decimal("10"))
+        assert score < -0.7
+
+    def test_symmetry(self):
+        bot = _make_bot()
+        high = bot._rsi_score(Decimal("70"))
+        low = bot._rsi_score(Decimal("30"))
+        assert abs(high + low) < 0.01
+
+
+class TestFindCurrentGridIndex:
+    """Test _find_current_grid_index."""
+
+    def _setup_grid(self, bot):
+        from src.bots.rsi_grid.models import GridSetup, GridLevel, GridLevelState
+        levels = [
+            GridLevel(index=i, price=Decimal(str(48000 + i * 500)))
+            for i in range(5)
+        ]
+        bot._grid = GridSetup(
+            center_price=Decimal("50000"),
+            upper_price=Decimal("50000"),
+            lower_price=Decimal("48000"),
+            grid_spacing=Decimal("500"),
+            levels=levels,
+        )
+
+    def test_middle(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        # 49000 is between level 2 (49000) and level 3 (49500)
+        idx = bot._find_current_grid_index(Decimal("49200"))
+        assert idx == 2
+
+    def test_below_lowest(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        idx = bot._find_current_grid_index(Decimal("47000"))
+        assert idx == 0
+
+    def test_above_highest(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        idx = bot._find_current_grid_index(Decimal("51000"))
+        assert idx == 4  # last level
+
+    def test_no_grid(self):
+        bot = _make_bot()
+        bot._grid = None
+        assert bot._find_current_grid_index(Decimal("50000")) is None
+
+
+class TestResetFilledLevels:
+    """Test _reset_filled_levels."""
+
+    def test_resets_all(self):
+        from src.bots.rsi_grid.models import GridSetup, GridLevel, GridLevelState
+        bot = _make_bot()
+        levels = [
+            GridLevel(index=0, price=Decimal("48000"), state=GridLevelState.LONG_FILLED),
+            GridLevel(index=1, price=Decimal("49000"), state=GridLevelState.SHORT_FILLED),
+            GridLevel(index=2, price=Decimal("50000"), state=GridLevelState.EMPTY),
+        ]
+        bot._grid = GridSetup(
+            center_price=Decimal("49000"),
+            upper_price=Decimal("50000"),
+            lower_price=Decimal("48000"),
+            grid_spacing=Decimal("1000"),
+            levels=levels,
+        )
+        bot._reset_filled_levels()
+        for lv in bot._grid.levels:
+            assert lv.state == GridLevelState.EMPTY
+
+    def test_no_grid(self):
+        bot = _make_bot()
+        bot._grid = None
+        bot._reset_filled_levels()  # should not raise
+
+
+class TestCheckRebuildNeeded:
+    """Test _check_rebuild_needed without 10% buffer."""
+
+    def _setup_grid(self, bot):
+        from src.bots.rsi_grid.models import GridSetup
+        bot._grid = GridSetup(
+            center_price=Decimal("50000"),
+            upper_price=Decimal("52000"),
+            lower_price=Decimal("48000"),
+            grid_spacing=Decimal("500"),
+            levels=[],
+        )
+
+    def test_inside_range(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        assert bot._check_rebuild_needed(Decimal("50000")) is False
+
+    def test_at_upper_boundary(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        # Exactly at upper should not trigger (< check for >)
+        assert bot._check_rebuild_needed(Decimal("52000")) is False
+
+    def test_above_upper(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        # Just above upper triggers immediately (no 10% buffer)
+        assert bot._check_rebuild_needed(Decimal("52001")) is True
+
+    def test_below_lower(self):
+        bot = _make_bot()
+        self._setup_grid(bot)
+        assert bot._check_rebuild_needed(Decimal("47999")) is True
+
+    def test_no_grid(self):
+        bot = _make_bot()
+        bot._grid = None
+        assert bot._check_rebuild_needed(Decimal("50000")) is True
+
+
+class TestInitializeGrid:
+    """Test _initialize_grid uses symmetric ATR-based range."""
+
+    def test_symmetric_atr_range(self):
+        from src.bots.rsi_grid.models import RSIGridStats
+        bot = _make_bot()
+        bot._grid = None
+        bot._stats = RSIGridStats()
+        bot._atr_calc.atr = Decimal("1000")
+        # atr_multiplier default is 4.0 → range_size = 4000
+        bot._initialize_grid(Decimal("50000"))
+        assert bot._grid is not None
+        assert bot._grid.upper_price == Decimal("54000")  # 50000 + 4000
+        assert bot._grid.lower_price == Decimal("46000")  # 50000 - 4000
+
+    def test_fallback_no_atr(self):
+        from src.bots.rsi_grid.models import RSIGridStats
+        bot = _make_bot()
+        bot._grid = None
+        bot._stats = RSIGridStats()
+        bot._atr_calc.atr = None
+        bot._initialize_grid(Decimal("50000"))
+        # Fallback: 5% of center
+        assert bot._grid.upper_price == Decimal("52500")
+        assert bot._grid.lower_price == Decimal("47500")
