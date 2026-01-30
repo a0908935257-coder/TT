@@ -166,6 +166,11 @@ class RSIGridBot(BaseBot):
         # Initialize state lock for concurrent protection
         self._init_state_lock()
 
+        # v2: Bar counter and volatility baseline
+        self._current_bar: int = 0
+        self._atr_history: list[Decimal] = []
+        self._atr_baseline: Optional[Decimal] = None
+
         # Data health tracking (for stale/gap detection)
         self._init_data_health_tracking()
         self._prev_kline: Optional[Kline] = None
@@ -897,6 +902,7 @@ class RSIGridBot(BaseBot):
                         entry_rsi=rsi,
                         entry_zone=rsi_zone,
                         grid_level=grid_level,
+                        entry_bar=self._current_bar,
                     )
 
                     if self._config.use_exchange_stop_loss:
@@ -1454,6 +1460,14 @@ class RSIGridBot(BaseBot):
         current_rsi = rsi_result.rsi
         rsi_zone = rsi_result.zone
 
+        # v2: Increment bar counter
+        self._current_bar += 1
+
+        # v2: Update volatility baseline
+        atr = self._atr_calc.atr if self._atr_calc else None
+        if atr:
+            self._update_volatility_baseline(atr)
+
         # Update trend
         self._current_trend = self._sma_calc.get_trend(current_price) if self._sma_calc else 0
 
@@ -1469,6 +1483,26 @@ class RSIGridBot(BaseBot):
         # Position management
         if self._position:
             self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
+            self._position.update_extremes(current_price)
+
+            # v2: Trailing stop check
+            if self._config.use_trailing_stop:
+                if self._check_trailing_stop(current_price):
+                    logger.warning(f"Trailing stop triggered at {current_price}")
+                    await self._close_position(current_price, ExitReason.STOP_LOSS)
+                    self.record_stop_loss_trigger()
+                    self.clear_stop_loss_sync()
+                    self._prev_rsi = current_rsi
+                    return
+
+            # v2: Timeout exit check
+            if self._check_timeout_exit(current_price):
+                bars_held = self._current_bar - self._position.entry_bar
+                logger.warning(f"Timeout exit triggered: held {bars_held} bars")
+                await self._close_position(current_price, ExitReason.TIMEOUT_EXIT)
+                self._prev_rsi = current_rsi
+                return
+
             await self._check_exit(current_price, current_rsi, rsi_zone)
         else:
             if not self._check_risk_limits():
@@ -1539,6 +1573,10 @@ class RSIGridBot(BaseBot):
         # Check signal cooldown to prevent signal stacking (if enabled)
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry check")
+            return
+
+        # v2: Volatility regime filter
+        if not self._check_volatility_regime():
             return
 
         allowed_dir = self._get_allowed_direction(rsi_zone, self._current_trend)
@@ -1640,6 +1678,75 @@ class RSIGridBot(BaseBot):
             await self._close_position(current_price, ExitReason.STOP_LOSS)
             self.record_stop_loss_trigger()
             self.clear_stop_loss_sync()
+
+    # =========================================================================
+    # v2 Helpers: Volatility Filter, Timeout Exit, Trailing Stop
+    # =========================================================================
+
+    def _update_volatility_baseline(self, current_atr: Decimal) -> None:
+        """更新 ATR 滾動歷史，計算基線。"""
+        self._atr_history.append(current_atr)
+        bp = self._config.vol_atr_baseline_period
+        if len(self._atr_history) > bp:
+            self._atr_history = self._atr_history[-bp:]
+        if len(self._atr_history) >= bp:
+            self._atr_baseline = sum(self._atr_history) / Decimal(len(self._atr_history))
+
+    def _check_volatility_regime(self) -> bool:
+        """檢查當前波動率是否在可交易範圍內。"""
+        if not self._config.use_volatility_filter:
+            return True
+        if self._atr_baseline is None or self._atr_baseline == 0:
+            return True
+        current_atr = self._atr_calc.atr if self._atr_calc else None
+        if current_atr is None:
+            return True
+        ratio = float(current_atr / self._atr_baseline)
+        low = self._config.vol_ratio_low
+        high = self._config.vol_ratio_high
+        if not (low <= ratio <= high):
+            logger.info(f"Volatility filter blocked: ATR ratio={ratio:.2f} outside [{low}, {high}]")
+            return False
+        return True
+
+    def _check_timeout_exit(self, current_price: Decimal) -> bool:
+        """檢查是否超時出場（僅虧損時）。"""
+        max_hold = self._config.max_hold_bars
+        if max_hold <= 0 or not self._position:
+            return False
+        bars_held = self._current_bar - self._position.entry_bar
+        if bars_held < max_hold:
+            return False
+        # Only exit if losing
+        if self._position.side == PositionSide.LONG:
+            return current_price < self._position.entry_price
+        else:
+            return current_price > self._position.entry_price
+
+    def _check_trailing_stop(self, current_price: Decimal) -> bool:
+        """檢查追蹤止損是否觸發。"""
+        if not self._position:
+            return False
+        stop_pct = self._config.trailing_stop_pct
+        if self._position.side == PositionSide.LONG:
+            if self._position.max_price is not None:
+                stop_price = self._position.max_price * (Decimal("1") - stop_pct)
+                if current_price <= stop_price:
+                    logger.info(
+                        f"Trailing stop: price {current_price:.2f} <= "
+                        f"stop {stop_price:.2f} (max: {self._position.max_price:.2f})"
+                    )
+                    return True
+        else:
+            if self._position.min_price is not None:
+                stop_price = self._position.min_price * (Decimal("1") + stop_pct)
+                if current_price >= stop_price:
+                    logger.info(
+                        f"Trailing stop: price {current_price:.2f} >= "
+                        f"stop {stop_price:.2f} (min: {self._position.min_price:.2f})"
+                    )
+                    return True
+        return False
 
     def _parse_timeframe_seconds(self, timeframe: str) -> int:
         """Parse timeframe string to seconds."""
@@ -1750,6 +1857,7 @@ class RSIGridBot(BaseBot):
             "risk_paused": self._risk_paused,
             "signal_cooldown": self._signal_cooldown,
             "last_triggered_level": self._last_triggered_level,
+            "current_bar": self._current_bar,
             "stats": self._stats.to_dict(),
         }
 
@@ -1775,6 +1883,7 @@ class RSIGridBot(BaseBot):
                 "entry_time": self._position.entry_time.isoformat() if self._position.entry_time else None,
                 "entry_rsi": str(self._position.entry_rsi),
                 "entry_zone": self._position.entry_zone.value,
+                "entry_bar": self._position.entry_bar,
                 "stop_loss_order_id": self._position.stop_loss_order_id,
                 "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
             }
@@ -1921,6 +2030,7 @@ class RSIGridBot(BaseBot):
             bot._risk_paused = inner_state.get("risk_paused", False)
             bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
             bot._last_triggered_level = inner_state.get("last_triggered_level")
+            bot._current_bar = inner_state.get("current_bar", 0)
 
             # Restore stats
             stats_data = inner_state.get("stats", {})
@@ -1971,6 +2081,7 @@ class RSIGridBot(BaseBot):
                     entry_time=datetime.fromisoformat(position_data["entry_time"]) if position_data.get("entry_time") else None,
                     entry_rsi=Decimal(position_data.get("entry_rsi", "50")),
                     entry_zone=RSIZone(position_data.get("entry_zone", "neutral")),
+                    entry_bar=position_data.get("entry_bar", 0),
                     stop_loss_order_id=position_data.get("stop_loss_order_id"),
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
                 )

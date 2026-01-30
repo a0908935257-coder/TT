@@ -59,6 +59,7 @@ class ExitReason(str, Enum):
     TAKE_PROFIT = "take_profit"    # Take profit reached
     GRID_REBUILD = "grid_rebuild"  # Grid rebuilt
     TREND_CHANGE = "trend_change"  # Trend direction changed
+    TIMEOUT_EXIT = "timeout_exit"  # v2: held too long while losing
     MANUAL = "manual"
     BOT_STOP = "bot_stop"
 
@@ -153,6 +154,7 @@ class RSIGridConfig:
 
     # Trailing Stop (v2: 關閉)
     use_trailing_stop: bool = False
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # v2: 3%
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True
@@ -190,7 +192,7 @@ class RSIGridConfig:
         decimal_fields = [
             'atr_multiplier', 'position_size_pct', 'max_position_pct',
             'stop_loss_atr_mult', 'max_stop_loss_pct', 'daily_loss_limit_pct',
-            'fee_rate', 'hysteresis_pct'
+            'fee_rate', 'hysteresis_pct', 'trailing_stop_pct'
         ]
         for field_name in decimal_fields:
             value = getattr(self, field_name)
@@ -279,6 +281,9 @@ class RSIGridPosition:
     entry_rsi: Decimal = field(default_factory=lambda: Decimal("50"))
     entry_zone: RSIZone = RSIZone.NEUTRAL
     grid_level: int = 0
+    entry_bar: int = 0  # v2: bar counter at entry time
+    highest_price: Decimal = field(default_factory=lambda: Decimal("0"))  # v2: trailing stop
+    lowest_price: Decimal = field(default_factory=lambda: Decimal("0"))  # v2: trailing stop
     stop_loss_order_id: Optional[str] = None
     stop_loss_price: Optional[Decimal] = None
 
@@ -289,6 +294,23 @@ class RSIGridPosition:
                 setattr(self, attr, Decimal(str(value)))
         if self.stop_loss_price is not None and not isinstance(self.stop_loss_price, Decimal):
             self.stop_loss_price = Decimal(str(self.stop_loss_price))
+
+    @property
+    def max_price(self) -> Optional[Decimal]:
+        """Alias for highest_price (trailing stop)."""
+        return self.highest_price if self.highest_price != Decimal("0") else None
+
+    @property
+    def min_price(self) -> Optional[Decimal]:
+        """Alias for lowest_price (trailing stop)."""
+        return self.lowest_price if self.lowest_price != Decimal("0") else None
+
+    def update_extremes(self, current_price: Decimal) -> None:
+        """Update highest/lowest prices for trailing stop."""
+        if self.highest_price == Decimal("0") or current_price > self.highest_price:
+            self.highest_price = current_price
+        if self.lowest_price == Decimal("0") or current_price < self.lowest_price:
+            self.lowest_price = current_price
 
     @property
     def notional_value(self) -> Decimal:
