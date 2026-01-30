@@ -457,55 +457,75 @@ class GridOrderManager:
             self._market_type,
         )
 
-        try:
-            # Place order via exchange with bot_id for tracking
-            if side == OrderSide.BUY:
-                order = await self._exchange.limit_buy(
-                    self._symbol,
-                    rounded_quantity,
-                    rounded_price,
-                    self._market_type,
+        max_retries = 3
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Place order via exchange with bot_id for tracking
+                if side == OrderSide.BUY:
+                    order = await self._exchange.limit_buy(
+                        self._symbol,
+                        rounded_quantity,
+                        rounded_price,
+                        self._market_type,
+                        bot_id=self._bot_id,
+                    )
+                else:
+                    order = await self._exchange.limit_sell(
+                        self._symbol,
+                        rounded_quantity,
+                        rounded_price,
+                        self._market_type,
+                        bot_id=self._bot_id,
+                    )
+
+                # Update mappings
+                self._level_order_map[level_index] = order.order_id
+                self._order_level_map[order.order_id] = level_index
+                self._orders[order.order_id] = order
+                self._order_created_times[order.order_id] = datetime.now(timezone.utc)
+
+                # Update level state
+                if side == OrderSide.BUY:
+                    level.state = LevelState.PENDING_BUY
+                else:
+                    level.state = LevelState.PENDING_SELL
+                level.order_id = order.order_id
+
+                # Save to database
+                await self._data_manager.save_order(
+                    order,
                     bot_id=self._bot_id,
-                )
-            else:
-                order = await self._exchange.limit_sell(
-                    self._symbol,
-                    rounded_quantity,
-                    rounded_price,
-                    self._market_type,
-                    bot_id=self._bot_id,
+                    market_type=self._market_type,
                 )
 
-            # Update mappings
-            self._level_order_map[level_index] = order.order_id
-            self._order_level_map[order.order_id] = level_index
-            self._orders[order.order_id] = order
-            self._order_created_times[order.order_id] = datetime.now(timezone.utc)
+                logger.info(
+                    f"Order placed at level {level_index}: "
+                    f"{side.value} {rounded_quantity} @ {rounded_price}"
+                )
 
-            # Update level state
-            if side == OrderSide.BUY:
-                level.state = LevelState.PENDING_BUY
-            else:
-                level.state = LevelState.PENDING_SELL
-            level.order_id = order.order_id
+                return order
 
-            # Save to database
-            await self._data_manager.save_order(
-                order,
-                bot_id=self._bot_id,
-                market_type=self._market_type,
-            )
+            except (ConnectionError, TimeoutError, OSError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s, 2s
+                    logger.warning(
+                        f"Order placement failed (attempt {attempt}/{max_retries}), "
+                        f"retrying in {delay}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Order placement failed after {max_retries} attempts "
+                        f"at level {level_index}: {e}"
+                    )
+            except Exception as e:
+                logger.error(f"Non-retryable error placing order at level {level_index}: {e}")
+                return None
 
-            logger.info(
-                f"Order placed at level {level_index}: "
-                f"{side.value} {rounded_quantity} @ {rounded_price}"
-            )
-
-            return order
-
-        except Exception as e:
-            logger.error(f"Failed to place order at level {level_index}: {e}")
-            return None
+        return None
 
     async def cancel_order_at_level(self, level_index: int) -> bool:
         """

@@ -5628,8 +5628,14 @@ class BaseBot(ABC):
             # Cleanup any pending notification tasks
             await self._cleanup_notification_tasks()
 
-            # Call subclass implementation (may have cleanup operations)
-            await self._do_stop(clear_position)
+            # Call subclass implementation with timeout to prevent hang
+            try:
+                async with asyncio.timeout(30):
+                    await self._do_stop(clear_position)
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Bot {self._bot_id} stop timed out after 30s, forcing shutdown"
+                )
 
             # Only set _running = False after cleanup is complete
             # This ensures order manager and other components can finish their work
@@ -5643,6 +5649,7 @@ class BaseBot(ABC):
 
         except Exception as e:
             logger.error(f"Error stopping bot {self._bot_id}: {e}")
+            self._running = False
             self._state = BotState.ERROR
             self._error_message = str(e)
             return False
