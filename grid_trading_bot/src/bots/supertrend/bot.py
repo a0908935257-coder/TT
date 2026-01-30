@@ -25,6 +25,7 @@ RSI 過濾器效果:
 
 import asyncio
 import time
+from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Optional
@@ -103,7 +104,7 @@ class SupertrendBot(BaseBot):
 
         # Position tracking
         self._position: Optional[Position] = None
-        self._trades: list[Trade] = []
+        self._trades: deque[Trade] = deque(maxlen=1000)
         self._entry_bar: int = 0
         self._current_bar: int = 0
 

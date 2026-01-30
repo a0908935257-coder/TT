@@ -60,6 +60,7 @@ class BinanceWebSocket:
         on_message: Optional[Callable[[dict], None]] = None,
         on_error: Optional[Callable[[Exception], None]] = None,
         on_close: Optional[Callable[[], None]] = None,
+        on_reconnect: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize BinanceWebSocket.
@@ -70,6 +71,7 @@ class BinanceWebSocket:
             on_message: Global message callback (raw dict)
             on_error: Error callback
             on_close: Connection close callback
+            on_reconnect: Callback invoked after successful reconnection
         """
         self._market_type = market_type
         self._testnet = testnet
@@ -84,6 +86,7 @@ class BinanceWebSocket:
         self._on_message = on_message
         self._on_error = on_error
         self._on_close = on_close
+        self._on_reconnect = on_reconnect
 
         # Connection state
         self._ws: Optional[ClientConnection] = None
@@ -308,6 +311,20 @@ class BinanceWebSocket:
                             await asyncio.sleep(1)
                         else:
                             logger.error("Failed to resubscribe after 3 attempts")
+
+            # Notify caller about reconnection (e.g., to trigger position resync)
+            logger.warning(
+                "WebSocket reconnected — messages may have been missed during downtime, "
+                "caller should resync state"
+            )
+            if self._on_reconnect:
+                try:
+                    result = self._on_reconnect()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.error(f"on_reconnect callback error: {e}")
+
             return True
 
         return await self.reconnect()
