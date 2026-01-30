@@ -36,33 +36,33 @@ from src.core.models import Kline
 # 優化後最佳參數（優化完成後請更新此處）
 # ============================================================
 OPTIMIZED_PARAMS = {
-    "atr_period": 25,
-    "atr_multiplier": 3.0,
-    "grid_count": 10,
-    "grid_atr_multiplier": 3.0,
+    "atr_period": 13,
+    "atr_multiplier": 5.0,
+    "grid_count": 8,
+    "grid_atr_multiplier": 7.5,
     "take_profit_grids": 1,
-    "stop_loss_pct": 0.05,
-    "rsi_period": 14,
-    "rsi_overbought": 60,
-    "rsi_oversold": 40,
-    "min_trend_bars": 2,
-    "use_hysteresis": True,
+    "stop_loss_pct": 0.001,
+    "rsi_period": 21,
+    "rsi_overbought": 73,
+    "rsi_oversold": 25,
+    "min_trend_bars": 1,
+    "use_hysteresis": False,
     "hysteresis_pct": 0.002,
     "use_signal_cooldown": True,
-    "cooldown_bars": 2,
-    "trailing_stop_pct": 0.05,
+    "cooldown_bars": 0,
+    "trailing_stop_pct": 0.04,
     # v2: Volatility Regime Filter
-    "use_volatility_filter": True,
+    "use_volatility_filter": False,
     "vol_ratio_low": 0.5,
-    "vol_ratio_high": 2.0,
+    "vol_ratio_high": 2.5,
     # v2: Timeout Exit
-    "max_hold_bars": 16,
+    "max_hold_bars": 20,
     # HYBRID_GRID params
-    "hybrid_grid_bias_pct": 0.6,
-    "hybrid_tp_multiplier_trend": 1.0,
-    "hybrid_tp_multiplier_counter": 0.5,
+    "hybrid_grid_bias_pct": 0.70,
+    "hybrid_tp_multiplier_trend": 1.25,
+    "hybrid_tp_multiplier_counter": 0.75,
     "hybrid_sl_multiplier_counter": 0.7,
-    "hybrid_rsi_asymmetric": True,
+    "hybrid_rsi_asymmetric": False,
 }
 
 
