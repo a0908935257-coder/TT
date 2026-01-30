@@ -264,7 +264,7 @@ bots:
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 10                       # 10x (嚴格約束優化)
+      leverage: 7                        # 7x (多槓桿回測驗證: Sharpe峰值1.85, 零爆倉)
       margin_type: ISOLATED
       position_size_pct: 0.1
 
