@@ -1276,6 +1276,12 @@ class BollingerBot(BaseBot):
                 else:
                     pnl = (entry_price - exit_price) * quantity
 
+                # Apply leverage to PnL
+                pnl *= Decimal(self._config.leverage)
+
+                # Calculate fee (entry + exit)
+                fee = quantity * (entry_price + exit_price) * self._config.fee_rate
+
                 # Calculate PnL percentage with zero-division protection
                 denominator = entry_price * quantity
                 pnl_pct = (pnl / denominator * Decimal("100")) if denominator > 0 else Decimal("0")
@@ -1290,6 +1296,7 @@ class BollingerBot(BaseBot):
                     quantity=quantity,
                     pnl=pnl,
                     pnl_pct=pnl_pct,
+                    fee=fee,
                     entry_time=self._position.entry_time,
                     exit_time=datetime.now(timezone.utc),
                     exit_reason=reason.value,

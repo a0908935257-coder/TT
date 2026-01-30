@@ -3052,15 +3052,53 @@ class BaseBot(ABC):
         """
         Classify order error for proper handling.
 
+        Uses exception type hierarchy first (precise), then falls back
+        to string matching (legacy compatibility).
+
         Args:
             error: The exception from order placement
 
         Returns:
             Tuple of (error_code, human_readable_message)
         """
+        # Type-based classification (preferred — uses core exception hierarchy)
+        from src.core.exceptions import (
+            AuthenticationError,
+            ConnectionError as ExchangeConnectionError,
+            InsufficientBalanceError,
+            OrderError,
+            RateLimitError,
+        )
+
+        if isinstance(error, RateLimitError):
+            return self.ORDER_ERROR_RATE_LIMIT, f"Rate limit exceeded: {error}"
+
+        if isinstance(error, InsufficientBalanceError):
+            return self.ORDER_ERROR_INSUFFICIENT_BALANCE, f"Insufficient balance: {error}"
+
+        if isinstance(error, AuthenticationError):
+            return self.ORDER_ERROR_UNKNOWN, f"Authentication error (fatal): {error}"
+
+        if isinstance(error, ExchangeConnectionError):
+            return self.ORDER_ERROR_TIMEOUT, f"Connection error (retryable): {error}"
+
+        if isinstance(error, OrderError):
+            # Sub-classify OrderError by message
+            error_str = str(error).lower()
+            if "quantity" in error_str or "lot" in error_str or "min" in error_str:
+                return self.ORDER_ERROR_INVALID_QUANTITY, f"Invalid quantity: {error}"
+            if "price" in error_str or "tick" in error_str:
+                return self.ORDER_ERROR_INVALID_PRICE, f"Invalid price: {error}"
+            if "position" in error_str and "limit" in error_str:
+                return self.ORDER_ERROR_POSITION_LIMIT, f"Position limit: {error}"
+            return self.ORDER_ERROR_UNKNOWN, f"Order error: {error}"
+
+        if isinstance(error, (TimeoutError, asyncio.TimeoutError, OSError)):
+            return self.ORDER_ERROR_TIMEOUT, f"Timeout/network error (retryable): {error}"
+
+        # Fallback: string-based classification (legacy compatibility)
         error_str = str(error).lower()
 
-        # Check for common error patterns
         if "insufficient" in error_str or "balance" in error_str or "margin" in error_str:
             return self.ORDER_ERROR_INSUFFICIENT_BALANCE, "Insufficient balance or margin"
 

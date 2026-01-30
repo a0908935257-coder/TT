@@ -155,6 +155,9 @@ class BollingerConfig:
     use_signal_cooldown: bool = False                                          # 驗證通過: 關閉
     cooldown_bars: int = 0                                                     # 驗證通過: 0 (原 2)
 
+    # Fee rate (Binance Futures: 0.04% maker/taker)
+    fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
+
     # ATR dynamic range (for BB_NEUTRAL_GRID mode)
     use_atr_range: bool = False                                                # 用於 NEUTRAL_GRID
     atr_period: int = 21                                                       # ATR 計算週期
@@ -186,6 +189,8 @@ class BollingerConfig:
             self.rebuild_threshold_pct = Decimal(str(self.rebuild_threshold_pct))
         if not isinstance(self.hysteresis_pct, Decimal):
             self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
+        if not isinstance(self.fee_rate, Decimal):
+            self.fee_rate = Decimal(str(self.fee_rate))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
         # ATR range parameters
