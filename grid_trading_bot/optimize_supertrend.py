@@ -145,10 +145,9 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
 
     bt_config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
         fee_rate=Decimal("0.0006"),  # 0.04% 手續費 + ~0.02% 資金費率近似
         slippage_pct=Decimal("0.0005"),  # 0.05% 滑價
-    )
+    ).with_leverage(leverage)
 
     engine = BacktestEngine(bt_config)
     result = engine.run(klines, strategy)
@@ -523,8 +522,8 @@ def main():
     parser.add_argument(
         "--leverage", "-l",
         type=int,
-        default=10,
-        help="槓桿倍數 (default: 10, 建議不超過 10x)",
+        default=7,
+        help="槓桿倍數 (default: 7, 對齊 settings.yaml)",
     )
     parser.add_argument(
         "--train-ratio",

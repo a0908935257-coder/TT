@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-Grid Futures 積極策略優化腳本.
+Grid Futures 策略優化腳本 (IS/OOS split).
 
-目標：年化報酬 40%+
-優化目標函數：最大化年化報酬
-約束：最大回撤 <= 30%，交易次數 >= 100
+使用 70/30 train/test split 防止過擬合。
+Equity-based margin 引擎配置，對齊 run_backtest / WF 驗證。
 
-參數範圍 (積極優化):
-- leverage: 1-125 (不限制)
+參數範圍:
+- leverage: 3-20 (合理範圍)
 - grid_count: 5-30
 - atr_multiplier: 1.0-10.0
 - atr_period: 7-50
 - stop_loss_pct: 0.5%-5.0%
-- position_size_pct: 10%-50%
 - take_profit_grids: 1-5
 - direction: NEUTRAL / TREND_FOLLOW
 
 用法:
-    python optimize_grid_futures.py --trials 200
-    python optimize_grid_futures.py --trials 200 --target-annual-return 40
+    python optimize_grid_futures.py --trials 300
+    python optimize_grid_futures.py --trials 100 --quick
 """
 
 import argparse
 import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -76,228 +75,326 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def create_grid_futures_objective(klines: list[Kline], target_annual_return: float = 40.0):
-    """創建 Grid Futures 優化目標函數 - 積極優化年化報酬."""
+def split_data(klines: list[Kline], train_ratio: float = 0.7) -> tuple[list[Kline], list[Kline], float, float]:
+    """將數據分為訓練集 (IS) 和測試集 (OOS)."""
+    split_idx = int(len(klines) * train_ratio)
+    train_klines = klines[:split_idx]
+    test_klines = klines[split_idx:]
 
-    # 計算數據跨度年數
-    days = (klines[-1].open_time - klines[0].open_time).days
-    years = days / 365.0
+    train_market = (float(train_klines[-1].close) / float(train_klines[0].close) - 1) * 100
+    test_market = (float(test_klines[-1].close) / float(test_klines[0].close) - 1) * 100
+
+    print(f"\n數據分割:")
+    print(f"  訓練集 (IS): {train_klines[0].open_time.strftime('%Y-%m-%d')} ~ {train_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(train_klines):,} 根)")
+    print(f"  測試集 (OOS): {test_klines[0].open_time.strftime('%Y-%m-%d')} ~ {test_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(test_klines):,} 根)")
+    print(f"\n市場基準 (Buy & Hold):")
+    print(f"  訓練期: {train_market:+.2f}%")
+    print(f"  測試期: {test_market:+.2f}%")
+
+    return train_klines, test_klines, train_market, test_market
+
+
+def run_backtest(klines: list[Kline], params: dict, leverage: int) -> dict:
+    """使用指定參數執行回測."""
+    direction_str = params.get("direction", "NEUTRAL")
+    direction = GridDirection.NEUTRAL if direction_str == "NEUTRAL" else GridDirection.TREND_FOLLOW
+
+    config = GridFuturesStrategyConfig(
+        grid_count=params["grid_count"],
+        direction=direction,
+        leverage=leverage,
+        trend_period=params["trend_period"],
+        atr_period=params["atr_period"],
+        atr_multiplier=Decimal(str(params["atr_multiplier"])),
+        stop_loss_pct=Decimal(str(params["stop_loss_pct"])),
+        take_profit_grids=params["take_profit_grids"],
+        use_hysteresis=params["use_hysteresis"],
+        hysteresis_pct=Decimal(str(params["hysteresis_pct"])),
+        use_signal_cooldown=params["use_signal_cooldown"],
+        cooldown_bars=params["cooldown_bars"],
+    )
+
+    strategy = GridFuturesBacktestStrategy(config)
+
+    bt_config = BacktestConfig(
+        initial_capital=Decimal("10000"),
+        fee_rate=Decimal("0.0006"),
+        slippage_pct=Decimal("0.0005"),
+    ).with_leverage(leverage)
+
+    engine = BacktestEngine(bt_config)
+    result = engine.run(klines, strategy)
+
+    return {
+        "total_return": float(result.total_profit_pct),
+        "max_drawdown": float(result.max_drawdown_pct),
+        "sharpe": float(result.sharpe_ratio),
+        "win_rate": float(result.win_rate),
+        "trades": result.total_trades,
+    }
+
+
+def create_grid_futures_objective(
+    train_klines: list[Kline],
+    test_klines: list[Kline],
+    train_market: float,
+    test_market: float,
+    leverage: int = 7,
+):
+    """創建 Grid Futures 優化目標函數 (IS+OOS 聯合優化)."""
 
     def objective(trial: optuna.Trial) -> float:
-        # ======================================
-        # 參數搜索空間 (積極優化)
-        # ======================================
+        # 參數搜索空間
+        params = {
+            "grid_count": trial.suggest_int("grid_count", 5, 30),
+            "atr_period": trial.suggest_int("atr_period", 7, 50),
+            "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 10.0, step=0.5),
+            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.005, 0.05, step=0.005),
+            "take_profit_grids": trial.suggest_int("take_profit_grids", 1, 5),
+            "direction": trial.suggest_categorical("direction", ["NEUTRAL", "TREND_FOLLOW"]),
+            "trend_period": trial.suggest_int("trend_period", 10, 50),
+            "use_hysteresis": trial.suggest_categorical("use_hysteresis", [True, False]),
+            "hysteresis_pct": trial.suggest_float("hysteresis_pct", 0.001, 0.01, step=0.001),
+            "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 5),
+        }
 
-        # 核心參數
-        leverage = trial.suggest_int("leverage", 1, 125)
-        grid_count = trial.suggest_int("grid_count", 5, 30)
-        atr_period = trial.suggest_int("atr_period", 7, 50)
-        atr_multiplier = trial.suggest_float("atr_multiplier", 1.0, 10.0, step=0.5)
+        # IS 回測
+        try:
+            is_result = run_backtest(train_klines, params, leverage)
+        except Exception:
+            return -1000
 
-        # 風險控制
-        stop_loss_pct = trial.suggest_float("stop_loss_pct", 0.005, 0.05, step=0.005)
-        take_profit_grids = trial.suggest_int("take_profit_grids", 1, 5)
+        # OOS 回測
+        try:
+            oos_result = run_backtest(test_klines, params, leverage)
+        except Exception:
+            return -1000
 
-        # 方向
-        direction_str = trial.suggest_categorical("direction", ["NEUTRAL", "TREND_FOLLOW"])
-        direction = GridDirection.NEUTRAL if direction_str == "NEUTRAL" else GridDirection.TREND_FOLLOW
+        # 提取指標
+        is_return = is_result["total_return"]
+        oos_return = oos_result["total_return"]
+        is_sharpe = is_result["sharpe"]
+        oos_sharpe = oos_result["sharpe"]
+        is_trades = is_result["trades"]
+        oos_trades = oos_result["trades"]
+        is_dd = is_result["max_drawdown"]
+        oos_dd = oos_result["max_drawdown"]
+        max_dd = max(is_dd, oos_dd)
 
-        # 趨勢週期 (僅 TREND_FOLLOW 使用)
-        trend_period = trial.suggest_int("trend_period", 10, 50)
+        # 超額報酬
+        is_excess = is_return - train_market
+        oos_excess = oos_return - test_market
 
-        # 保護機制
-        use_hysteresis = trial.suggest_categorical("use_hysteresis", [True, False])
-        hysteresis_pct = trial.suggest_float("hysteresis_pct", 0.001, 0.01, step=0.001)
-        use_signal_cooldown = trial.suggest_categorical("use_signal_cooldown", [True, False])
-        cooldown_bars = trial.suggest_int("cooldown_bars", 0, 5)
-
-        # ======================================
-        # 建立策略配置
-        # ======================================
-        config = GridFuturesStrategyConfig(
-            grid_count=grid_count,
-            direction=direction,
-            leverage=leverage,
-            trend_period=trend_period,
-            atr_period=atr_period,
-            atr_multiplier=Decimal(str(atr_multiplier)),
-            stop_loss_pct=Decimal(str(stop_loss_pct)),
-            take_profit_grids=take_profit_grids,
-            use_hysteresis=use_hysteresis,
-            hysteresis_pct=Decimal(str(hysteresis_pct)),
-            use_signal_cooldown=use_signal_cooldown,
-            cooldown_bars=cooldown_bars,
-        )
-
-        strategy = GridFuturesBacktestStrategy(config)
-
-        # ======================================
-        # 執行回測
-        # ======================================
-        bt_config = BacktestConfig(
-            initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
-        )
-
-        engine = BacktestEngine(bt_config)
-        result = engine.run(klines, strategy)
-
-        # ======================================
-        # 計算指標
-        # ======================================
-        total_return = float(result.total_profit_pct)
-        max_dd = float(result.max_drawdown_pct)
-        win_rate = float(result.win_rate)
-        trades = result.total_trades
-        sharpe = float(result.sharpe_ratio)
-
-        # 計算年化報酬
-        if total_return > -100:  # 避免負值無法計算
-            annual_return = ((1 + total_return/100) ** (1/years) - 1) * 100
+        # OOS/IS 比率
+        if is_return > 0:
+            oos_is_ratio = oos_return / is_return
         else:
-            annual_return = -100
+            oos_is_ratio = 0
 
-        # ======================================
-        # 約束條件 (寬鬆以探索積極策略)
-        # ======================================
-        if trades < 100:
-            return -1000  # 交易次數太少
-        if max_dd > 30:
-            return -1000  # 回撤超過 30%
-        if win_rate < 45:
-            return -1000  # 勝率太低
+        # ========== 約束條件 ==========
+        if is_trades < 100:
+            return -500 + is_trades
+        if oos_trades < 40:
+            return -500 + oos_trades
+        if max_dd > 35:
+            return -100 - max_dd
 
-        # ======================================
-        # 目標函數: 最大化年化報酬，輕微懲罰回撤
-        # ======================================
-        # 報酬主導，回撤懲罰係數 0.5 (容忍較高回撤)
-        score = annual_return - (max_dd * 0.5)
+        # ========== 目標函數 (IS+OOS 聯合) ==========
+
+        # IS 報酬
+        is_return_score = is_return * 1.0
+
+        # OOS 報酬（高權重）
+        oos_return_score = oos_return * 2.5
+
+        # OOS 超額報酬
+        oos_excess_score = oos_excess * 1.0
+
+        # Sharpe
+        sharpe_score = oos_sharpe * 2
+
+        # 回撤懲罰
+        dd_penalty = max(0, max_dd - 15) * 0.5
+
+        # 一致性獎勵
+        consistency_bonus = 0
+        if is_excess > 0 and oos_excess > 0:
+            consistency_bonus = 10
+
+        # Overfit penalty: IS 遠高於 OOS
+        overfit_penalty = 0
+        if is_return > 0 and oos_is_ratio < 0.3:
+            overfit_penalty = (0.3 - oos_is_ratio) * 50
+
+        # 總分
+        score = (is_return_score + oos_return_score + oos_excess_score
+                 + sharpe_score - dd_penalty + consistency_bonus - overfit_penalty)
 
         # 記錄指標
-        trial.set_user_attr("total_return", total_return)
-        trial.set_user_attr("annual_return", annual_return)
-        trial.set_user_attr("max_drawdown", max_dd)
-        trial.set_user_attr("win_rate", win_rate)
-        trial.set_user_attr("trades", trades)
-        trial.set_user_attr("sharpe", sharpe)
-        trial.set_user_attr("years", years)
+        trial.set_user_attr("is_return", is_return)
+        trial.set_user_attr("oos_return", oos_return)
+        trial.set_user_attr("is_excess", is_excess)
+        trial.set_user_attr("oos_excess", oos_excess)
+        trial.set_user_attr("is_sharpe", is_sharpe)
+        trial.set_user_attr("oos_sharpe", oos_sharpe)
+        trial.set_user_attr("is_trades", is_trades)
+        trial.set_user_attr("oos_trades", oos_trades)
+        trial.set_user_attr("is_dd", is_dd)
+        trial.set_user_attr("oos_dd", oos_dd)
+        trial.set_user_attr("oos_is_ratio", oos_is_ratio)
+        trial.set_user_attr("train_market", train_market)
+        trial.set_user_attr("test_market", test_market)
 
         return score
 
     return objective
 
 
-def run_optimization(klines: list[Kline], trials: int, target_annual_return: float) -> dict:
-    """執行 Grid Futures 優化."""
-    print(f"\n{'=' * 60}")
-    print(f"  優化 GRID FUTURES (目標: 年化 {target_annual_return}%+)")
-    print(f"  參數範圍: 槓桿 1-125x (不限制)")
-    print(f"  試驗次數: {trials}")
-    print(f"{'=' * 60}")
-
-    sampler = TPESampler(seed=42)
-    study = optuna.create_study(
-        direction="maximize",
-        sampler=sampler,
-        study_name="grid_futures_aggressive",
-    )
-
-    objective = create_grid_futures_objective(klines, target_annual_return)
-
-    study.optimize(
-        objective,
-        n_trials=trials,
-        timeout=None,
-        show_progress_bar=True,
-    )
+def display_results(study: optuna.Study, leverage: int):
+    """顯示優化結果."""
+    print("\n" + "=" * 70)
+    print("  優化完成 - 最佳結果")
+    print("=" * 70)
 
     best = study.best_trial
 
-    # 提取最佳結果
-    annual_return = best.user_attrs.get('annual_return', 0)
-    total_return = best.user_attrs.get('total_return', 0)
-    max_drawdown = best.user_attrs.get('max_drawdown', 0)
-    win_rate = best.user_attrs.get('win_rate', 0)
-    trades = best.user_attrs.get('trades', 0)
-    sharpe = best.user_attrs.get('sharpe', 0)
+    train_market = best.user_attrs.get('train_market', 0)
+    test_market = best.user_attrs.get('test_market', 0)
 
-    # 判斷是否達成目標
-    target_met = annual_return >= target_annual_return
+    print(f"\n最佳得分: {best.value:.4f}")
 
-    print(f"\n{'=' * 60}")
-    print(f"  最佳結果")
-    print(f"{'=' * 60}")
-    print(f"\n績效指標:")
-    print(f"  年化報酬: {annual_return:.2f}% {'✅' if target_met else '⚠️'}")
-    print(f"  總報酬 ({best.user_attrs.get('years', 2):.1f}年): {total_return:.2f}%")
-    print(f"  最大回撤: {max_drawdown:.2f}%")
-    print(f"  Sharpe: {sharpe:.2f}")
-    print(f"  勝率: {win_rate:.1f}%")
-    print(f"  交易數: {trades}")
+    print(f"\n[市場基準 (Buy & Hold)]")
+    print(f"  訓練期: {train_market:+.2f}%")
+    print(f"  測試期: {test_market:+.2f}%")
 
-    print(f"\n最佳參數:")
+    print(f"\n[樣本內 (IS) - 訓練期]")
+    print(f"  報酬: {best.user_attrs.get('is_return', 0):+.2f}%")
+    print(f"  超額報酬: {best.user_attrs.get('is_excess', 0):+.2f}%")
+    print(f"  Sharpe: {best.user_attrs.get('is_sharpe', 0):.2f}")
+    print(f"  回撤: {best.user_attrs.get('is_dd', 0):.2f}%")
+    print(f"  交易: {best.user_attrs.get('is_trades', 0)}")
+
+    print(f"\n[樣本外 (OOS) - 測試期]")
+    print(f"  報酬: {best.user_attrs.get('oos_return', 0):+.2f}%")
+    print(f"  超額報酬: {best.user_attrs.get('oos_excess', 0):+.2f}%")
+    print(f"  Sharpe: {best.user_attrs.get('oos_sharpe', 0):.2f}")
+    print(f"  回撤: {best.user_attrs.get('oos_dd', 0):.2f}%")
+    print(f"  交易: {best.user_attrs.get('oos_trades', 0)}")
+
+    oos_is_ratio = best.user_attrs.get('oos_is_ratio', 0)
+    oos_excess = best.user_attrs.get('oos_excess', 0)
+    oos_return = best.user_attrs.get('oos_return', 0)
+
+    print(f"\n[一致性檢查]")
+    print(f"  OOS/IS 比率: {oos_is_ratio:.2f} ({'PASS' if oos_is_ratio >= 0.5 else 'FAIL'})")
+    print(f"  OOS 超額報酬: {oos_excess:+.2f}% ({'PASS' if oos_excess > 0 else 'FAIL'})")
+
+    print(f"\n[綜合評估]")
+    if oos_return > 0 and oos_excess > 0 and oos_is_ratio >= 0.5:
+        print(f"  *** 優秀: OOS 正報酬 + 跑贏市場 + 高一致性")
+    elif oos_return > 0 and oos_excess > 0:
+        print(f"  ** 良好: OOS 正報酬且跑贏市場")
+    elif oos_excess > 0:
+        print(f"  * 可接受: OOS 跑贏市場")
+    else:
+        print(f"  需改進: OOS 未跑贏市場")
+
+    print("\n" + "-" * 70)
+    print(f"最佳參數 (leverage={leverage}):")
+    print("-" * 70)
     for key, value in best.params.items():
         print(f"  {key}: {value}")
 
-    if target_met:
-        print(f"\n✅ 達成目標年化報酬 {target_annual_return}%!")
-    else:
-        print(f"\n⚠️  未達成目標 (差距: {target_annual_return - annual_return:.2f}%)")
+    return best.params
 
-    return {
-        "strategy": "grid_futures",
-        "target_annual_return": target_annual_return,
-        "target_met": target_met,
+
+def save_results(study: optuna.Study, output_dir: str, leverage: int, data_file: str):
+    """儲存優化結果."""
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    best = study.best_trial
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = output_path / f"grid_futures_optimization_{timestamp}.json"
+
+    results = {
+        "optimization_date": datetime.now().isoformat(),
+        "data_file": data_file,
+        "n_trials": len(study.trials),
+        "leverage": leverage,
+        "best_score": best.value,
         "best_params": best.params,
         "metrics": {
-            "annual_return": annual_return,
-            "total_return": total_return,
-            "max_drawdown": max_drawdown,
-            "sharpe": sharpe,
-            "win_rate": win_rate,
-            "trades": trades,
+            "is_return": best.user_attrs.get("is_return", 0),
+            "oos_return": best.user_attrs.get("oos_return", 0),
+            "is_excess": best.user_attrs.get("is_excess", 0),
+            "oos_excess": best.user_attrs.get("oos_excess", 0),
+            "is_sharpe": best.user_attrs.get("is_sharpe", 0),
+            "oos_sharpe": best.user_attrs.get("oos_sharpe", 0),
+            "is_trades": best.user_attrs.get("is_trades", 0),
+            "oos_trades": best.user_attrs.get("oos_trades", 0),
+            "is_dd": best.user_attrs.get("is_dd", 0),
+            "oos_dd": best.user_attrs.get("oos_dd", 0),
+            "oos_is_ratio": best.user_attrs.get("oos_is_ratio", 0),
+            "train_market": best.user_attrs.get("train_market", 0),
+            "test_market": best.user_attrs.get("test_market", 0),
         },
+        "top_10_trials": [
+            {
+                "number": t.number,
+                "value": t.value,
+                "params": t.params,
+                "metrics": {
+                    "is_return": t.user_attrs.get("is_return", 0),
+                    "oos_return": t.user_attrs.get("oos_return", 0),
+                    "oos_excess": t.user_attrs.get("oos_excess", 0),
+                    "oos_is_ratio": t.user_attrs.get("oos_is_ratio", 0),
+                },
+            }
+            for t in sorted(
+                [t for t in study.trials if t.value is not None],
+                key=lambda x: x.value if x.value else -9999,
+                reverse=True,
+            )[:10]
+        ],
     }
 
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
 
-def print_config_code(params: dict):
-    """印出可用於更新 models.py 的配置代碼."""
+    print(f"\n結果已儲存至: {output_file}")
+    return output_file
+
+
+def print_config_code(params: dict, leverage: int):
+    """印出可用於更新配置的代碼."""
     print(f"\n{'=' * 60}")
-    print(f"  更新配置代碼 (models.py)")
+    print(f"  建議配置")
     print(f"{'=' * 60}")
 
     direction = params.get("direction", "NEUTRAL")
-    leverage = params.get("leverage", 18)
-    grid_count = params.get("grid_count", 12)
-    atr_period = params.get("atr_period", 21)
-    atr_multiplier = params.get("atr_multiplier", 6.0)
-    stop_loss_pct = params.get("stop_loss_pct", 0.005)
-    trend_period = params.get("trend_period", 20)
-    use_hysteresis = params.get("use_hysteresis", True)
-    hysteresis_pct = params.get("hysteresis_pct", 0.002)
-    use_signal_cooldown = params.get("use_signal_cooldown", False)
-    cooldown_bars = params.get("cooldown_bars", 0)
 
     print(f"""
-# GridFuturesConfig 更新配置:
-leverage: int = {leverage}  # 優化結果
-grid_count: int = {grid_count}  # 優化結果
-direction: GridDirection = GridDirection.{direction}
-trend_period: int = {trend_period}  # 優化結果
-atr_period: int = {atr_period}  # 優化結果
-atr_multiplier: Decimal = field(default_factory=lambda: Decimal("{atr_multiplier}"))
-stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("{stop_loss_pct}"))
-use_hysteresis: bool = {use_hysteresis}
-hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("{hysteresis_pct}"))
-use_signal_cooldown: bool = {use_signal_cooldown}
-cooldown_bars: int = {cooldown_bars}
+GridFuturesStrategyConfig(
+    grid_count={params.get('grid_count', 12)},
+    direction=GridDirection.{direction},
+    leverage={leverage},
+    trend_period={params.get('trend_period', 20)},
+    atr_period={params.get('atr_period', 21)},
+    atr_multiplier=Decimal("{params.get('atr_multiplier', 6.0)}"),
+    stop_loss_pct=Decimal("{params.get('stop_loss_pct', 0.005)}"),
+    take_profit_grids={params.get('take_profit_grids', 2)},
+    use_hysteresis={params.get('use_hysteresis', True)},
+    hysteresis_pct=Decimal("{params.get('hysteresis_pct', 0.002)}"),
+    use_signal_cooldown={params.get('use_signal_cooldown', False)},
+    cooldown_bars={params.get('cooldown_bars', 0)},
+)
 """)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Grid Futures 積極策略優化")
+    parser = argparse.ArgumentParser(description="Grid Futures 策略優化 (IS+OOS split)")
     parser.add_argument(
         "--data-file",
         default="data/historical/BTCUSDT_1h_730d.json",
@@ -310,15 +407,32 @@ def main():
         help="優化試驗次數 (default: 200)"
     )
     parser.add_argument(
-        "--target-annual-return",
+        "--leverage", "-l",
+        type=int,
+        default=7,
+        help="槓桿倍數 (default: 7)"
+    )
+    parser.add_argument(
+        "--train-ratio",
         type=float,
-        default=40.0,
-        help="目標年化報酬 (default: 40%%)"
+        default=0.7,
+        help="訓練集比例 (default: 0.7)"
     )
     parser.add_argument(
         "--output",
         default="optimization_results",
         help="輸出目錄"
+    )
+    parser.add_argument(
+        "--quick", "-q",
+        action="store_true",
+        help="快速模式 (50 trials)"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="隨機種子 (default: 42)"
     )
 
     args = parser.parse_args()
@@ -327,49 +441,54 @@ def main():
         print("錯誤: 需要安裝 optuna: pip install optuna")
         return
 
+    if args.quick:
+        args.trials = 50
+
+    print("=" * 70)
+    print("  Grid Futures 策略優化 (IS+OOS 聯合, equity-based margin)")
+    print("=" * 70)
+    print(f"  試驗次數: {args.trials}")
+    print(f"  槓桿倍數: {args.leverage}x")
+    print(f"  訓練比例: {args.train_ratio * 100:.0f}%")
+
+    # 載入數據
     klines = load_klines(args.data_file)
 
-    result = run_optimization(klines, args.trials, args.target_annual_return)
+    # 分割數據
+    train_klines, test_klines, train_market, test_market = split_data(klines, args.train_ratio)
+
+    # 創建 Optuna study
+    sampler = TPESampler(seed=args.seed)
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=sampler,
+        study_name="grid_futures_is_oos",
+    )
+
+    # 創建目標函數
+    objective = create_grid_futures_objective(
+        train_klines, test_klines, train_market, test_market, args.leverage
+    )
+
+    # 執行優化
+    print(f"\n開始優化 ({args.trials} 次試驗)...")
+    print("-" * 70)
+
+    study.optimize(
+        objective,
+        n_trials=args.trials,
+        timeout=None,
+        show_progress_bar=True,
+    )
+
+    # 顯示結果
+    best_params = display_results(study, args.leverage)
 
     # 儲存結果
-    output_dir = Path(args.output)
-    output_dir.mkdir(exist_ok=True)
+    save_results(study, args.output, args.leverage, args.data_file)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"grid_futures_aggressive_{timestamp}.json"
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump({
-            "optimization_date": datetime.now().isoformat(),
-            "target": f"maximize_annual_return_{args.target_annual_return}%",
-            "data_file": args.data_file,
-            "trials": args.trials,
-            "result": result,
-        }, f, indent=2, ensure_ascii=False)
-
-    print(f"\n結果已儲存至: {output_file}")
-
-    # 印出配置代碼
-    print_config_code(result["best_params"])
-
-    # 提示下一步
-    print(f"\n{'=' * 60}")
-    print(f"  下一步: Walk-Forward 驗證")
-    print(f"{'=' * 60}")
-    print(f"""
-請執行以下命令進行 Walk-Forward 驗證:
-
-python run_walk_forward_validation.py \\
-    --strategy grid_futures \\
-    --data-file {args.data_file} \\
-    --periods 9 \\
-    --monte-carlo
-
-驗證標準:
-- OOS/IS 比率 >= 0.5
-- 一致性 >= 50%
-- OOS Sharpe > 0
-""")
+    # 輸出建議配置
+    print_config_code(best_params, args.leverage)
 
 
 if __name__ == "__main__":
