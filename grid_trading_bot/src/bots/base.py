@@ -4779,6 +4779,10 @@ class BaseBot(ABC):
             self._confirmed_fills: Dict[str, Dict] = {}
         if not hasattr(self, "_fill_confirmation_events"):
             self._fill_confirmation_events: Dict[str, asyncio.Event] = {}
+        if not hasattr(self, "_pending_fills"):
+            # Early-arrival buffer: stores WS fill data for orders whose
+            # REST response hasn't returned yet (race condition mitigation)
+            self._pending_fills: Dict[str, Dict] = {}
 
     def _register_fill_callback(self, order_id: str, callback: Callable) -> None:
         """Register a callback to be triggered when fill is confirmed."""
@@ -4792,12 +4796,38 @@ class BaseBot(ABC):
         self._pending_fill_callbacks.pop(order_id, None)
         self._fill_confirmation_events.pop(order_id, None)
 
+    def _drain_pending_fill(self, order_id: str) -> Optional[Dict]:
+        """
+        Check and consume any early-arrival fill for this order.
+
+        Call this after REST order placement returns to handle the race
+        where the WS fill arrived before the REST response.
+
+        Args:
+            order_id: The order ID to check
+
+        Returns:
+            Fill data if an early-arrival was buffered, None otherwise
+        """
+        self._init_fill_tracking()
+        fill_data = self._pending_fills.pop(order_id, None)
+        if fill_data:
+            logger.info(
+                f"[{self._bot_id}] Drained early-arrival fill for order {order_id}"
+            )
+        return fill_data
+
     def _on_fill_notification(self, order_id: str, fill_data: Dict) -> None:
         """
         Called when WebSocket fill notification is received.
 
         This should be called from the user data stream handler when
         an executionReport event is received with status=FILLED.
+
+        Race condition handling: If the WS fill arrives before the REST
+        order placement returns (i.e., no callback registered yet), the
+        fill is buffered in _pending_fills for the caller to consume
+        after the REST response.
         """
         self._init_fill_tracking()
 
@@ -4814,6 +4844,12 @@ class BaseBot(ABC):
                 self._pending_fill_callbacks[order_id](fill_data)
             except Exception as e:
                 logger.error(f"[{self._bot_id}] Error in fill callback: {e}")
+        else:
+            # No callback registered yet — buffer as early arrival
+            self._pending_fills[order_id] = fill_data
+            logger.info(
+                f"[{self._bot_id}] Early fill arrival buffered for order {order_id}"
+            )
 
         # Signal event for anyone waiting
         if order_id in self._fill_confirmation_events:
