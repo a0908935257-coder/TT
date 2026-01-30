@@ -476,6 +476,9 @@ class FundPool:
         """
         Atomically deallocate funds from a bot with lock protection.
 
+        Also clears related bot metadata (leverage tracking) when fully
+        deallocated, preventing stale data on bot restart.
+
         Args:
             bot_id: Bot identifier
             amount: Amount to deallocate (None = all)
@@ -498,6 +501,8 @@ class FundPool:
 
             if new_amount <= 0:
                 self._allocations.pop(bot_id, None)
+                # Clear associated metadata to prevent stale data on restart
+                self._leverage_map.pop(bot_id, None)
             else:
                 self._allocations[bot_id] = new_amount
 

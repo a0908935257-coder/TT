@@ -385,7 +385,7 @@ class Master:
 
     async def _handle_bot_timeout(self, bot_id: str) -> None:
         """
-        Handle bot timeout (for auto-restart).
+        Handle bot timeout (for auto-restart) with exponential backoff.
 
         Args:
             bot_id: Bot identifier
@@ -393,24 +393,37 @@ class Master:
         if not self._config.auto_restart:
             return
 
-        logger.warning(f"Bot {bot_id} timed out, attempting auto-restart")
+        # Track per-bot retry backoff
+        if not hasattr(self, "_restart_backoff"):
+            self._restart_backoff: dict[str, float] = {}
+
+        backoff = self._restart_backoff.get(bot_id, 1.0)
+        logger.warning(
+            f"Bot {bot_id} timed out, attempting auto-restart "
+            f"(backoff: {backoff:.0f}s)"
+        )
 
         try:
             # Stop the bot first
             await self._commander.stop(bot_id)
 
-            # Wait a moment
-            await asyncio.sleep(2)
+            # Wait with exponential backoff
+            await asyncio.sleep(backoff)
 
             # Restart
             result = await self._commander.start(bot_id)
             if result.success:
                 logger.info(f"Auto-restarted bot: {bot_id}")
+                # Reset backoff on success
+                self._restart_backoff.pop(bot_id, None)
             else:
                 logger.error(f"Failed to auto-restart bot {bot_id}: {result.message}")
+                # Increase backoff: 1s → 2s → 4s → ... → max 60s
+                self._restart_backoff[bot_id] = min(backoff * 2, 60.0)
 
         except Exception as e:
             logger.error(f"Error during auto-restart of {bot_id}: {e}")
+            self._restart_backoff[bot_id] = min(backoff * 2, 60.0)
 
     # =========================================================================
     # Bot Management (Convenience Methods)
