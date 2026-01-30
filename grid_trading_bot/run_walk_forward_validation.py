@@ -37,6 +37,7 @@ from src.backtest.monte_carlo import (
     MonteCarloMethod,
     run_monte_carlo_validation as mc_validate,
 )
+from src.backtest.strategy.bollinger import BollingerMode
 from src.backtest.strategy import (
     BollingerBacktestStrategy,
     BollingerStrategyConfig,
@@ -192,7 +193,22 @@ def create_all_strategies() -> dict:
     )
 
     return {
-        "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig()),
+        "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig(
+            mode=BollingerMode.BB_NEUTRAL_GRID,
+            bb_period=31,
+            bb_std=Decimal("2.0"),
+            grid_count=14,
+            take_profit_grids=1,
+            stop_loss_pct=Decimal("0.002"),
+            use_atr_range=True,
+            atr_period=29,
+            atr_multiplier=Decimal("9.5"),
+            fallback_range_pct=Decimal("0.04"),
+            use_hysteresis=True,
+            hysteresis_pct=Decimal("0.0025"),
+            use_signal_cooldown=False,
+            cooldown_bars=1,
+        )),
         "supertrend": SupertrendBacktestStrategy(supertrend_config),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
         "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig(

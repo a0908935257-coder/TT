@@ -53,7 +53,7 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def run_backtest(klines: list[Kline], leverage: int = 19, mode: str = "trend") -> dict:
+def run_backtest(klines: list[Kline], leverage: int = 7, mode: str = "trend") -> dict:
     """執行回測並返回結果."""
     if mode == "neutral":
         # BB_NEUTRAL_GRID 模式 - 優化後參數 (2026-01-28)
@@ -97,10 +97,9 @@ def run_backtest(klines: list[Kline], leverage: int = 19, mode: str = "trend") -
 
     bt_config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+        fee_rate=Decimal("0.0006"),
+        slippage_pct=Decimal("0.0005"),
+    ).with_leverage(leverage)
 
     engine = BacktestEngine(bt_config)
     result = engine.run(klines, strategy)
@@ -114,7 +113,7 @@ def run_backtest(klines: list[Kline], leverage: int = 19, mode: str = "trend") -
     }
 
 
-def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 19, mode: str = "trend"):
+def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 7, mode: str = "trend"):
     """
     Walk-Forward 驗證.
 
@@ -182,7 +181,7 @@ def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: in
     }
 
 
-def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19, mode: str = "trend"):
+def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 7, mode: str = "trend"):
     """
     Monte Carlo 穩健性測試.
 
@@ -237,7 +236,7 @@ def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 19,
     }
 
 
-def out_of_sample_test(klines: list[Kline], leverage: int = 19, mode: str = "trend"):
+def out_of_sample_test(klines: list[Kline], leverage: int = 7, mode: str = "trend"):
     """
     樣本外測試 (Out-of-Sample Test).
 
@@ -320,7 +319,7 @@ def out_of_sample_test(klines: list[Kline], leverage: int = 19, mode: str = "tre
     }
 
 
-def parameter_sensitivity_test(klines: list[Kline], leverage: int = 19, mode: str = "trend"):
+def parameter_sensitivity_test(klines: list[Kline], leverage: int = 7, mode: str = "trend"):
     """
     參數敏感度測試 (Parameter Sensitivity Analysis).
 
@@ -411,10 +410,9 @@ def parameter_sensitivity_test(klines: list[Kline], leverage: int = 19, mode: st
         strategy = BollingerBacktestStrategy(config)
         bt_config = BacktestConfig(
             initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
-        )
+            fee_rate=Decimal("0.0006"),
+            slippage_pct=Decimal("0.0005"),
+        ).with_leverage(leverage)
         engine = BacktestEngine(bt_config)
         result = engine.run(klines, strategy)
 
@@ -470,7 +468,7 @@ def parameter_sensitivity_test(klines: list[Kline], leverage: int = 19, mode: st
     }
 
 
-def white_noise_benchmark(klines: list[Kline], leverage: int = 19, n_tests: int = 10):
+def white_noise_benchmark(klines: list[Kline], leverage: int = 7, n_tests: int = 10):
     """
     白噪音基準測試 (Random Benchmark).
 
@@ -545,8 +543,8 @@ def main():
     parser.add_argument(
         "--leverage", "-l",
         type=int,
-        default=18,
-        help="槓桿倍數 (default: 18)"
+        default=7,
+        help="槓桿倍數 (default: 7)"
     )
     parser.add_argument(
         "--full", "-f",
