@@ -1387,9 +1387,12 @@ class SupertrendBot(BaseBot):
             available = Decimal(str(account.available_balance))
 
             # Use max_capital if configured, otherwise use available balance
-            if self._config.max_capital is not None:
+            # Read capital under lock to prevent race with update_capital()
+            async with self._capital_lock:
+                config_capital = self._config.max_capital
+            if config_capital is not None:
                 # 使用分配的資金上限，但不能超過實際可用餘額
-                capital = min(self._config.max_capital, available)
+                capital = min(config_capital, available)
             else:
                 capital = available
 
@@ -1828,6 +1831,8 @@ class SupertrendBot(BaseBot):
             return True
 
         # Get capital for percentage calculation
+        # Note: single-threaded asyncio — write-side is lock-protected,
+        # read here is safe without lock (no concurrent mutation possible)
         capital = self._config.max_capital or Decimal("1000")  # Default if not set
 
         # Check daily loss limit
@@ -1856,6 +1861,8 @@ class SupertrendBot(BaseBot):
         Args:
             pnl: Profit/loss from the trade
         """
+        # Note: single-threaded asyncio — write-side capital is lock-protected,
+        # PnL tracking here runs in the same event loop with no concurrent mutation
         self._daily_pnl += pnl
 
         if pnl < 0:
@@ -1877,7 +1884,8 @@ class SupertrendBot(BaseBot):
         Handle capital update from FundManager.
 
         Updates the max_capital setting which will be used
-        for position sizing on the next trade.
+        for position sizing on the next trade. If capital is reduced
+        and current position exceeds the new limit, closes the position.
 
         Args:
             new_max_capital: New maximum capital allocation
@@ -1889,9 +1897,16 @@ class SupertrendBot(BaseBot):
             f"{previous} -> {new_max_capital}"
         )
 
-        # Note: Position sizing will automatically use new max_capital
-        # on next _open_position call. No immediate action needed
-        # as existing positions continue with their original sizing.
+        # Check if existing position exceeds new capital limit
+        if self._position and self._position.quantity > 0:
+            position_notional = self._position.quantity * self._position.entry_price
+            max_allowed = new_max_capital * self._config.leverage
+            if position_notional > max_allowed:
+                logger.warning(
+                    f"Position notional {position_notional} > max allowed "
+                    f"{max_allowed} — closing position due to capital recall"
+                )
+                await self._close_position(ExitReason.CAPITAL_RECALLED)
 
     # =========================================================================
     # State Persistence (with validation, checksum, and concurrent protection)

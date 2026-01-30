@@ -74,6 +74,9 @@ class FundPool:
         # Allocation tracking (bot_id -> allocated amount)
         self._allocations: Dict[str, Decimal] = {}
 
+        # Leverage tracking (bot_id -> leverage multiplier)
+        self._leverage_map: Dict[str, int] = {}
+
         # Deposit detection
         self._last_deposit_amount: Decimal = Decimal("0")
         self._deposit_detected: bool = False
@@ -542,6 +545,43 @@ class FundPool:
     def allocation_lock(self) -> asyncio.Lock:
         """Get the allocation lock for external use."""
         return self._allocation_lock
+
+    # =========================================================================
+    # Leverage & Exposure Tracking
+    # =========================================================================
+
+    def set_leverage(self, bot_id: str, leverage: int) -> None:
+        """Set leverage multiplier for a bot."""
+        self._leverage_map[bot_id] = leverage
+
+    @property
+    def total_notional_exposure(self) -> Decimal:
+        """Calculate total notional exposure across all bots."""
+        total = Decimal("0")
+        for bot_id, allocated in self._allocations.items():
+            lev = self._leverage_map.get(bot_id, 1)
+            total += allocated * lev
+        return total
+
+    def check_exposure_limit(self, max_ratio: Decimal = Decimal("3.0")) -> bool:
+        """
+        Check if system-wide exposure exceeds the safety limit.
+
+        Args:
+            max_ratio: Maximum allowed exposure ratio (notional / total_balance)
+
+        Returns:
+            True if exposure exceeds limit (warning condition)
+        """
+        if self.total_balance <= 0:
+            return False
+        ratio = self.total_notional_exposure / self.total_balance
+        if ratio > max_ratio:
+            logger.warning(
+                f"System exposure {ratio:.1f}x exceeds limit {max_ratio}x"
+            )
+            return True
+        return False
 
     # =========================================================================
     # Status Methods

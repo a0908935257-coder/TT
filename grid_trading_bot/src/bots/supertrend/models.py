@@ -52,6 +52,7 @@ class ExitReason(str, Enum):
     STOP_LOSS = "stop_loss"
     MANUAL = "manual"
     BOT_STOP = "bot_stop"
+    CAPITAL_RECALLED = "capital_recalled"
 
 
 @dataclass

@@ -270,6 +270,9 @@ class FundManager:
                 # Update balance
                 await self._fund_pool.update()
 
+                # Check system-wide exposure limit
+                self._fund_pool.check_exposure_limit()
+
                 # Check for deposit
                 if self._fund_pool.detect_deposit():
                     deposit_amount = self._fund_pool.get_deposit_amount()
@@ -488,6 +491,13 @@ class FundManager:
         )
 
         try:
+            # Register leverage for exposure tracking
+            if self._registry:
+                bot_info = self._registry.get(bot_id)
+                if bot_info and bot_info.config:
+                    leverage = bot_info.config.get("leverage", 1)
+                    self._fund_pool.set_leverage(bot_id, leverage)
+
             # Optimistic update: Update fund pool first, then notify
             # This ensures FundPool and bot state remain consistent
             self._fund_pool.add_allocation(bot_id, amount)

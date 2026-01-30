@@ -2039,6 +2039,8 @@ class BaseBot(ABC):
             self._pending_order_value: Decimal = Decimal("0")
         if not hasattr(self, "_pending_orders_lock"):
             self._pending_orders_lock = asyncio.Lock()
+        if not hasattr(self, "_capital_lock"):
+            self._capital_lock = asyncio.Lock()
         if not hasattr(self, "_allocated_capital"):
             self._allocated_capital: Optional[Decimal] = None
         if not hasattr(self, "_capital_usage"):
@@ -5868,13 +5870,14 @@ class BaseBot(ABC):
             # Store previous value for logging
             previous = getattr(self._config, "max_capital", None)
 
-            # Update config if it has max_capital attribute
-            if hasattr(self._config, "max_capital"):
-                self._config.max_capital = new_max_capital
-                logger.info(
-                    f"Bot {self._bot_id} capital updated: "
-                    f"{previous} -> {new_max_capital}"
-                )
+            # Update config under lock to prevent race conditions
+            async with self._capital_lock:
+                if hasattr(self._config, "max_capital"):
+                    self._config.max_capital = new_max_capital
+                    logger.info(
+                        f"Bot {self._bot_id} capital updated: "
+                        f"{previous} -> {new_max_capital}"
+                    )
 
             # Notify subclass of capital change (they can override _on_capital_updated)
             await self._on_capital_updated(new_max_capital)
