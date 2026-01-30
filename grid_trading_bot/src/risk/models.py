@@ -255,7 +255,7 @@ class GlobalRiskStatus:
     daily_pnl: DailyPnL  # Today's P&L
     circuit_breaker: CircuitBreakerState  # Circuit breaker state
     active_alerts: List[RiskAlert] = field(default_factory=list)  # Active alerts
-    last_updated: datetime = field(default_factory=datetime.now)  # Last update time
+    last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))  # Last update time
 
     def add_alert(self, alert: RiskAlert) -> None:
         """Add an alert to the active alerts list."""

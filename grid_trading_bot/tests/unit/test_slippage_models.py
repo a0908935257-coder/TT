@@ -173,6 +173,12 @@ class TestVolatilityBasedSlippage:
 
         klines = [
             create_test_kline(
+                open_price=Decimal("98"),
+                high=Decimal("103"),
+                low=Decimal("93"),
+                close=Decimal("99"),
+            ),
+            create_test_kline(
                 open_price=Decimal("100"),
                 high=Decimal("105"),
                 low=Decimal("95"),

@@ -4,7 +4,7 @@ Tests for Risk Management Models.
 Verifies all risk models can be created correctly with proper types and defaults.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -120,7 +120,7 @@ class TestCapitalSnapshot:
 
     def test_create_snapshot(self):
         """Test creating a capital snapshot."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         snapshot = CapitalSnapshot(
             timestamp=now,
             total_capital=Decimal("100000"),
@@ -148,7 +148,7 @@ class TestDrawdownInfo:
 
     def test_create_drawdown_info(self):
         """Test creating drawdown info."""
-        peak_time = datetime.now() - timedelta(hours=2)
+        peak_time = datetime.now(timezone.utc) - timedelta(hours=2)
         info = DrawdownInfo(
             peak_value=Decimal("100000"),
             current_value=Decimal("90000"),
@@ -165,7 +165,7 @@ class TestDrawdownInfo:
 
     def test_calculate_drawdown(self):
         """Test calculating drawdown info from values."""
-        peak_time = datetime.now() - timedelta(hours=1)
+        peak_time = datetime.now(timezone.utc) - timedelta(hours=1)
         info = DrawdownInfo.calculate(
             peak_value=Decimal("100000"),
             current_value=Decimal("85000"),
@@ -183,7 +183,7 @@ class TestDrawdownInfo:
         info = DrawdownInfo.calculate(
             peak_value=Decimal("0"),
             current_value=Decimal("0"),
-            peak_time=datetime.now(),
+            peak_time=datetime.now(timezone.utc),
         )
 
         assert info.drawdown_pct == Decimal("0")
@@ -393,7 +393,7 @@ class TestGlobalRiskStatus:
     @pytest.fixture
     def sample_status(self):
         """Create a sample global risk status."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         today = date.today()
 
         return GlobalRiskStatus(

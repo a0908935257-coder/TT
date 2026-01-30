@@ -216,6 +216,7 @@ class MockExchangeClient:
         quantity: Decimal | float | str,
         price: Decimal | float | str,
         market_type: MarketType = MarketType.SPOT,
+        **kwargs,
     ) -> Order:
         """
         Place a limit buy order.
@@ -253,6 +254,7 @@ class MockExchangeClient:
         quantity: Decimal | float | str,
         price: Decimal | float | str,
         market_type: MarketType = MarketType.SPOT,
+        **kwargs,
     ) -> Order:
         """
         Place a limit sell order.
@@ -410,14 +412,14 @@ class MockExchangeClient:
 
     async def get_open_orders(
         self,
-        symbol: str,
+        symbol: str = None,
         market_type: MarketType = MarketType.SPOT,
     ) -> list[Order]:
         """
         Get all open orders for a symbol.
 
         Args:
-            symbol: Trading pair symbol
+            symbol: Trading pair symbol (None for all)
             market_type: Market type
 
         Returns:
@@ -425,9 +427,35 @@ class MockExchangeClient:
         """
         await asyncio.sleep(self._latency)
 
+        if symbol is None:
+            return list(self._open_orders.values())
         return [
             order for order in self._open_orders.values()
             if order.symbol == symbol
+        ]
+
+    async def get_open_orders_for_bot(
+        self,
+        bot_id: str,
+        symbol: str = None,
+        market: MarketType = MarketType.SPOT,
+        **kwargs,
+    ) -> list[Order]:
+        """
+        Get open orders belonging to a specific bot.
+
+        Args:
+            bot_id: Bot identifier to filter by
+            symbol: Trading pair symbol (None for all)
+            market_type: Market type
+
+        Returns:
+            List of open orders belonging to the specified bot
+        """
+        all_orders = await self.get_open_orders(symbol, market)
+        return [
+            order for order in all_orders
+            if order.client_order_id and order.client_order_id.startswith(bot_id)
         ]
 
     def simulate_fill(self, order_id: str, fill_price: Optional[Decimal] = None) -> Optional[Order]:
