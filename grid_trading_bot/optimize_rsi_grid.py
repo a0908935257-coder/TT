@@ -67,15 +67,14 @@ def run_backtest(klines: list[Kline], config: RSIGridStrategyConfig, leverage: i
     strategy = RSIGridBacktestStrategy(config)
     bt_config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+        fee_rate=Decimal("0.0006"),
+        slippage_pct=Decimal("0.0005"),
+    ).with_leverage(leverage)
     engine = BacktestEngine(bt_config)
     return engine.run(klines, strategy)
 
 
-def create_objective(klines: list[Kline], leverage: int = 5):
+def create_objective(klines: list[Kline], leverage: int = 7):
     """創建 Optuna 目標函數（內建 train/test split）."""
 
     # 70/30 split
@@ -207,8 +206,8 @@ def main():
     parser.add_argument(
         "--leverage",
         type=int,
-        default=5,
-        help="槓桿倍數 (default: 5)"
+        default=7,
+        help="槓桿倍數 (default: 7)"
     )
     parser.add_argument(
         "--output",
