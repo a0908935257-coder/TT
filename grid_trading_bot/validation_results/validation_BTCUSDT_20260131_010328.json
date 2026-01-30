@@ -1,0 +1,35 @@
+{
+  "metadata": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "days": 42,
+    "periods": 9,
+    "data_bars": 1000,
+    "timestamp": "2026-01-31T01:03:28.719960"
+  },
+  "results": [
+    {
+      "strategy": "bollinger",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "leverage": 7,
+      "walk_forward": {
+        "total_periods": 0,
+        "consistent_periods": 0,
+        "consistency_pct": 0.0,
+        "avg_oos_sharpe": 0.0,
+        "period_details": []
+      },
+      "overfitting_analysis": {
+        "avg_is_sharpe": 0,
+        "avg_oos_sharpe": 0,
+        "avg_is_return_pct": 0,
+        "avg_oos_return_pct": 0,
+        "oos_is_sharpe_ratio": 0,
+        "oos_is_return_ratio": 0,
+        "is_overfit": true,
+        "overfit_severity": "HIGH"
+      }
+    }
+  ]
+}
