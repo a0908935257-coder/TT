@@ -266,6 +266,38 @@ class BaseBot(ABC):
             await asyncio.gather(*self._notification_tasks, return_exceptions=True)
         self._notification_tasks.clear()
 
+    def _create_background_task(self, coro, name: str) -> asyncio.Task:
+        """
+        Create a tracked background task with proper exception handling.
+
+        Unlike _create_notification_task (fire-and-forget notifications),
+        this is for general-purpose background coroutines that need
+        done_callback exception logging to prevent silent failures.
+
+        Args:
+            coro: Coroutine to execute
+            name: Descriptive task name for logging
+
+        Returns:
+            The created task
+        """
+        task = asyncio.create_task(coro, name=f"{self._bot_id}:{name}")
+        self._notification_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._notification_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error(
+                    f"[{self._bot_id}] Background task '{name}' failed: {exc}",
+                    exc_info=exc,
+                )
+
+        task.add_done_callback(_on_done)
+        return task
+
     # =========================================================================
     # Kline Validation (Prevents Backtest vs Live Data Inconsistency)
     # =========================================================================

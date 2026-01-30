@@ -1105,6 +1105,12 @@ class GridFuturesBot(BaseBot):
 
         except Exception as e:
             logger.error(f"Failed to close position: {e}")
+            await self._handle_order_rejection(
+                symbol=self._config.symbol,
+                side="SELL" if self._position and self._position.side.value == "LONG" else "BUY",
+                quantity=quantity or (self._position.quantity if self._position else Decimal("0")),
+                error=e,
+            )
 
         return False
 

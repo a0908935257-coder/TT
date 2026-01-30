@@ -1799,6 +1799,12 @@ class SupertrendBot(BaseBot):
 
         except Exception as e:
             logger.error(f"Failed to close position: {e}")
+            await self._handle_order_rejection(
+                symbol=self._config.symbol,
+                side="SELL" if self._position and self._position.side == PositionSide.LONG else "BUY",
+                quantity=self._position.quantity if self._position else Decimal("0"),
+                error=e,
+            )
 
     # =========================================================================
     # Risk Control (每日虧損限制 + 連續虧損保護)
