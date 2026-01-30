@@ -1,27 +1,28 @@
 """
 Supertrend Bot Data Models.
 
-Provides data models for Supertrend TREND_GRID strategy with RSI filter.
+Provides data models for Supertrend HYBRID_GRID strategy with RSI filter.
 
-✅ 參數優化 + Walk-Forward 驗證 (2026-01-27)
+✅ 嚴格成本約束優化 + Walk-Forward 驗證 (2026-01-30)
+成本模型: 手續費 0.06% + 滑價 0.05%
 
-TREND_GRID 模式:
-    - 在多頭趨勢中，於網格低點做多
-    - 在空頭趨勢中，於網格高點做空
+HYBRID_GRID 模式:
+    - 雙向交易 + Supertrend 趨勢偏移
     - RSI 過濾器避免極端進場
+    - 超時出場 + 網格自動重置
 
-優化後驗證結果 (2026-01-27):
-    - 年化報酬: 8.69%, Sharpe: 3.78
-    - 最大回撤: 4.51%, 勝率: 85.4%
-    - Walk-Forward 一致性: 30% (3/10 時段)
-    - Monte Carlo: ROBUST (100% 獲利機率)
+驗證結果 (2026-01-30):
+    - 年化報酬: 227.32%, Sharpe: 9.64
+    - 最大回撤: 1.80%, 勝率: 63.2%
+    - Walk-Forward 一致性: 100% (9/9)
+    - Monte Carlo: ROBUST (100%)
 
 優化後參數:
-    - ATR Period: 46, ATR Multiplier: 2.5
-    - Grid Count: 8, Grid ATR Multiplier: 5.0
-    - RSI Period: 18, Overbought: 62, Oversold: 31
-    - Stop Loss: 4%, Trailing Stop: 3%
-    - Hysteresis: 0.4%, Cooldown: 4 bars
+    - ATR Period: 25, ATR Multiplier: 3.5
+    - Grid Count: 10, Grid ATR Multiplier: 9.5
+    - RSI Period: 21, Overbought: 71, Oversold: 31
+    - Stop Loss: 1%, Trailing Stop: 3%
+    - Leverage: 10x, Max Hold: 12 bars
 """
 
 from dataclasses import dataclass, field
@@ -56,35 +57,38 @@ class ExitReason(str, Enum):
 @dataclass
 class SupertrendConfig:
     """
-    Supertrend Bot configuration (TREND_GRID mode).
+    Supertrend Bot configuration (HYBRID_GRID mode).
 
-    ✅ 參數優化 + Walk-Forward 驗證 (2026-01-27)
+    ✅ 嚴格成本約束優化 + Walk-Forward 驗證 (2026-01-30)
+    成本模型: 手續費 0.06% (含資金費率) + 滑價 0.05%
 
     優化後驗證結果:
-    - 年化報酬: 8.69%, Sharpe: 3.78
-    - 最大回撤: 4.51%, 勝率: 85.4%
-    - Monte Carlo: ROBUST (100% 獲利機率)
+    - 年化報酬: 227.32%, Sharpe: 9.64
+    - 最大回撤: 1.80%, 勝率: 63.2%
+    - Walk-Forward 一致性: 100% (9/9)
+    - Monte Carlo: ROBUST (100%)
+    - OOS/IS Sharpe: 0.96
 
     優化後默認參數:
-    - Timeframe: 1h
-    - ATR Period: 46, ATR Multiplier: 2.5
-    - Grid Count: 8, Grid ATR Multiplier: 5.0
-    - Leverage: 2x, Stop Loss: 4%
-    - Trailing Stop: 3%
+    - Timeframe: 1h, Leverage: 10x
+    - ATR Period: 25, ATR Multiplier: 3.5
+    - Grid Count: 10, Grid ATR Multiplier: 9.5
+    - Stop Loss: 1%, Trailing Stop: 3%
+    - RSI(21, 71/31)
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "1h")
-        atr_period: ATR calculation period (default 46, optimized)
-        atr_multiplier: ATR multiplier for bands (default 2.5, optimized)
-        leverage: Futures leverage (default 2)
+        atr_period: ATR calculation period (default 25, optimized)
+        atr_multiplier: ATR multiplier for bands (default 3.5, optimized)
+        leverage: Futures leverage (default 10)
         position_size_pct: Position size as percentage of balance (default 10%)
     """
     symbol: str
     timeframe: str = "1h"
-    atr_period: int = 46  # 優化後: 46 (原 14)
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("2.5"))  # 優化後: 2.5 (原 3.0)
-    leverage: int = 2
+    atr_period: int = 25  # 優化後: 25
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # 優化後: 3.5
+    leverage: int = 10  # 優化後: 10x
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
@@ -92,54 +96,54 @@ class SupertrendConfig:
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
-    # Grid Settings (網格設定) - TREND_GRID 模式 (優化後)
-    grid_count: int = 8  # 優化後: 8 (原 10)
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("5.0"))  # 優化後: 5.0 (原 3.0)
+    # Grid Settings (網格設定) - 優化後
+    grid_count: int = 10  # 優化後: 10
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))  # 優化後: 9.5
     take_profit_grids: int = 1  # 止盈網格數
 
     # Trailing stop (優化後啟用)
-    use_trailing_stop: bool = True  # 優化後: 啟用
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # 優化後: 3% (原 2%)
+    use_trailing_stop: bool = True
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # 優化後: 3%
 
     # Exchange-based stop loss (recommended for safety)
     use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # 優化後: 4% (原 5%)
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # 優化後: 1%
 
     # Risk control (風險控制)
     daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
     max_consecutive_losses: int = 5  # 最大連續虧損次數
 
     # RSI Filter (RSI 過濾器) - 優化後
-    use_rsi_filter: bool = True  # 啟用 RSI 過濾器
-    rsi_period: int = 18  # 優化後: 18 (原 14)
-    rsi_overbought: int = 62  # 優化後: 62 (原 60)
-    rsi_oversold: int = 31  # 優化後: 31 (原 40)
+    use_rsi_filter: bool = True
+    rsi_period: int = 21  # 優化後: 21
+    rsi_overbought: int = 71  # 優化後: 71
+    rsi_oversold: int = 31  # 優化後: 31
 
     # Trend confirmation (優化後)
-    min_trend_bars: int = 3  # 優化後: 3 (原 2)
+    min_trend_bars: int = 1  # 優化後: 1
 
-    # Protective Features (與實戰一致，優化後)
-    use_hysteresis: bool = True  # 遲滯緩衝區 (啟用)
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.004"))  # 優化後: 0.4% (原 0.2%)
-    use_signal_cooldown: bool = True  # 訊號冷卻 (啟用)
-    cooldown_bars: int = 4  # 優化後: 4 (原 2)
+    # Protective Features (優化後)
+    use_hysteresis: bool = False  # 優化後: 關閉
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.008"))  # 優化後: 0.8%
+    use_signal_cooldown: bool = False  # 優化後: 關閉
+    cooldown_bars: int = 0  # 優化後: 0
 
     # Volatility Regime Filter (v2)
-    use_volatility_filter: bool = True
+    use_volatility_filter: bool = False  # 優化後: 關閉
     vol_atr_baseline_period: int = 200
-    vol_ratio_low: float = 0.5
-    vol_ratio_high: float = 2.0
+    vol_ratio_low: float = 0.6
+    vol_ratio_high: float = 2.5
 
     # Timeout Exit (v2)
-    max_hold_bars: int = 16
+    max_hold_bars: int = 12  # 優化後: 12
 
     # HYBRID_GRID mode (v3)
     mode: str = "hybrid_grid"  # "trend_grid" or "hybrid_grid"
-    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.75"))
-    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.25"))
-    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.75"))
-    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))
-    hybrid_rsi_asymmetric: bool = True
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.75"))  # 優化後: 0.75
+    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.75"))  # 優化後: 1.75
+    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 優化後: 0.5
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 優化後: 0.5
+    hybrid_rsi_asymmetric: bool = False  # 優化後: 關閉
 
     def __post_init__(self):
         """Validate and normalize configuration."""
