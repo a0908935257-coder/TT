@@ -8,16 +8,19 @@ Strategy: RSI Zone + Grid Entry (無趨勢過濾)
 - Grid provides entry points at ATR-based price levels
 - 優化後關閉趨勢過濾，效果更好
 
-優化後驗證結果 (2026-01-27):
-- 年化報酬: 5.59%, Sharpe: 6.51
-- 最大回撤: 0.94%, 勝率: 84.8%
-- W-F 一致性: 50%, Monte Carlo: ROBUST (100% 獲利)
+✅ v2 Vol Filter 優化 + Walk-Forward 驗證 (2026-01-30):
+- 年化報酬: 12.09%, Sharpe: 1.90, 回撤: 9.78%
+- 勝率: 84.8%, 交易數: 328/2年
+- W-F 一致性: 77.8% (7/9), Monte Carlo: ROBUST
+- OOS Sharpe: 2.89
 
-優化後參數:
-- RSI: period=14, oversold=33, overbought=66
-- Grid: count=8, ATR period=22, multiplier=3.5
-- Trend Filter: 關閉
-- Stop Loss: ATR * 2.0 (max 3%)
+v2 優化後參數:
+- Timeframe: 15m, Leverage: 7x
+- RSI: period=14, block_threshold=0.7
+- Grid: count=12, ATR period=10, multiplier=4.0
+- Stop Loss: ATR * 1.5, Max Hold: 16 bars
+- Volatility Filter: ON (baseline=100, low=0.4, high=2.0)
+- Trailing Stop: OFF, Trend Filter: OFF
 """
 
 from dataclasses import dataclass, field
@@ -78,65 +81,78 @@ class RSIGridConfig:
 
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
-        timeframe: Kline timeframe (default "15m")
-        leverage: Futures leverage (default 2)
+        timeframe: Kline timeframe (default "15m", v2 optimized)
+        leverage: Futures leverage (default 7, v2 validated)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # RSI Parameters
         rsi_period: RSI calculation period (default 14)
-        oversold_level: RSI oversold threshold (default 30)
-        overbought_level: RSI overbought threshold (default 70)
+        oversold_level: RSI oversold threshold (default 33)
+        overbought_level: RSI overbought threshold (default 66)
+        rsi_block_threshold: tanh score threshold (default 0.7, v2)
 
         # Grid Parameters
-        grid_count: Number of grid levels (default 10)
-        atr_period: ATR calculation period (default 14)
-        atr_multiplier: ATR multiplier for grid range (default 3.0)
+        grid_count: Number of grid levels (default 12, v2)
+        atr_period: ATR calculation period (default 10, v2)
+        atr_multiplier: ATR multiplier for grid range (default 4.0, v2)
 
         # Trend Filter
-        trend_sma_period: SMA period for trend detection (default 20)
-        use_trend_filter: Enable trend-based direction filter (default True)
+        trend_sma_period: SMA period for trend detection (default 39)
+        use_trend_filter: Enable trend-based direction filter (default False, v2)
 
         # Risk Management
         max_capital: Maximum capital to use
         position_size_pct: Size per trade as % of capital (default 10%)
         max_position_pct: Maximum total position as % (default 50%)
-        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.5)
+        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.5, v2)
         max_stop_loss_pct: Maximum stop loss percentage (default 3%)
         max_positions: Maximum concurrent positions (default 5)
+        max_hold_bars: Maximum holding duration in bars (default 16, v2)
+
+        # Volatility Filter (v2)
+        use_volatility_filter: Enable volatility regime filter (default True, v2)
+        vol_atr_baseline_period: Baseline ATR period (default 100)
+        vol_ratio_low: Low volatility threshold (default 0.4)
+        vol_ratio_high: High volatility threshold (default 2.0)
 
     Example:
         >>> config = RSIGridConfig(symbol="BTCUSDT")  # Use defaults
     """
 
     symbol: str
-    timeframe: str = "1h"  # 優化後: 1h (原 15m)
-    leverage: int = 7
+    timeframe: str = "15m"  # v2 優化後: 15m (原 1h)
+    leverage: int = 7  # v2: 7x (leveraged-fee 回測驗證)
     margin_type: str = "ISOLATED"
 
-    # RSI Parameters (優化後)
+    # RSI Parameters (v2 優化)
     rsi_period: int = 14
     oversold_level: int = 33  # 優化後: 33 (原 30)
     overbought_level: int = 66  # 優化後: 66 (原 70)
+    rsi_block_threshold: float = 0.7  # v2: tanh score 閾值
 
-    # Grid Parameters (優化後)
-    grid_count: int = 8  # 優化後: 8 (原 10)
-    atr_period: int = 22  # 優化後: 22 (原 14)
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # 優化後: 3.5 (原 3.0)
+    # Grid Parameters (v2 優化)
+    grid_count: int = 12  # v2: 12 (原 8)
+    atr_period: int = 10  # v2: 10 (原 22)
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))  # v2: 4.0 (原 3.5)
 
-    # Trend Filter (優化後: 關閉)
+    # Trend Filter (v2: 關閉)
     trend_sma_period: int = 39  # 優化後: 39 (原 20)
-    use_trend_filter: bool = False  # 優化後: 關閉 (原 True)
+    use_trend_filter: bool = False  # v2: 關閉
 
     # Capital allocation
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
 
-    # Risk Management (優化後)
-    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))  # 優化後: 2.0 (原 1.5)
+    # Risk Management (v2 優化)
+    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("1.5"))  # v2: 1.5 (原 2.0)
     max_stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
     take_profit_grids: int = 1
     max_positions: int = 5
+    max_hold_bars: int = 16  # v2: timeout 16 bars
+
+    # Trailing Stop (v2: 關閉)
+    use_trailing_stop: bool = False
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True
@@ -148,11 +164,16 @@ class RSIGridConfig:
     # Fee rate
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
-    # Protective features (disabled by default based on backtest results showing
-    # they hurt performance for low-frequency strategies like RSI Grid)
-    use_hysteresis: bool = False  # Disable hysteresis (回測顯示對 RSI Grid 有負面影響)
+    # Volatility Regime Filter (v2 核心改進)
+    use_volatility_filter: bool = True  # v2: 啟用
+    vol_atr_baseline_period: int = 100  # v2: baseline ATR 週期
+    vol_ratio_low: float = 0.4  # v2: 低波動閾值
+    vol_ratio_high: float = 2.0  # v2: 高波動閾值
+
+    # Protective features (v2: 關閉)
+    use_hysteresis: bool = False  # 回測顯示對 RSI Grid 有負面影響
     hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
-    use_signal_cooldown: bool = False  # Disable signal cooldown (回測顯示對 RSI Grid 有負面影響)
+    use_signal_cooldown: bool = False  # 回測顯示對 RSI Grid 有負面影響
     cooldown_bars: int = 2
 
     @classmethod

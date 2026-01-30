@@ -22,7 +22,7 @@ HYBRID_GRID 模式:
     - Grid Count: 10, Grid ATR Multiplier: 9.5
     - RSI Period: 21, Overbought: 71, Oversold: 31
     - Stop Loss: 1%, Trailing Stop: 3%
-    - Leverage: 10x, Max Hold: 12 bars
+    - Leverage: 7x (多槓桿回測最佳: Sharpe 1.85, 零爆倉), Max Hold: 12 bars
 """
 
 from dataclasses import dataclass, field
@@ -71,7 +71,7 @@ class SupertrendConfig:
     - OOS/IS Sharpe: 0.96
 
     優化後默認參數:
-    - Timeframe: 1h, Leverage: 10x
+    - Timeframe: 1h, Leverage: 7x
     - ATR Period: 25, ATR Multiplier: 3.5
     - Grid Count: 10, Grid ATR Multiplier: 9.5
     - Stop Loss: 1%, Trailing Stop: 3%
@@ -82,14 +82,14 @@ class SupertrendConfig:
         timeframe: Kline timeframe (default "1h")
         atr_period: ATR calculation period (default 25, optimized)
         atr_multiplier: ATR multiplier for bands (default 3.5, optimized)
-        leverage: Futures leverage (default 10)
+        leverage: Futures leverage (default 7)
         position_size_pct: Position size as percentage of balance (default 10%)
     """
     symbol: str
     timeframe: str = "1h"
     atr_period: int = 25  # 優化後: 25
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # 優化後: 3.5
-    leverage: int = 10  # 優化後: 10x
+    leverage: int = 7  # 優化後: 7x (多槓桿回測最佳: Sharpe 1.85, 零爆倉)
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)

@@ -103,65 +103,62 @@ class BollingerConfig:
         - 勝率: 63.3%
         - 穩健性: ROBUST
 
-    BB_TREND_GRID 默認參數 (W-F 驗證通過):
-    - bb_period: 12
-    - bb_std: 2.0
-    - grid_count: 6
-    - grid_range_pct: 2%
-    - stop_loss_pct: 2.5%
-    - leverage: 19x (⚠️ 高槓桿)
+    ✅ BB_NEUTRAL_GRID 多目標優化 + Walk-Forward 驗證 (2026-01-28):
+    - 年化報酬: 53.23%, Sharpe: 11.83, 回撤: 2.12%
+    - W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
+    - 參數穩健性: 100% (CV=4.5%)
 
-    BB_NEUTRAL_GRID 建議參數 (待優化):
-    - grid_count: 10-12
-    - use_atr_range: true
-    - atr_period: 21
-    - atr_multiplier: 4.0-6.0
-    - stop_loss_pct: 0.5-1%
+    BB_NEUTRAL_GRID 默認參數 (W-F 驗證通過):
+    - bb_period: 31, bb_std: 2.0
+    - grid_count: 14, take_profit_grids: 1
+    - use_atr_range: true, atr_period: 29, atr_multiplier: 9.5
+    - stop_loss_pct: 0.2%, leverage: 7x
+    - use_hysteresis: true (0.25%)
     """
 
     symbol: str
     timeframe: str = "1h"
 
-    # Strategy mode
-    mode: StrategyMode = StrategyMode.BB_TREND_GRID
+    # Strategy mode (多目標優化 2026-01-28: BB_NEUTRAL_GRID)
+    mode: StrategyMode = StrategyMode.BB_NEUTRAL_GRID
 
-    # Bollinger Bands parameters (驗證通過)
-    bb_period: int = 12                                                        # 驗證通過: 12 (原 20)
+    # Bollinger Bands parameters (優化後: 用於參考，不作為趨勢過濾)
+    bb_period: int = 31                                                        # 優化後: 31 (原 12)
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Grid parameters (驗證通過)
-    grid_count: int = 6                                                        # 驗證通過: 6 (原 10)
-    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))   # 驗證通過: 2% (原 4%)
-    take_profit_grids: int = 2                                                 # 驗證通過: 2 (原 1)
+    # Grid parameters (優化後)
+    grid_count: int = 14                                                       # 優化後: 14 (原 6)
+    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))   # 備用 (ATR 優先)
+    take_profit_grids: int = 1                                                 # 優化後: 1 (原 2)
 
-    # Position settings (⚠️ 高槓桿)
-    leverage: int = 19                                                         # ⚠️ 驗證通過: 19x (原 2x)
+    # Position settings (多槓桿回測最佳: Sharpe 6.75, 零爆倉, 回撤 5.24%)
+    leverage: int = 7                                                          # 優化後: 7x (原 19x)
     margin_type: str = "ISOLATED"
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max 50% exposure
 
-    # Risk management (驗證通過)
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.025"))   # 驗證通過: 2.5% (原 5%)
+    # Risk management (優化後)
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))   # 優化後: 0.2% (原 2.5%)
     rebuild_threshold_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # Rebuild when price moves 2% from grid
 
     # BBW filter (for squeeze detection)
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
 
-    # Protective features (驗證通過: 關閉)
-    use_hysteresis: bool = False                                               # 驗證通過: 關閉
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
-    use_signal_cooldown: bool = False                                          # 驗證通過: 關閉
-    cooldown_bars: int = 0                                                     # 驗證通過: 0 (原 2)
+    # Protective features (優化後)
+    use_hysteresis: bool = True                                                # 優化後: 啟用
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0025")) # 優化後: 0.25% (原 0.2%)
+    use_signal_cooldown: bool = False                                          # 優化後: 關閉
+    cooldown_bars: int = 1                                                     # 優化後: 1 (原 0)
 
     # Fee rate (Binance Futures: 0.04% maker/taker)
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
-    # ATR dynamic range (for BB_NEUTRAL_GRID mode)
-    use_atr_range: bool = False                                                # 用於 NEUTRAL_GRID
-    atr_period: int = 21                                                       # ATR 計算週期
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))    # ATR 乘數
+    # ATR dynamic range (BB_NEUTRAL_GRID 啟用)
+    use_atr_range: bool = True                                                 # 優化後: 啟用
+    atr_period: int = 29                                                       # 優化後: 29 (原 21)
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))    # 優化後: 9.5 (原 4.0，超寬範圍)
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # ATR 不可用時的備用範圍
 
     @classmethod
