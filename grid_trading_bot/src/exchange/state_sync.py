@@ -697,6 +697,9 @@ class StateSynchronizer:
         # Lock for sync operations
         self._sync_lock = asyncio.Lock()
 
+        # Track fire-and-forget WS update tasks to prevent GC warnings
+        self._ws_update_tasks: Set[asyncio.Task] = set()
+
     @property
     def sync_state(self) -> SyncState:
         """Get current sync state."""
@@ -963,6 +966,12 @@ class StateSynchronizer:
     # WebSocket Updates
     # =========================================================================
 
+    def _create_ws_task(self, coro) -> None:
+        """Create a tracked background task with done_callback for cleanup."""
+        task = asyncio.create_task(coro)
+        self._ws_update_tasks.add(task)
+        task.add_done_callback(self._ws_update_tasks.discard)
+
     def handle_order_update(self, order_data: Dict[str, Any]) -> None:
         """
         Handle order update from WebSocket.
@@ -970,7 +979,7 @@ class StateSynchronizer:
         Args:
             order_data: Order update data from WebSocket
         """
-        asyncio.create_task(self._handle_order_update_async(order_data))
+        self._create_ws_task(self._handle_order_update_async(order_data))
 
     async def _handle_order_update_async(self, order_data: Dict[str, Any]) -> None:
         """Async handler for order update."""
@@ -1008,7 +1017,7 @@ class StateSynchronizer:
 
     def handle_position_update(self, position_data: Dict[str, Any]) -> None:
         """Handle position update from WebSocket."""
-        asyncio.create_task(self._handle_position_update_async(position_data))
+        self._create_ws_task(self._handle_position_update_async(position_data))
 
     async def _handle_position_update_async(
         self,
@@ -1031,7 +1040,7 @@ class StateSynchronizer:
 
     def handle_balance_update(self, balance_data: Dict[str, Any]) -> None:
         """Handle balance update from WebSocket."""
-        asyncio.create_task(self._handle_balance_update_async(balance_data))
+        self._create_ws_task(self._handle_balance_update_async(balance_data))
 
     async def _handle_balance_update_async(
         self,

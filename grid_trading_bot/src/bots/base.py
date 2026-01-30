@@ -5694,7 +5694,7 @@ class BaseBot(ABC):
         except Exception as e:
             logger.error(f"Failed to start bot {self._bot_id}: {e}")
             # Cleanup any resources that may have been started
-            self._stop_heartbeat()
+            await self._stop_heartbeat()
             self._stop_position_reconciliation()
             self._running = False
             self._state = BotState.ERROR
@@ -5727,7 +5727,7 @@ class BaseBot(ABC):
             self._state = BotState.STOPPING
 
             # Stop heartbeat first to prevent stale heartbeats
-            self._stop_heartbeat()
+            await self._stop_heartbeat()
 
             # Stop position reconciliation
             self._stop_position_reconciliation()
@@ -5876,10 +5876,14 @@ class BaseBot(ABC):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         logger.debug(f"Heartbeat started for {self._bot_id}")
 
-    def _stop_heartbeat(self) -> None:
-        """Stop heartbeat task."""
+    async def _stop_heartbeat(self) -> None:
+        """Stop heartbeat task and await cancellation."""
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
             self._heartbeat_task = None
             logger.debug(f"Heartbeat stopped for {self._bot_id}")
 
