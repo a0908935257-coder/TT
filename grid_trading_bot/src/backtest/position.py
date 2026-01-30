@@ -66,6 +66,24 @@ class Position:
             if current_price > self.max_adverse_price:
                 self.max_adverse_price = current_price
 
+    def liquidation_price(self, leverage: int, maintenance_margin_pct: Decimal) -> Optional[Decimal]:
+        """Calculate liquidation price for leveraged position.
+
+        Args:
+            leverage: Leverage multiplier
+            maintenance_margin_pct: Maintenance margin percentage (e.g. 0.004 for 0.4%)
+
+        Returns:
+            Liquidation price, or None if leverage <= 1
+        """
+        if leverage <= 1:
+            return None
+        lev = Decimal(leverage)
+        if self.side == "LONG":
+            return self.entry_price * (Decimal("1") - (Decimal("1") - maintenance_margin_pct) / lev)
+        else:
+            return self.entry_price * (Decimal("1") + (Decimal("1") - maintenance_margin_pct) / lev)
+
     def unrealized_pnl(self, current_price: Decimal, leverage: int = 1) -> Decimal:
         """Calculate unrealized P&L at given price."""
         if self.side == "LONG":
@@ -104,6 +122,7 @@ class PositionManager:
         self._positions: list[Position] = []
         self._trades: list[Trade] = []
         self._realized_pnl: Decimal = Decimal("0")
+        self._total_funding_paid: Decimal = Decimal("0")
 
     @property
     def positions(self) -> list[Position]:
@@ -177,23 +196,23 @@ class PositionManager:
         Returns:
             Completed Trade record
         """
-        # Calculate P&L (without leverage multiplication)
-        # Leverage effect is reflected through margin-based ROI calculation
+        # Calculate P&L with leverage
+        # In futures trading, leverage multiplies the position's effective exposure
         if position.side == "LONG":
             gross_pnl = (exit_price - position.entry_price) * position.quantity
         else:
             gross_pnl = (position.entry_price - exit_price) * position.quantity
 
+        # Apply leverage to gross PnL (consistent with unrealized_pnl)
+        gross_pnl = gross_pnl * Decimal(leverage)
+
         # Deduct fees (fees are paid on actual traded value, not leveraged)
         total_fees = position.entry_fee + exit_fee
         net_pnl = gross_pnl - total_fees
 
-        # Calculate ROI percentage based on margin
-        # ROI = net_pnl / margin * 100, where margin = notional / leverage
-        # This correctly reflects leverage: same P&L on smaller margin = higher ROI
-        if position.notional > 0 and leverage > 0:
-            margin = position.notional / Decimal(leverage)
-            pnl_pct = (net_pnl / margin) * Decimal("100")
+        # Calculate ROI percentage based on notional
+        if position.notional > 0:
+            pnl_pct = (net_pnl / position.notional) * Decimal("100")
         else:
             pnl_pct = Decimal("0")
 
@@ -257,6 +276,24 @@ class PositionManager:
             trades.append(trade)
         return trades
 
+    @property
+    def total_funding_paid(self) -> Decimal:
+        """Get total funding fees paid."""
+        return self._total_funding_paid
+
+    def add_funding_payment(self, amount: Decimal) -> None:
+        """Record a funding rate payment."""
+        self._total_funding_paid += amount
+
+    def used_margin(self) -> Decimal:
+        """Calculate total margin used by open positions."""
+        return sum((pos.notional for pos in self._positions), Decimal("0"))
+
+    def available_margin(self, current_price: Decimal, initial_capital: Decimal, leverage: int = 1) -> Decimal:
+        """Calculate available margin for new positions."""
+        equity = self.total_equity(current_price, initial_capital, leverage)
+        return equity - self.used_margin()
+
     def unrealized_pnl(self, current_price: Decimal, leverage: int = 1) -> Decimal:
         """Calculate total unrealized P&L across all positions."""
         return sum(
@@ -266,13 +303,14 @@ class PositionManager:
     def total_equity(
         self, current_price: Decimal, initial_capital: Decimal, leverage: int = 1
     ) -> Decimal:
-        """Calculate total equity including unrealized P&L."""
+        """Calculate total equity including unrealized P&L and funding costs."""
         return initial_capital + self._realized_pnl + self.unrealized_pnl(
             current_price, leverage
-        )
+        ) - self._total_funding_paid
 
     def reset(self) -> None:
         """Reset all positions and trades."""
         self._positions.clear()
         self._trades.clear()
         self._realized_pnl = Decimal("0")
+        self._total_funding_paid = Decimal("0")

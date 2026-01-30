@@ -84,6 +84,14 @@ class BacktestConfig:
     allow_pyramiding: bool = False
     use_margin: bool = False
 
+    # Margin / liquidation settings (futures)
+    maintenance_margin_pct: Decimal = field(default_factory=lambda: Decimal("0.004"))  # 0.4%
+    liquidation_fee_pct: Decimal = field(default_factory=lambda: Decimal("0.006"))  # 0.6%
+
+    # Funding rate settings (futures)
+    funding_rate: Decimal = field(default_factory=lambda: Decimal("0.0001"))  # 0.01% per 8h
+    funding_interval_hours: int = 8
+
     # Fee model settings
     fee_model_type: FeeModelType = FeeModelType.FIXED
     maker_fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0002"))  # 0.02%

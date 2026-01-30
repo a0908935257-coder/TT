@@ -22,6 +22,7 @@ class ExitReason(str, Enum):
     SIGNAL = "signal"
     REVERSAL = "reversal"
     MANUAL = "manual"
+    LIQUIDATION = "liquidation"
 
 
 @dataclass
@@ -122,6 +123,11 @@ class BacktestResult:
     num_losses: int = 0
     gross_profit: Decimal = field(default_factory=lambda: Decimal("0"))
     gross_loss: Decimal = field(default_factory=lambda: Decimal("0"))
+
+    # Futures metrics
+    liquidation_count: int = 0
+    total_funding_paid: Decimal = field(default_factory=lambda: Decimal("0"))
+    max_margin_utilization_pct: Decimal = field(default_factory=lambda: Decimal("0"))
 
     # Time series
     equity_curve: list[Decimal] = field(default_factory=list)

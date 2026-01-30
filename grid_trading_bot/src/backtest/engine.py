@@ -51,6 +51,9 @@ class BacktestEngine:
         # State
         self._equity_curve: list[Decimal] = []
         self._daily_pnl: dict[str, Decimal] = {}
+        self._liquidation_count: int = 0
+        self._last_funding_time: Optional[datetime] = None
+        self._max_margin_utilization_pct: Decimal = Decimal("0")
 
     @property
     def config(self) -> BacktestConfig:
@@ -90,6 +93,14 @@ class BacktestEngine:
         for bar_idx in range(warmup, len(klines)):
             kline = klines[bar_idx]
             context = self._create_context(bar_idx, klines)
+
+            # 0a. Check liquidation (before any exit logic)
+            if self._config.use_margin and self._config.leverage > 1:
+                self._check_liquidation(kline, bar_idx, strategy)
+
+            # 0b. Apply funding rate
+            if self._config.use_margin and self._config.leverage > 1:
+                self._apply_funding(kline)
 
             # 1. Check exits for existing positions
             self._check_and_process_exits(kline, bar_idx, strategy, context)
@@ -231,6 +242,9 @@ class BacktestEngine:
         self._position_manager.reset()
         self._equity_curve.clear()
         self._daily_pnl.clear()
+        self._liquidation_count = 0
+        self._last_funding_time = None
+        self._max_margin_utilization_pct = Decimal("0")
 
     def _create_context(self, bar_idx: int, klines: list[Kline]) -> BacktestContext:
         """Create backtest context for current bar."""
@@ -306,6 +320,15 @@ class BacktestEngine:
         if signal.signal_type in (SignalType.LONG_ENTRY, SignalType.SHORT_ENTRY):
             if not self._position_manager.can_open_position:
                 return
+
+            # Margin check: skip if insufficient available margin
+            if self._config.use_margin:
+                available = self._position_manager.available_margin(
+                    kline.close, self._config.initial_capital, self._config.leverage
+                )
+                notional = self._config.initial_capital * self._config.position_size_pct
+                if notional > available:
+                    return
 
             side = "LONG" if signal.signal_type == SignalType.LONG_ENTRY else "SHORT"
             position = self._order_simulator.create_position(
@@ -383,10 +406,89 @@ class BacktestEngine:
         )
         self._equity_curve.append(equity)
 
+        # Track margin utilization
+        if self._config.use_margin and equity > 0:
+            used = self._position_manager.used_margin()
+            utilization = (used / equity) * Decimal("100")
+            if utilization > self._max_margin_utilization_pct:
+                self._max_margin_utilization_pct = utilization
+
+    def _check_liquidation(
+        self, kline: Kline, bar_idx: int, strategy: BacktestStrategy
+    ) -> None:
+        """Check if any position should be liquidated."""
+        if not self._position_manager.has_position:
+            return
+
+        for position in self._position_manager.positions:
+            liq_price = position.liquidation_price(
+                self._config.leverage, self._config.maintenance_margin_pct
+            )
+            if liq_price is None:
+                continue
+
+            triggered = False
+            if position.side == "LONG" and kline.low <= liq_price:
+                triggered = True
+            elif position.side == "SHORT" and kline.high >= liq_price:
+                triggered = True
+
+            if triggered:
+                # Liquidation fee on notional × leverage
+                liq_fee = position.notional * Decimal(self._config.leverage) * self._config.liquidation_fee_pct
+                exit_fee = liq_fee + position.entry_price * position.quantity * self._config.fee_rate
+
+                trade = self._position_manager.close_position(
+                    position=position,
+                    exit_price=liq_price,
+                    exit_time=kline.close_time,
+                    exit_bar=bar_idx,
+                    exit_fee=exit_fee,
+                    exit_reason=ExitReason.LIQUIDATION,
+                    leverage=self._config.leverage,
+                )
+                self._liquidation_count += 1
+
+                date_key = kline.close_time.strftime("%Y-%m-%d")
+                if date_key not in self._daily_pnl:
+                    self._daily_pnl[date_key] = Decimal("0")
+                self._daily_pnl[date_key] += trade.pnl
+
+                strategy.on_position_closed(trade)
+                break  # Re-check remaining positions on next bar
+
+    def _apply_funding(self, kline: Kline) -> None:
+        """Apply funding rate to open positions at funding intervals."""
+        if not self._position_manager.has_position:
+            return
+
+        current_time = kline.close_time
+        if self._last_funding_time is None:
+            self._last_funding_time = current_time
+            return
+
+        hours_elapsed = (current_time - self._last_funding_time).total_seconds() / 3600
+        if hours_elapsed >= self._config.funding_interval_hours:
+            funding_periods = int(hours_elapsed // self._config.funding_interval_hours)
+            for position in self._position_manager.positions:
+                # Funding = notional × leverage × rate × periods
+                funding = (
+                    position.notional
+                    * Decimal(self._config.leverage)
+                    * self._config.funding_rate
+                    * Decimal(funding_periods)
+                )
+                self._position_manager.add_funding_payment(funding)
+            self._last_funding_time = current_time
+
     def _calculate_result(self) -> BacktestResult:
         """Calculate final backtest result."""
-        return self._metrics.calculate_all(
+        result = self._metrics.calculate_all(
             trades=self._position_manager.trades,
             equity_curve=self._equity_curve,
             daily_returns=self._daily_pnl,
         )
+        result.liquidation_count = self._liquidation_count
+        result.total_funding_paid = self._position_manager.total_funding_paid
+        result.max_margin_utilization_pct = self._max_margin_utilization_pct
+        return result
