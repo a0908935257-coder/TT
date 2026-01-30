@@ -13,19 +13,13 @@ and bidirectional trading support.
 - OOS/IS Sharpe: 0.72
 - Monte Carlo 獲利機率: 100%
 
-⚠️ 超高槓桿高風險配置 (積極策略):
-- leverage: 42x
+策略配置 (同步 settings.yaml):
+- leverage: 10x (多槓桿回測最佳: Sharpe 1.86, 零爆倉, 回撤 19.2%)
 - direction: NEUTRAL (雙向交易)
 - grid_count: 18
 - atr_period: 28
 - atr_multiplier: 9.5 (超寬範圍)
 - stop_loss_pct: 0.5% (緊止損)
-
-⚠️ 風險警告:
-- 42x 槓桿在極端市場可能導致爆倉
-- 建議實戰時設置每日虧損上限 (如 -5%)
-- 設置連續虧損停止機制 (如連虧 5 次暫停)
-- 實戰初期建議先用較低資金測試
 """
 
 from dataclasses import dataclass, field
@@ -94,8 +88,8 @@ class GridFuturesConfig:
     - OOS/IS Sharpe: 0.72
     - Monte Carlo 獲利機率: 100%
 
-    ⚠️ 超高槓桿高風險配置 (積極策略):
-    - Leverage: 42x
+    策略配置 (同步 settings.yaml):
+    - Leverage: 10x (多槓桿回測最佳: Sharpe 1.86, 零爆倉, 回撤 19.2%)
     - Direction: NEUTRAL (雙向交易)
     - Grid Count: 18
     - ATR Period: 28
@@ -105,7 +99,7 @@ class GridFuturesConfig:
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe for indicators (default "1h")
-        leverage: Futures leverage (default 42, validated)
+        leverage: Futures leverage (default 10, synced with settings.yaml)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # Grid settings
@@ -134,7 +128,7 @@ class GridFuturesConfig:
     Example:
         >>> config = GridFuturesConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=42,  # W-F 驗證通過: 42x (積極策略)
+        ...     leverage=10,  # 同步 settings.yaml (多槓桿回測最佳)
         ...     grid_count=18,  # W-F 驗證通過: 18
         ...     direction=GridDirection.NEUTRAL,
         ...     atr_period=28,  # W-F 驗證通過: 28
@@ -145,7 +139,7 @@ class GridFuturesConfig:
 
     symbol: str
     timeframe: str = "1h"
-    leverage: int = 42  # ⚠️ 超高槓桿 (W-F 驗證通過，積極策略)
+    leverage: int = 10  # 同步 settings.yaml (多槓桿回測最佳: Sharpe 1.86, 零爆倉)
     margin_type: str = "ISOLATED"
 
     # Grid settings (NEUTRAL 雙向交易)

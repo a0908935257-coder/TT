@@ -318,11 +318,11 @@ bots:
 
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
 # 預估組合年化報酬: ~40-50%
-#   - Grid Futures (40%): 45.18% 年化 (積極策略 42x)
+#   - Grid Futures (40%): 45.18% 年化 (10x 槓桿)
 #   - Bollinger NEUTRAL (25%): 53.23% 年化 (優化後 2026-01-28)
-#   - Supertrend HYBRID_GRID (15%): 年化 227%, Sharpe 9.64, WF 100% (嚴格成本約束 2026-01-30, 10x)
+#   - Supertrend HYBRID_GRID (15%): 年化 227%, Sharpe 9.64, WF 100% (嚴格成本約束 2026-01-30, 7x)
 #   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
-# ⚠️ 高槓桿風險配置 - Grid Futures 42x, Bollinger 18x, Supertrend 10x
+# ⚠️ 槓桿配置 - Grid Futures 10x, Bollinger 7x, Supertrend 7x, RSI-Grid 7x
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)
