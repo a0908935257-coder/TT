@@ -448,7 +448,7 @@ class BinanceSpotAPI:
         data = await self._request("GET", PUBLIC_ENDPOINTS["TICKER_PRICE"]["path"], params)
 
         if symbol:
-            return Decimal(str(data["price"]))
+            return Decimal(str(data.get("price", "0")))
 
         return {item["symbol"]: Decimal(str(item["price"])) for item in data}
 
@@ -467,9 +467,9 @@ class BinanceSpotAPI:
         data = await self._request("GET", PUBLIC_ENDPOINTS["DEPTH"]["path"], params)
 
         return {
-            "bids": [[Decimal(p), Decimal(q)] for p, q in data["bids"]],
-            "asks": [[Decimal(p), Decimal(q)] for p, q in data["asks"]],
-            "lastUpdateId": data["lastUpdateId"],
+            "bids": [[Decimal(p), Decimal(q)] for p, q in data.get("bids", [])],
+            "asks": [[Decimal(p), Decimal(q)] for p, q in data.get("asks", [])],
+            "lastUpdateId": data.get("lastUpdateId", 0),
         }
 
     # =========================================================================

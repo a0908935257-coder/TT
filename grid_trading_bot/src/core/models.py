@@ -249,10 +249,10 @@ class Ticker(TradingBaseModel):
             price=Decimal(str(data["lastPrice"])),
             bid=Decimal(str(data["bidPrice"])),
             ask=Decimal(str(data["askPrice"])),
-            high_24h=Decimal(str(data["highPrice"])),
-            low_24h=Decimal(str(data["lowPrice"])),
-            volume_24h=Decimal(str(data["volume"])),
-            change_24h=Decimal(str(data["priceChangePercent"])),
+            high_24h=Decimal(str(data.get("highPrice", data["lastPrice"]))),
+            low_24h=Decimal(str(data.get("lowPrice", data["lastPrice"]))),
+            volume_24h=Decimal(str(data.get("volume", "0"))),
+            change_24h=Decimal(str(data.get("priceChangePercent", "0"))),
             timestamp=timestamp_to_datetime(data.get("closeTime", 0)),
         )
 

@@ -425,10 +425,10 @@ class BinanceFuturesAPI:
                 price=Decimal(str(item["lastPrice"])),
                 bid=Decimal(str(item.get("bidPrice", item["lastPrice"]))),  # Fallback to lastPrice
                 ask=Decimal(str(item.get("askPrice", item["lastPrice"]))),  # Fallback to lastPrice
-                high_24h=Decimal(str(item["highPrice"])),
-                low_24h=Decimal(str(item["lowPrice"])),
-                volume_24h=Decimal(str(item["volume"])),
-                change_24h=Decimal(str(item["priceChangePercent"])),
+                high_24h=Decimal(str(item.get("highPrice", item["lastPrice"]))),
+                low_24h=Decimal(str(item.get("lowPrice", item["lastPrice"]))),
+                volume_24h=Decimal(str(item.get("volume", "0"))),
+                change_24h=Decimal(str(item.get("priceChangePercent", "0"))),
                 timestamp=timestamp_to_datetime(item.get("closeTime", 0)),
             )
 
@@ -501,8 +501,8 @@ class BinanceFuturesAPI:
         return [
             {
                 "symbol": item["symbol"],
-                "funding_rate": Decimal(str(item["fundingRate"])),
-                "funding_time": timestamp_to_datetime(item["fundingTime"]),
+                "funding_rate": Decimal(str(item.get("fundingRate", "0"))),
+                "funding_time": timestamp_to_datetime(item.get("fundingTime", 0)),
                 "mark_price": Decimal(str(item.get("markPrice", "0"))),
             }
             for item in data
@@ -523,9 +523,9 @@ class BinanceFuturesAPI:
         data = await self._request("GET", FUTURES_PUBLIC_ENDPOINTS["DEPTH"]["path"], params)
 
         return {
-            "bids": [[Decimal(p), Decimal(q)] for p, q in data["bids"]],
-            "asks": [[Decimal(p), Decimal(q)] for p, q in data["asks"]],
-            "lastUpdateId": data["lastUpdateId"],
+            "bids": [[Decimal(p), Decimal(q)] for p, q in data.get("bids", [])],
+            "asks": [[Decimal(p), Decimal(q)] for p, q in data.get("asks", [])],
+            "lastUpdateId": data.get("lastUpdateId", 0),
         }
 
     # =========================================================================
@@ -566,11 +566,11 @@ class BinanceFuturesAPI:
         )
 
         for item in data:
-            if item["asset"] == asset:
+            if item.get("asset") == asset:
                 return Balance(
                     asset=item["asset"],
-                    free=Decimal(str(item["availableBalance"])),
-                    locked=Decimal(str(item["balance"])) - Decimal(str(item["availableBalance"])),
+                    free=Decimal(str(item.get("availableBalance", "0"))),
+                    locked=Decimal(str(item.get("balance", "0"))) - Decimal(str(item.get("availableBalance", "0"))),
                 )
         return None
 
@@ -641,9 +641,9 @@ class BinanceFuturesAPI:
         )
 
         return {
-            "symbol": data["symbol"],
-            "leverage": data["leverage"],
-            "max_notional_value": Decimal(str(data["maxNotionalValue"])),
+            "symbol": data.get("symbol", symbol),
+            "leverage": data.get("leverage", leverage),
+            "max_notional_value": Decimal(str(data.get("maxNotionalValue", "0"))),
         }
 
     async def set_margin_type(self, symbol: str, margin_type: str) -> bool:
