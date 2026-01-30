@@ -177,6 +177,15 @@ class GridFuturesConfig:
     use_signal_cooldown: bool = True  # 啟用
     cooldown_bars: int = 0
 
+    @classmethod
+    def from_yaml(cls, symbol: str, settings_path=None, **overrides):
+        """從 settings.yaml 載入參數（單一來源）。"""
+        from src.config.strategy_loader import load_strategy_config
+        params = load_strategy_config("grid_futures", settings_path)
+        params.update(overrides)
+        params["symbol"] = symbol
+        return cls(**{k: v for k, v in params.items() if k in cls.__dataclass_fields__})
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         # Ensure Decimal types

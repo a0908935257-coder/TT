@@ -4,7 +4,6 @@ Bot Factory for creating bot instances.
 Creates and configures trading bot instances based on type and configuration.
 """
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
@@ -238,49 +237,13 @@ class BotFactory:
             BollingerBot instance
         """
         # Import here to avoid circular imports
-        from decimal import Decimal
-
         from src.bots.bollinger.bot import BollingerBot
         from src.bots.bollinger.models import BollingerConfig
 
-        # 使用 BollingerConfig 默認值作為備用 (單一來源)
-        _defaults = BollingerConfig(symbol=config["symbol"])
-
-        # Build BollingerConfig from dict (未指定的參數使用實戰配置默認值)
-        bollinger_config = BollingerConfig(
+        # 從 settings.yaml 載入參數（單一來源），runtime config 作為 override
+        bollinger_config = BollingerConfig.from_yaml(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", _defaults.timeframe),
-            # Bollinger Bands
-            bb_period=int(config.get("bb_period", _defaults.bb_period)),
-            bb_std=Decimal(str(config.get("bb_std", _defaults.bb_std))),
-            # Grid parameters
-            grid_count=int(config.get("grid_count", _defaults.grid_count)),
-            grid_range_pct=Decimal(str(config.get("grid_range_pct", _defaults.grid_range_pct))),
-            take_profit_grids=int(config.get("take_profit_grids", _defaults.take_profit_grids)),
-            # Position settings
-            leverage=int(config.get("leverage", _defaults.leverage)),
-            margin_type=config.get("margin_type", _defaults.margin_type),
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else _defaults.max_capital,
-            position_size_pct=Decimal(str(config.get("position_size_pct", _defaults.position_size_pct))),
-            max_position_pct=Decimal(str(config.get("max_position_pct", _defaults.max_position_pct))),
-            # Risk management
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", _defaults.stop_loss_pct))),
-            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", _defaults.rebuild_threshold_pct))),
-            # BBW filter
-            bbw_lookback=int(config.get("bbw_lookback", _defaults.bbw_lookback)),
-            bbw_threshold_pct=int(config.get("bbw_threshold_pct", _defaults.bbw_threshold_pct)),
-            # ATR dynamic range (BB_NEUTRAL_GRID mode)
-            use_atr_range=config.get("use_atr_range", _defaults.use_atr_range),
-            atr_period=int(config.get("atr_period", _defaults.atr_period)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", _defaults.atr_multiplier))),
-            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", _defaults.fallback_range_pct))),
-            # Strategy mode
-            mode=config.get("mode", _defaults.mode),
-            # Protective features
-            use_hysteresis=config.get("use_hysteresis", _defaults.use_hysteresis),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", _defaults.hysteresis_pct))),
-            use_signal_cooldown=config.get("use_signal_cooldown", _defaults.use_signal_cooldown),
-            cooldown_bars=int(config.get("cooldown_bars", _defaults.cooldown_bars)),
+            **{k: v for k, v in config.items() if k != "symbol"},
         )
 
         # Create bot instance
@@ -321,57 +284,13 @@ class BotFactory:
             SupertrendBot instance
         """
         # Import here to avoid circular imports
-        from decimal import Decimal
-
         from src.bots.supertrend.bot import SupertrendBot
         from src.bots.supertrend.models import SupertrendConfig
 
-        # Build SupertrendConfig from dict
-        supertrend_config = SupertrendConfig(
+        # 從 settings.yaml 載入參數（單一來源），runtime config 作為 override
+        supertrend_config = SupertrendConfig.from_yaml(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", "1h"),
-            # Supertrend Settings (2026-01-30 嚴格成本約束優化)
-            atr_period=int(config.get("atr_period", 25)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", "3.5"))),
-            leverage=int(config.get("leverage", 10)),
-            margin_type=config.get("margin_type", "ISOLATED"),
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            # Grid Settings
-            grid_count=int(config.get("grid_count", 10)),
-            grid_atr_multiplier=Decimal(str(config.get("grid_atr_multiplier", "9.5"))),
-            take_profit_grids=int(config.get("take_profit_grids", 1)),
-            # RSI Filter
-            use_rsi_filter=config.get("use_rsi_filter", True),
-            rsi_period=int(config.get("rsi_period", 21)),
-            rsi_overbought=int(config.get("rsi_overbought", 71)),
-            rsi_oversold=int(config.get("rsi_oversold", 31)),
-            # Trend confirmation
-            min_trend_bars=int(config.get("min_trend_bars", 1)),
-            # Risk Management
-            use_trailing_stop=config.get("use_trailing_stop", True),
-            trailing_stop_pct=Decimal(str(config.get("trailing_stop_pct", "0.03"))),
-            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", "0.01"))),
-            # Protective Features
-            use_hysteresis=config.get("use_hysteresis", False),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.008"))),
-            use_signal_cooldown=config.get("use_signal_cooldown", False),
-            cooldown_bars=int(config.get("cooldown_bars", 0)),
-            # Volatility Regime Filter (v2)
-            use_volatility_filter=config.get("use_volatility_filter", False),
-            vol_atr_baseline_period=int(config.get("vol_atr_baseline_period", 200)),
-            vol_ratio_low=float(config.get("vol_ratio_low", 0.6)),
-            vol_ratio_high=float(config.get("vol_ratio_high", 2.5)),
-            # Timeout Exit (v2)
-            max_hold_bars=int(config.get("max_hold_bars", 12)),
-            # HYBRID_GRID mode
-            mode=config.get("mode", "hybrid_grid"),
-            hybrid_grid_bias_pct=Decimal(str(config.get("hybrid_grid_bias_pct", "0.75"))),
-            hybrid_tp_multiplier_trend=Decimal(str(config.get("hybrid_tp_multiplier_trend", "1.75"))),
-            hybrid_tp_multiplier_counter=Decimal(str(config.get("hybrid_tp_multiplier_counter", "0.5"))),
-            hybrid_sl_multiplier_counter=Decimal(str(config.get("hybrid_sl_multiplier_counter", "0.5"))),
-            hybrid_rsi_asymmetric=config.get("hybrid_rsi_asymmetric", False),
+            **{k: v for k, v in config.items() if k != "symbol"},
         )
 
         # Create bot instance
@@ -404,43 +323,13 @@ class BotFactory:
             GridFuturesBot instance
         """
         # Import here to avoid circular imports
-        from decimal import Decimal
-
         from src.bots.grid_futures.bot import GridFuturesBot
-        from src.bots.grid_futures.models import GridFuturesConfig, GridDirection
+        from src.bots.grid_futures.models import GridFuturesConfig
 
-        # 使用 GridFuturesConfig 默認值作為備用 (單一來源)
-        _defaults = GridFuturesConfig(symbol=config["symbol"])
-
-        # Parse direction
-        direction_str = config.get("direction", _defaults.direction.value)
-        direction = GridDirection(direction_str)
-
-        # Build GridFuturesConfig from dict (未指定的參數使用實戰配置默認值)
-        grid_futures_config = GridFuturesConfig(
+        # 從 settings.yaml 載入參數（單一來源），runtime config 作為 override
+        grid_futures_config = GridFuturesConfig.from_yaml(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", _defaults.timeframe),
-            leverage=int(config.get("leverage", _defaults.leverage)),
-            margin_type=config.get("margin_type", _defaults.margin_type),
-            grid_count=int(config.get("grid_count", _defaults.grid_count)),
-            direction=direction,
-            use_trend_filter=config.get("use_trend_filter", _defaults.use_trend_filter),
-            trend_period=int(config.get("trend_period", _defaults.trend_period)),
-            use_atr_range=config.get("use_atr_range", _defaults.use_atr_range),
-            atr_period=int(config.get("atr_period", _defaults.atr_period)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", _defaults.atr_multiplier))),
-            fallback_range_pct=Decimal(str(config.get("fallback_range_pct", _defaults.fallback_range_pct))),
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else _defaults.max_capital,
-            position_size_pct=Decimal(str(config.get("position_size_pct", _defaults.position_size_pct))),
-            max_position_pct=Decimal(str(config.get("max_position_pct", _defaults.max_position_pct))),
-            stop_loss_pct=Decimal(str(config.get("stop_loss_pct", _defaults.stop_loss_pct))),
-            rebuild_threshold_pct=Decimal(str(config.get("rebuild_threshold_pct", _defaults.rebuild_threshold_pct))),
-            use_exchange_stop_loss=config.get("use_exchange_stop_loss", _defaults.use_exchange_stop_loss),
-            # Protective Features
-            use_hysteresis=config.get("use_hysteresis", _defaults.use_hysteresis),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", _defaults.hysteresis_pct))),
-            use_signal_cooldown=config.get("use_signal_cooldown", _defaults.use_signal_cooldown),
-            cooldown_bars=int(config.get("cooldown_bars", _defaults.cooldown_bars)),
+            **{k: v for k, v in config.items() if k != "symbol"},
         )
 
         # Create bot instance
@@ -483,43 +372,13 @@ class BotFactory:
             RSIGridBot instance
         """
         # Import here to avoid circular imports
-        from decimal import Decimal
-
         from src.bots.rsi_grid.bot import RSIGridBot
         from src.bots.rsi_grid.models import RSIGridConfig
 
-        # Build RSIGridConfig from dict
-        rsi_grid_config = RSIGridConfig(
+        # 從 settings.yaml 載入參數（單一來源），runtime config 作為 override
+        rsi_grid_config = RSIGridConfig.from_yaml(
             symbol=config["symbol"],
-            timeframe=config.get("timeframe", "15m"),
-            leverage=int(config.get("leverage", 2)),
-            margin_type=config.get("margin_type", "ISOLATED"),
-            # RSI Parameters
-            rsi_period=int(config.get("rsi_period", 14)),
-            oversold_level=int(config.get("oversold_level", 30)),
-            overbought_level=int(config.get("overbought_level", 70)),
-            # Grid Parameters
-            grid_count=int(config.get("grid_count", 10)),
-            atr_period=int(config.get("atr_period", 14)),
-            atr_multiplier=Decimal(str(config.get("atr_multiplier", "3.0"))),
-            # Trend Filter
-            trend_sma_period=int(config.get("trend_sma_period", 20)),
-            use_trend_filter=config.get("use_trend_filter", True),
-            # Capital allocation
-            max_capital=Decimal(str(config["max_capital"])) if config.get("max_capital") else None,
-            position_size_pct=Decimal(str(config.get("position_size_pct", "0.1"))),
-            max_position_pct=Decimal(str(config.get("max_position_pct", "0.5"))),
-            # Risk Management
-            stop_loss_atr_mult=Decimal(str(config.get("stop_loss_atr_mult", "1.5"))),
-            max_stop_loss_pct=Decimal(str(config.get("max_stop_loss_pct", "0.03"))),
-            take_profit_grids=int(config.get("take_profit_grids", 1)),
-            max_positions=int(config.get("max_positions", 5)),
-            use_exchange_stop_loss=config.get("use_exchange_stop_loss", True),
-            # Protective Features
-            use_hysteresis=config.get("use_hysteresis", False),
-            hysteresis_pct=Decimal(str(config.get("hysteresis_pct", "0.002"))),
-            use_signal_cooldown=config.get("use_signal_cooldown", False),
-            cooldown_bars=int(config.get("cooldown_bars", 2)),
+            **{k: v for k, v in config.items() if k != "symbol"},
         )
 
         # Create bot instance

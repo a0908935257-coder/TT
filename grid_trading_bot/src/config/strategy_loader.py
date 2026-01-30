@@ -101,7 +101,7 @@ def load_strategy_config(
     Example:
         >>> params = load_strategy_config("grid_futures")
         >>> print(params["leverage"])  # 從 YAML 讀取
-        42
+        10
 
         >>> # 環境變數覆蓋
         >>> # export GRID_FUTURES_LEVERAGE=20

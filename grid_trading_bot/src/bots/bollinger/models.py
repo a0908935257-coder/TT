@@ -161,6 +161,15 @@ class BollingerConfig:
     atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))    # ATR 乘數
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # ATR 不可用時的備用範圍
 
+    @classmethod
+    def from_yaml(cls, symbol: str, settings_path=None, **overrides):
+        """從 settings.yaml 載入參數（單一來源）。"""
+        from src.config.strategy_loader import load_strategy_config
+        params = load_strategy_config("bollinger", settings_path)
+        params.update(overrides)
+        params["symbol"] = symbol
+        return cls(**{k: v for k, v in params.items() if k in cls.__dataclass_fields__})
+
     def __post_init__(self):
         """Validate and normalize configuration."""
         if not isinstance(self.bb_std, Decimal):
