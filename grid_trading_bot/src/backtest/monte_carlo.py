@@ -386,6 +386,11 @@ class MonteCarloSimulator:
 
             for ret_pct in bootstrapped_returns:
                 equity *= (1 + ret_pct / 100)
+                # Clamp to prevent float overflow on high leverage
+                if equity > 1e15:
+                    equity = 1e15
+                elif equity < 0:
+                    equity = 0
                 equity_curve.append(equity)
 
             # Calculate metrics
@@ -394,12 +399,15 @@ class MonteCarloSimulator:
 
             # Simple Sharpe calculation
             if len(bootstrapped_returns) > 1:
-                mean_ret = sum(bootstrapped_returns) / len(bootstrapped_returns)
-                std_ret = math.sqrt(
-                    sum((r - mean_ret) ** 2 for r in bootstrapped_returns)
-                    / (len(bootstrapped_returns) - 1)
-                )
-                sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 else 0
+                mean_ret = math.fsum(bootstrapped_returns) / len(bootstrapped_returns)
+                try:
+                    std_ret = math.sqrt(
+                        math.fsum((r - mean_ret) ** 2 for r in bootstrapped_returns)
+                        / (len(bootstrapped_returns) - 1)
+                    )
+                except (OverflowError, ValueError):
+                    std_ret = float('inf')
+                sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
             else:
                 sharpe = 0
             sharpe_ratios.append(sharpe)
@@ -601,8 +609,10 @@ class MonteCarloSimulator:
                 # Limit loss to -100% to prevent negative equity
                 random_return = max(random_return, -1.0)
                 equity *= (1 + random_return)
-                # Ensure equity doesn't go negative due to floating point errors
+                # Ensure equity doesn't go negative or overflow on high leverage
                 equity = max(equity, 0.0)
+                if equity > 1e15:
+                    equity = 1e15
                 path.append(equity)
 
                 # Track drawdown
@@ -760,11 +770,17 @@ class MonteCarloSimulator:
         sorted_values = sorted(values)
         n = len(sorted_values)
 
-        # Calculate statistics
-        mean = sum(values) / n
+        # Calculate statistics (safe for extreme leverage values)
+        mean = math.fsum(values) / n
         median = sorted_values[n // 2]
-        variance = sum((x - mean) ** 2 for x in values) / max(n - 1, 1)
-        std = math.sqrt(variance)
+        try:
+            variance = math.fsum((x - mean) ** 2 for x in values) / max(n - 1, 1)
+            std = math.sqrt(variance)
+        except (OverflowError, ValueError):
+            from decimal import Decimal as D
+            d_mean = D(str(mean))
+            variance = float(sum((D(str(x)) - d_mean) ** 2 for x in values) / max(n - 1, 1))
+            std = math.sqrt(abs(variance))
 
         # Confidence interval
         alpha = 1 - self._config.confidence_level
