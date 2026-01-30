@@ -5985,6 +5985,10 @@ class BaseBot(ABC):
             True if update was successful
         """
         try:
+            # Ensure lock is initialized
+            if not hasattr(self, "_capital_lock"):
+                self._capital_lock = asyncio.Lock()
+
             # Store previous value for logging
             previous = getattr(self._config, "max_capital", None)
 
