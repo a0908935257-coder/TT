@@ -220,7 +220,7 @@ class TestBaseBotStart:
 
     @pytest.mark.asyncio
     async def test_start_failure_sets_error_state(self):
-        """Test start failure sets ERROR state."""
+        """Test start failure sets ERROR state and returns False."""
         bot = MockBot()
 
         async def failing_start():
@@ -228,9 +228,9 @@ class TestBaseBotStart:
 
         bot._do_start = failing_start
 
-        with pytest.raises(RuntimeError):
-            await bot.start()
+        result = await bot.start()
 
+        assert result is False
         assert bot.state == BotState.ERROR
         assert "Start failed" in bot.error_message
 
