@@ -155,6 +155,7 @@ class BaseBot(ABC):
         self._error_message: Optional[str] = None
 
         # Track fire-and-forget notification tasks to prevent resource leaks
+        # NOTE: asyncio single-thread safe, no lock needed for set add/discard
         self._notification_tasks: set[asyncio.Task] = set()
 
         # Position reconciliation (initialized here to avoid hasattr checks)

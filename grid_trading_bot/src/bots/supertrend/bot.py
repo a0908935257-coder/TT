@@ -1760,7 +1760,9 @@ class SupertrendBot(BaseBot):
             if self._position.stop_loss_order_id:
                 await self._cancel_stop_loss_order()
 
-            # Get current price
+            # Get current price for PnL estimation
+            # NOTE: PnL uses ticker price, not actual fill price — minor slippage
+            # is acceptable as post-fill cost_basis_fifo tracks attributed P&L
             ticker = await self._exchange.futures.get_ticker(self._config.symbol)
             exit_price = Decimal(str(ticker.last_price))
 

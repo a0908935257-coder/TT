@@ -106,6 +106,7 @@ class BinanceWebSocket:
         # Heartbeat settings
         self._heartbeat_interval = 20  # seconds (ping every 20s)
         self._heartbeat_timeout = 30  # seconds (detect dead connection faster)
+        # NOTE: asyncio single-thread safe, no lock needed for timing counters
         self._last_pong_time: Optional[datetime] = None
 
         # Timeout tracking (reduce warning frequency)
