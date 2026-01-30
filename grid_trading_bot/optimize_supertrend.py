@@ -146,8 +146,8 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
     bt_config = BacktestConfig(
         initial_capital=Decimal("10000"),
         leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
+        fee_rate=Decimal("0.0006"),  # 0.04% 手續費 + ~0.02% 資金費率近似
+        slippage_pct=Decimal("0.0005"),  # 0.05% 滑價
     )
 
     engine = BacktestEngine(bt_config)
@@ -194,7 +194,7 @@ def create_multi_objective(
             "grid_count": trial.suggest_int("grid_count", 8, 25),
             "grid_atr_multiplier": trial.suggest_float("grid_atr_multiplier", 4.0, 12.0, step=0.5),
             "take_profit_grids": trial.suggest_int("take_profit_grids", 1, 3),
-            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.001, 0.01, step=0.001),
+            "stop_loss_pct": trial.suggest_float("stop_loss_pct", 0.01, 0.05, step=0.005),
             "rsi_period": trial.suggest_int("rsi_period", 7, 21),
             "rsi_overbought": trial.suggest_int("rsi_overbought", 55, 75),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
@@ -285,6 +285,11 @@ def create_multi_objective(
         # 5. 回撤懲罰（僅懲罰 >15% 的部分，鼓勵用回撤換報酬）
         dd_penalty = max(0, max_dd - 15) * 0.5
 
+        # 5b. Sharpe > 10 懲罰（不合理的高 Sharpe 暗示過擬合）
+        sharpe_penalty = 0
+        if oos_sharpe > 10:
+            sharpe_penalty = (oos_sharpe - 10) * 5
+
         # 6. 一致性獎勵（兩期都跑贏市場）
         consistency_bonus = 0
         if is_excess > 0 and oos_excess > 0:
@@ -307,7 +312,7 @@ def create_multi_objective(
 
         # 總分
         score = (is_return_score + oos_return_score + oos_excess_score
-                 + sharpe_score - dd_penalty + consistency_bonus
+                 + sharpe_score - dd_penalty - sharpe_penalty + consistency_bonus
                  + trade_bonus + milestone_bonus)
 
         # 記錄詳細指標
@@ -474,7 +479,7 @@ SupertrendStrategyConfig(
     rsi_period={params['rsi_period']},
     rsi_overbought={params['rsi_overbought']},
     rsi_oversold={params['rsi_oversold']},
-    min_trend_bars={params['min_trend_bars']},
+    min_trend_bars={params.get('min_trend_bars', 1)},
     use_hysteresis={params['use_hysteresis']},
     hysteresis_pct=Decimal("{params['hysteresis_pct']}"),
     use_signal_cooldown={params['use_signal_cooldown']},
