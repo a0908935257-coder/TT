@@ -636,6 +636,10 @@ class OrderSimulator:
         # Use slippage model to calculate fill price
         return self._slippage_model.apply_slippage(target_price, is_buy, kline, context)
 
+    def override_notional(self, notional: Optional[Decimal]) -> None:
+        """Override notional for next trade (equity-based sizing)."""
+        self._override_notional = notional
+
     def calculate_quantity(self, price: Decimal) -> Decimal:
         """
         Calculate position quantity based on config.
@@ -648,7 +652,8 @@ class OrderSimulator:
         """
         if price <= 0:
             return Decimal("0")
-        notional = self._config.notional_per_trade
+        notional = getattr(self, '_override_notional', None) or self._config.notional_per_trade
+        self._override_notional = None  # Reset after use
         return notional / price
 
     def calculate_fee(

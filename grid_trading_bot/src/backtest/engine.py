@@ -321,14 +321,22 @@ class BacktestEngine:
             if not self._position_manager.can_open_position:
                 return
 
-            # Margin check: skip if insufficient available margin
+            # Use current equity for position sizing (equity-based sizing)
             if self._config.use_margin:
+                current_equity = self._position_manager.total_equity(
+                    kline.close, self._config.initial_capital, self._config.leverage
+                )
+                # Skip if equity depleted
+                if current_equity <= 0:
+                    return
                 available = self._position_manager.available_margin(
                     kline.close, self._config.initial_capital, self._config.leverage
                 )
-                notional = self._config.initial_capital * self._config.position_size_pct
+                notional = current_equity * self._config.position_size_pct
                 if notional > available:
                     return
+                # Temporarily override notional for this trade
+                self._order_simulator.override_notional(notional)
 
             side = "LONG" if signal.signal_type == SignalType.LONG_ENTRY else "SHORT"
             position = self._order_simulator.create_position(
