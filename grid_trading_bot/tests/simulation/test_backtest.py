@@ -921,7 +921,7 @@ class BollingerBacktest:
         # 3. Timeout
         if not should_exit:
             hold_bars = bar_idx - self._position["entry_bar"]
-            if hold_bars >= self._config.max_hold_bars:
+            if hold_bars >= getattr(self._config, "max_hold_bars", 16):
                 should_exit = True
                 exit_price = current_price
                 exit_reason = "timeout"
@@ -1121,7 +1121,6 @@ def bollinger_config():
         bbw_lookback=100,
         bbw_threshold_pct=20,
         stop_loss_pct=Decimal("0.015"),
-        max_hold_bars=16,
         leverage=2,
         position_size_pct=Decimal("0.1"),
     )
