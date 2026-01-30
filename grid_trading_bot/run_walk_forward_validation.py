@@ -146,26 +146,49 @@ def create_all_strategies() -> dict:
     # 目標: 年化 40%+, 回撤容忍 30%
     # 優化結果: 年化 45.18%, 回撤 3.79%, Sharpe 10.30
     grid_futures_config = GridFuturesStrategyConfig(
-        leverage=42,  # 優化結果: 高槓桿
+        leverage=7,  # 優化結果 2026-01-31 (equity-based margin)
         direction=GridDirection.NEUTRAL,  # 優化結果: 中性雙向
-        grid_count=18,  # 優化結果
-        atr_multiplier=Decimal("9.5"),  # 優化結果: 寬範圍
-        trend_period=24,  # 優化結果
-        atr_period=28,  # 優化結果
+        grid_count=12,  # 優化結果
+        atr_multiplier=Decimal("10.0"),  # 優化結果: 寬範圍
+        trend_period=27,  # 優化結果
+        atr_period=41,  # 優化結果
         stop_loss_pct=Decimal("0.005"),  # 優化結果: 0.5% 緊止損
         take_profit_grids=1,  # 優化結果
-        use_hysteresis=True,  # 優化結果
-        hysteresis_pct=Decimal("0.001"),  # 優化結果: 0.1%
-        use_signal_cooldown=True,  # 優化結果
-        cooldown_bars=0,  # 優化結果
+        use_hysteresis=False,  # 優化結果: 關閉
+        hysteresis_pct=Decimal("0.005"),  # 優化結果
+        use_signal_cooldown=False,  # 優化結果: 關閉
+        cooldown_bars=2,  # 優化結果
     )
 
-    # Supertrend: 使用默認配置 (已與實盤 Bot 一致)
-    # 模式: TREND_GRID, atr_period=25, stop_loss=5%
-    # RSI filter, Hysteresis, Signal Cooldown, Trailing Stop 全部啟用
+    # Supertrend: HYBRID_GRID 優化參數 (2026-01-31, equity-based margin)
     supertrend_config = SupertrendStrategyConfig(
-        mode=SupertrendMode.TREND_GRID,
-        # 其餘使用默認值（已與實戰一致）
+        mode=SupertrendMode.HYBRID_GRID,
+        atr_period=11,
+        atr_multiplier=Decimal("1.5"),
+        grid_count=8,
+        grid_atr_multiplier=Decimal("7.5"),
+        take_profit_grids=1,
+        stop_loss_pct=Decimal("0.05"),
+        use_rsi_filter=True,
+        rsi_period=21,
+        rsi_overbought=75,
+        rsi_oversold=37,
+        min_trend_bars=1,
+        use_hysteresis=False,
+        hysteresis_pct=Decimal("0.0085"),
+        use_signal_cooldown=False,
+        cooldown_bars=3,
+        use_trailing_stop=True,
+        trailing_stop_pct=Decimal("0.01"),
+        use_volatility_filter=False,
+        vol_ratio_low=0.3,
+        vol_ratio_high=3.0,
+        max_hold_bars=8,
+        hybrid_grid_bias_pct=Decimal("0.65"),
+        hybrid_tp_multiplier_trend=Decimal("1.75"),
+        hybrid_tp_multiplier_counter=Decimal("0.5"),
+        hybrid_sl_multiplier_counter=Decimal("0.9"),
+        hybrid_rsi_asymmetric=False,
     )
 
     return {
@@ -563,10 +586,10 @@ async def main():
         # 策略對應的槓桿倍數
         strategy_leverage = {
             "rsi_grid": 7,
-            "grid_futures": 42,
-            "bollinger": 18,
-            "supertrend": 18,
-            "grid": 10,
+            "grid_futures": 7,
+            "bollinger": 7,
+            "supertrend": 7,
+            "grid": 7,
         }
 
         all_results = []
