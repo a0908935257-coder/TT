@@ -209,7 +209,11 @@ class SupertrendBot(BaseBot):
             # May fail if already set to this type
             logger.debug(f"Set margin type: {e}")
 
-        # Set leverage
+        # Validate and set leverage
+        if not (1 <= self._config.leverage <= 125):
+            raise ValueError(
+                f"Leverage {self._config.leverage}x out of valid range [1, 125]"
+            )
         await self._exchange.futures.set_leverage(
             symbol=self._config.symbol,
             leverage=self._config.leverage,
@@ -613,6 +617,9 @@ class SupertrendBot(BaseBot):
         # Check if data subscription is active
         checks["data_subscribed"] = True  # Assume true if bot is running
 
+        # Verify stop loss order still exists on exchange
+        checks["stop_loss_valid"] = await self._verify_stop_loss()
+
         # Network health check (網路彈性)
         net_healthy, _ = self.is_network_healthy()
         checks["network_healthy"] = net_healthy
@@ -629,6 +636,40 @@ class SupertrendBot(BaseBot):
         checks["ssl_healthy"] = ssl_healthy
 
         return checks
+
+    async def _verify_stop_loss(self) -> bool:
+        """
+        Verify that the stop loss order still exists on the exchange.
+
+        Returns:
+            True if no SL expected, or SL is confirmed on exchange.
+            False if SL should exist but is missing.
+        """
+        if not self._position or not self._position.stop_loss_order_id:
+            return True
+
+        try:
+            order = await self._exchange.futures.get_order(
+                symbol=self._config.symbol,
+                order_id=self._position.stop_loss_order_id,
+            )
+            if order:
+                status = getattr(order, "status", "").upper()
+                if status in ("NEW", "PARTIALLY_FILLED"):
+                    return True
+                logger.warning(
+                    f"[{self._bot_id}] Stop loss order {self._position.stop_loss_order_id} "
+                    f"has status {status} — position may be unprotected"
+                )
+                return False
+            else:
+                logger.warning(
+                    f"[{self._bot_id}] Stop loss order not found on exchange"
+                )
+                return False
+        except Exception as e:
+            logger.warning(f"[{self._bot_id}] Failed to verify stop loss: {e}")
+            return True  # Don't fail health check on transient errors
 
     async def _sync_position(self) -> None:
         """Sync position with exchange."""
