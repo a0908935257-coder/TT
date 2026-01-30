@@ -263,6 +263,17 @@ def print_result(result, strategy_name: str, symbol: str):
     print(f"   勝場 / 敗場:   {result.num_wins:>5} / {result.num_losses}")
     print(f"   最大回撤金額:  {float(result.max_drawdown):>12.2f} USDT")
 
+    # 合約相關指標
+    if hasattr(result, 'liquidation_count') and result.liquidation_count > 0:
+        print(f"\n⚠️  合約指標:")
+        print(f"   爆倉次數:      {result.liquidation_count:>12}")
+    if hasattr(result, 'total_funding_paid') and result.total_funding_paid:
+        if not (hasattr(result, 'liquidation_count') and result.liquidation_count > 0):
+            print(f"\n⚠️  合約指標:")
+        print(f"   資金費率總付:  {float(result.total_funding_paid):>12.2f} USDT")
+    if hasattr(result, 'max_margin_utilization_pct') and result.max_margin_utilization_pct > 0:
+        print(f"   最大保證金使用: {float(result.max_margin_utilization_pct):>11.1f}%")
+
     print("\n" + "=" * 60)
 
     # 顯示最近交易
@@ -353,10 +364,9 @@ async def main():
         # 3. 配置回測引擎
         config = BacktestConfig(
             initial_capital=Decimal(str(args.capital)),
-            leverage=args.leverage,
-            fee_rate=Decimal("0.0004"),  # 0.04% taker fee
-            slippage_pct=Decimal("0.0001"),  # 0.01% slippage
-        )
+            fee_rate=Decimal("0.0006"),       # 0.06% (嚴格成本約束)
+            slippage_pct=Decimal("0.0005"),   # 0.05%
+        ).with_leverage(args.leverage)
 
         engine = BacktestEngine(config)
 

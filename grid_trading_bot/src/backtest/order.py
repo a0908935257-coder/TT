@@ -672,7 +672,11 @@ class OrderSimulator:
             is_maker=is_maker,
             cumulative_volume=self._cumulative_volume,
         )
-        return self._fee_calculator.calculate_fee(price, quantity, context)
+        fee = self._fee_calculator.calculate_fee(price, quantity, context)
+        # Binance charges fees on leveraged notional (qty × price × leverage)
+        if self._config.use_margin and self._config.leverage > 1:
+            fee = fee * Decimal(self._config.leverage)
+        return fee
 
     def create_position(
         self,

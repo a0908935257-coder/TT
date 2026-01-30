@@ -379,11 +379,16 @@ class BacktestEngine:
         self, kline: Kline, bar_idx: int, exit_reason: ExitReason
     ) -> None:
         """Close all open positions."""
+        # Calculate effective fee rate (leverage-adjusted for futures)
+        effective_fee_rate = self._config.fee_rate
+        if self._config.use_margin and self._config.leverage > 1:
+            effective_fee_rate = effective_fee_rate * Decimal(self._config.leverage)
+
         trades = self._position_manager.close_all_positions(
             exit_price=kline.close,
             exit_time=kline.close_time,
             exit_bar=bar_idx,
-            fee_rate=self._config.fee_rate,
+            fee_rate=effective_fee_rate,
             exit_reason=exit_reason,
             leverage=self._config.leverage,
         )
