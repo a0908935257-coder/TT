@@ -6,6 +6,7 @@ fill handling, reverse order placement, and profit tracking.
 """
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -145,7 +146,7 @@ class GridOrderManager:
         self._orders: dict[str, Order] = {}
 
         # Fill tracking (Prompt 20)
-        self._filled_history: list[FilledRecord] = []
+        self._filled_history: deque[FilledRecord] = deque(maxlen=10000)
         self._total_profit: Decimal = Decimal("0")
         self._trade_count: int = 0
 

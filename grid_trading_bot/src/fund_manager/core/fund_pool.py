@@ -451,6 +451,12 @@ class FundPool:
                         f"available {unallocated}"
                     )
 
+            # Check exposure limit before allocating
+            if self.check_exposure_limit():
+                return False, (
+                    f"Allocation rejected: system exposure exceeds safety limit"
+                )
+
             # Perform allocation
             current = self._allocations.get(bot_id, Decimal("0"))
             new_amount = current + amount
