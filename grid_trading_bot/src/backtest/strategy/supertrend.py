@@ -106,6 +106,13 @@ class SupertrendStrategyConfig:
     # Trailing stop (like live bot)
     use_trailing_stop: bool = True  # 新增：與實戰一致
     trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
+    # Volatility Regime Filter (from RSI-Grid v2)
+    use_volatility_filter: bool = True
+    vol_atr_baseline_period: int = 200    # 長期 ATR 基線
+    vol_ratio_low: float = 0.5           # ATR ratio 下限
+    vol_ratio_high: float = 2.0          # ATR ratio 上限
+    # Timeout Exit (from RSI-Grid v2)
+    max_hold_bars: int = 16              # 超時出場 bar 數
     # HYBRID_GRID parameters
     hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.6"))  # 趨勢方向網格比例
     hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.0"))  # 順勢 TP 倍數
@@ -183,6 +190,14 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Trailing stop state (like live bot)
         self._position_max_price: Optional[Decimal] = None
         self._position_min_price: Optional[Decimal] = None
+
+        # Volatility filter state (from RSI-Grid v2)
+        self._atr_history: List[Decimal] = []
+        self._atr_baseline: Optional[Decimal] = None
+
+        # Timeout exit tracking
+        self._entry_bar_index: int = 0
+        self._bar_index: int = 0
 
     @property
     def config(self) -> SupertrendStrategyConfig:
@@ -370,6 +385,26 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         return False
 
+    def _update_volatility_baseline(self, current_atr: Decimal) -> None:
+        """更新 ATR 滾動歷史，計算基線。"""
+        self._atr_history.append(current_atr)
+        bp = self._config.vol_atr_baseline_period
+        if len(self._atr_history) > bp:
+            self._atr_history = self._atr_history[-bp:]
+        if len(self._atr_history) >= bp:
+            self._atr_baseline = sum(self._atr_history) / Decimal(len(self._atr_history))
+
+    def _check_volatility_regime(self) -> bool:
+        """檢查當前波動率是否在可交易範圍內。"""
+        if not self._config.use_volatility_filter:
+            return True
+        if self._atr_baseline is None or self._atr_baseline == 0:
+            return True  # 數據不足時不過濾
+        if self._current_atr is None:
+            return True
+        ratio = float(self._current_atr / self._atr_baseline)
+        return self._config.vol_ratio_low <= ratio <= self._config.vol_ratio_high
+
     def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
         Process kline and generate signal.
@@ -381,6 +416,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         - Hysteresis buffer to prevent oscillation (if enabled)
         - Signal cooldown to prevent signal stacking (if enabled)
         """
+        # Update bar index
+        self._bar_index += 1
+
         # Update Supertrend
         st_data = self._supertrend.update(kline)
         if st_data is None:
@@ -403,6 +441,13 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         current_price = kline.close
         self._current_rsi = self._calculate_rsi(current_price)
 
+        # Update volatility baseline (always, for tracking)
+        klines = context.klines
+        atr = self._calculate_atr(klines, self._config.atr_period)
+        if atr:
+            self._current_atr = atr
+            self._update_volatility_baseline(atr)
+
         # Skip if already in position
         if context.has_position:
             return None
@@ -411,7 +456,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:
             return None
 
-        klines = context.klines
+        # Volatility regime filter — block entry if outside range
+        if not self._check_volatility_regime():
+            return None
 
         # TREND_FLIP mode (legacy)
         if self._config.mode == SupertrendMode.TREND_FLIP:
@@ -422,6 +469,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             return self._on_kline_hybrid_grid(kline, klines, current_price, context)
 
         # TREND_GRID mode
+        # Reset filled levels when no position (auto-reset like HYBRID_GRID)
+        self._reset_filled_levels()
+
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             self._initialize_grid(klines, current_price)
@@ -763,6 +813,14 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             if self._position_min_price is None or current_price < self._position_min_price:
                 self._position_min_price = current_price
 
+        # Timeout exit (only if losing)
+        bars_held = self._bar_index - self._entry_bar_index
+        if self._config.max_hold_bars > 0 and bars_held >= self._config.max_hold_bars:
+            if position.side == "LONG" and current_price < position.entry_price:
+                return Signal.close_all(reason=f"timeout_exit_{bars_held}bars")
+            elif position.side == "SHORT" and current_price > position.entry_price:
+                return Signal.close_all(reason=f"timeout_exit_{bars_held}bars")
+
         # Check trailing stop (like live bot)
         if self._config.use_trailing_stop:
             if position.side == "LONG" and self._position_max_price is not None:
@@ -793,6 +851,8 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Initialize trailing stop tracking
         self._position_max_price = position.entry_price
         self._position_min_price = position.entry_price
+        # Track entry bar for timeout exit
+        self._entry_bar_index = self._bar_index
 
     def on_position_closed(self, trade: Trade) -> None:
         """Reset tracking after trade (like live bot)."""
@@ -822,3 +882,9 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Reset trailing stop state (like live bot)
         self._position_max_price = None
         self._position_min_price = None
+        # Reset volatility filter state
+        self._atr_history = []
+        self._atr_baseline = None
+        # Reset timeout exit tracking
+        self._entry_bar_index = 0
+        self._bar_index = 0

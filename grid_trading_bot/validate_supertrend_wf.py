@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Supertrend TREND_GRID 策略 Walk-Forward 驗證腳本.
+Supertrend v2 策略 Walk-Forward 驗證腳本 (HYBRID_GRID + vol filter + timeout).
 
 驗證優化後參數的樣本外表現和穩健性。
 包含：完整回測、Walk-Forward、Monte Carlo、OOS 測試、參數敏感度、白噪音基準。
@@ -51,6 +51,18 @@ OPTIMIZED_PARAMS = {
     "use_signal_cooldown": True,
     "cooldown_bars": 2,
     "trailing_stop_pct": 0.05,
+    # v2: Volatility Regime Filter
+    "use_volatility_filter": True,
+    "vol_ratio_low": 0.5,
+    "vol_ratio_high": 2.0,
+    # v2: Timeout Exit
+    "max_hold_bars": 16,
+    # HYBRID_GRID params
+    "hybrid_grid_bias_pct": 0.6,
+    "hybrid_tp_multiplier_trend": 1.0,
+    "hybrid_tp_multiplier_counter": 0.5,
+    "hybrid_sl_multiplier_counter": 0.7,
+    "hybrid_rsi_asymmetric": True,
 }
 
 
@@ -84,8 +96,11 @@ def run_backtest(klines: list[Kline], leverage: int = 18, params: dict | None = 
     """執行回測並返回結果."""
     p = params or OPTIMIZED_PARAMS
 
+    # Determine mode from params
+    mode = SupertrendMode.HYBRID_GRID if "hybrid_grid_bias_pct" in p else SupertrendMode.TREND_GRID
+
     config = SupertrendStrategyConfig(
-        mode=SupertrendMode.TREND_GRID,
+        mode=mode,
         atr_period=p["atr_period"],
         atr_multiplier=Decimal(str(p["atr_multiplier"])),
         grid_count=p["grid_count"],
@@ -103,6 +118,18 @@ def run_backtest(klines: list[Kline], leverage: int = 18, params: dict | None = 
         cooldown_bars=p["cooldown_bars"],
         use_trailing_stop=True,
         trailing_stop_pct=Decimal(str(p["trailing_stop_pct"])),
+        # v2: Volatility Regime Filter
+        use_volatility_filter=p.get("use_volatility_filter", True),
+        vol_ratio_low=p.get("vol_ratio_low", 0.5),
+        vol_ratio_high=p.get("vol_ratio_high", 2.0),
+        # v2: Timeout Exit
+        max_hold_bars=p.get("max_hold_bars", 16),
+        # HYBRID_GRID params
+        hybrid_grid_bias_pct=Decimal(str(p.get("hybrid_grid_bias_pct", "0.6"))),
+        hybrid_tp_multiplier_trend=Decimal(str(p.get("hybrid_tp_multiplier_trend", "1.0"))),
+        hybrid_tp_multiplier_counter=Decimal(str(p.get("hybrid_tp_multiplier_counter", "0.5"))),
+        hybrid_sl_multiplier_counter=Decimal(str(p.get("hybrid_sl_multiplier_counter", "0.7"))),
+        hybrid_rsi_asymmetric=p.get("hybrid_rsi_asymmetric", True),
     )
 
     strategy = SupertrendBacktestStrategy(config)
@@ -449,8 +476,8 @@ def main():
     parser.add_argument(
         "--leverage", "-l",
         type=int,
-        default=18,
-        help="槓桿倍數 (default: 18)",
+        default=10,
+        help="槓桿倍數 (default: 10)",
     )
     parser.add_argument(
         "--full", "-f",

@@ -124,6 +124,15 @@ class SupertrendConfig:
     use_signal_cooldown: bool = True  # 訊號冷卻 (啟用)
     cooldown_bars: int = 4  # 優化後: 4 (原 2)
 
+    # Volatility Regime Filter (v2)
+    use_volatility_filter: bool = True
+    vol_atr_baseline_period: int = 200
+    vol_ratio_low: float = 0.5
+    vol_ratio_high: float = 2.0
+
+    # Timeout Exit (v2)
+    max_hold_bars: int = 16
+
     # HYBRID_GRID mode (v3)
     mode: str = "hybrid_grid"  # "trend_grid" or "hybrid_grid"
     hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.75"))

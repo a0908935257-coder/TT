@@ -145,6 +145,10 @@ class SupertrendBot(BaseBot):
         self._signal_cooldown: int = 0
         self._cooldown_bars: int = 2
 
+        # Volatility filter state (v2)
+        self._atr_history: list[Decimal] = []
+        self._atr_baseline: Optional[Decimal] = None
+
         # Kline callback reference for unsubscribe
         self._kline_callback = None
 
@@ -782,6 +786,45 @@ class SupertrendBot(BaseBot):
 
         return sum(tr_values) / Decimal(period)
 
+    def _update_volatility_baseline(self, current_atr: Decimal) -> None:
+        """更新 ATR 滾動歷史，計算基線。"""
+        self._atr_history.append(current_atr)
+        bp = getattr(self._config, 'vol_atr_baseline_period', 200)
+        if len(self._atr_history) > bp:
+            self._atr_history = self._atr_history[-bp:]
+        if len(self._atr_history) >= bp:
+            self._atr_baseline = sum(self._atr_history) / Decimal(len(self._atr_history))
+
+    def _check_volatility_regime(self) -> bool:
+        """檢查當前波動率是否在可交易範圍內。"""
+        if not getattr(self._config, 'use_volatility_filter', False):
+            return True
+        if self._atr_baseline is None or self._atr_baseline == 0:
+            return True
+        if self._current_atr is None:
+            return True
+        ratio = float(self._current_atr / self._atr_baseline)
+        low = getattr(self._config, 'vol_ratio_low', 0.5)
+        high = getattr(self._config, 'vol_ratio_high', 2.0)
+        if not (low <= ratio <= high):
+            logger.info(f"Volatility filter blocked: ATR ratio={ratio:.2f} outside [{low}, {high}]")
+            return False
+        return True
+
+    def _check_timeout_exit(self, current_price: Decimal) -> bool:
+        """檢查是否超時出場（僅虧損時）。"""
+        max_hold = getattr(self._config, 'max_hold_bars', 0)
+        if max_hold <= 0 or not self._position:
+            return False
+        bars_held = self._current_bar - self._entry_bar
+        if bars_held < max_hold:
+            return False
+        # Only exit if losing
+        if self._position.side == PositionSide.LONG:
+            return current_price < self._position.entry_price
+        else:
+            return current_price > self._position.entry_price
+
     def _initialize_grid(self, current_price: Decimal) -> None:
         """Initialize grid levels around current price."""
         # Calculate ATR for dynamic range
@@ -1093,6 +1136,12 @@ class SupertrendBot(BaseBot):
             # Calculate RSI for filter
             self._current_rsi = self._calculate_rsi(current_price)
 
+            # Update volatility baseline (v2)
+            atr = self._calculate_atr(self._config.atr_period)
+            if atr:
+                self._current_atr = atr
+                self._update_volatility_baseline(atr)
+
             # Update position unrealized PnL
             if self._position:
                 self._position.update_extremes(current_price)
@@ -1118,6 +1167,12 @@ class SupertrendBot(BaseBot):
                         self.clear_stop_loss_sync()
                         return
 
+                # Check timeout exit (v2: 超時出場)
+                if self._check_timeout_exit(current_price):
+                    logger.warning(f"Timeout exit triggered: held {self._current_bar - self._entry_bar} bars")
+                    await self._close_position(ExitReason.SIGNAL_FLIP)
+                    return
+
                 # Check for trend flip exit (TREND_GRID only; HYBRID_GRID uses TP/SL)
                 if self._config.mode != "hybrid_grid":
                     if self._position.side == PositionSide.LONG and self._current_trend == -1:
@@ -1135,10 +1190,17 @@ class SupertrendBot(BaseBot):
             if self._signal_cooldown > 0:
                 self._signal_cooldown -= 1
 
+            # Volatility regime filter (v2: block entry if outside range)
+            if not self._check_volatility_regime():
+                return
+
             # HYBRID_GRID mode branch
             if self._config.mode == "hybrid_grid":
                 await self._on_kline_hybrid_grid(kline, current_price)
                 return
+
+            # TREND_GRID: Reset filled levels when no position (v2: auto-reset)
+            self._reset_filled_levels()
 
             # Initialize or rebuild grid if needed
             if self._should_rebuild_grid(current_price):

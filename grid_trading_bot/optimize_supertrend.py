@@ -127,6 +127,12 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
         cooldown_bars=params["cooldown_bars"],
         use_trailing_stop=True,
         trailing_stop_pct=Decimal(str(params["trailing_stop_pct"])),
+        # Volatility Regime Filter (v2)
+        use_volatility_filter=params.get("use_volatility_filter", True),
+        vol_ratio_low=params.get("vol_ratio_low", 0.5),
+        vol_ratio_high=params.get("vol_ratio_high", 2.0),
+        # Timeout Exit (v2)
+        max_hold_bars=params.get("max_hold_bars", 16),
         # HYBRID_GRID specific
         hybrid_grid_bias_pct=Decimal(str(params["hybrid_grid_bias_pct"])),
         hybrid_tp_multiplier_trend=Decimal(str(params["hybrid_tp_multiplier_trend"])),
@@ -181,9 +187,9 @@ def create_multi_objective(
     """
 
     def objective(trial: optuna.Trial) -> float:
-        # 擴大參數搜索空間
+        # 擴大參數搜索空間 (v2: 加入波動率過濾 + 超時出場)
         params = {
-            "atr_period": trial.suggest_int("atr_period", 5, 60),
+            "atr_period": trial.suggest_int("atr_period", 5, 50),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 6.0, step=0.5),
             "grid_count": trial.suggest_int("grid_count", 8, 25),
             "grid_atr_multiplier": trial.suggest_float("grid_atr_multiplier", 4.0, 12.0, step=0.5),
@@ -198,6 +204,12 @@ def create_multi_objective(
             "use_signal_cooldown": trial.suggest_categorical("use_signal_cooldown", [True, False]),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 3),
             "trailing_stop_pct": trial.suggest_float("trailing_stop_pct", 0.01, 0.10, step=0.01),
+            # Volatility Regime Filter (v2)
+            "use_volatility_filter": trial.suggest_categorical("use_volatility_filter", [True, False]),
+            "vol_ratio_low": trial.suggest_float("vol_ratio_low", 0.3, 0.7, step=0.1),
+            "vol_ratio_high": trial.suggest_float("vol_ratio_high", 1.5, 3.0, step=0.5),
+            # Timeout Exit (v2)
+            "max_hold_bars": trial.suggest_int("max_hold_bars", 8, 32, step=4),
             # HYBRID_GRID specific
             "hybrid_grid_bias_pct": trial.suggest_float("hybrid_grid_bias_pct", 0.55, 0.75, step=0.05),
             "hybrid_tp_multiplier_trend": trial.suggest_float("hybrid_tp_multiplier_trend", 1.0, 2.0, step=0.25),
@@ -469,6 +481,10 @@ SupertrendStrategyConfig(
     cooldown_bars={params['cooldown_bars']},
     use_trailing_stop=True,
     trailing_stop_pct=Decimal("{params['trailing_stop_pct']}"),
+    use_volatility_filter={params.get('use_volatility_filter', True)},
+    vol_ratio_low={params.get('vol_ratio_low', 0.5)},
+    vol_ratio_high={params.get('vol_ratio_high', 2.0)},
+    max_hold_bars={params.get('max_hold_bars', 16)},
     hybrid_grid_bias_pct=Decimal("{params['hybrid_grid_bias_pct']}"),
     hybrid_tp_multiplier_trend=Decimal("{params['hybrid_tp_multiplier_trend']}"),
     hybrid_tp_multiplier_counter=Decimal("{params['hybrid_tp_multiplier_counter']}"),
@@ -502,8 +518,8 @@ def main():
     parser.add_argument(
         "--leverage", "-l",
         type=int,
-        default=18,
-        help="槓桿倍數 (default: 18)",
+        default=10,
+        help="槓桿倍數 (default: 10, 建議不超過 10x)",
     )
     parser.add_argument(
         "--train-ratio",
