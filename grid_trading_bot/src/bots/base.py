@@ -5592,7 +5592,7 @@ class BaseBot(ABC):
             self._running = False
             self._state = BotState.ERROR
             self._error_message = str(e)
-            raise
+            return False
 
     async def stop(self, reason: str = "Manual stop", clear_position: bool = False) -> bool:
         """
