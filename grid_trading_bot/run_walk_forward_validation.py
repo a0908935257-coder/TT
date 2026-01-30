@@ -209,10 +209,9 @@ def run_walk_forward_validation(
 
     config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+        fee_rate=Decimal("0.0006"),       # 0.06% (aligned with run_backtest)
+        slippage_pct=Decimal("0.0005"),   # 0.05% (aligned with run_backtest)
+    ).with_leverage(leverage)
 
     engine = BacktestEngine(config)
 
@@ -349,10 +348,9 @@ def run_monte_carlo_validation_for_strategy(
 
     config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+        fee_rate=Decimal("0.0006"),       # 0.06% (aligned with run_backtest)
+        slippage_pct=Decimal("0.0005"),   # 0.05% (aligned with run_backtest)
+    ).with_leverage(leverage)
 
     engine = BacktestEngine(config)
 
@@ -564,7 +562,7 @@ async def main():
 
         # 策略對應的槓桿倍數
         strategy_leverage = {
-            "rsi_grid": 10,
+            "rsi_grid": 7,
             "grid_futures": 42,
             "bollinger": 18,
             "supertrend": 18,
