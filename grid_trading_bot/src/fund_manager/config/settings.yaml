@@ -160,7 +160,7 @@ bots:
     strategy_params:
       symbol: BTCUSDT
       timeframe: 15m                     # v2: 15m
-      leverage: 10                       # v2: 10x (WF 驗證通過)
+      leverage: 7                        # v2: 7x (leveraged-fee 回測驗證)
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5

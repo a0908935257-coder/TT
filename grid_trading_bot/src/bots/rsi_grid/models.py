@@ -110,7 +110,7 @@ class RSIGridConfig:
 
     symbol: str
     timeframe: str = "1h"  # 優化後: 1h (原 15m)
-    leverage: int = 2
+    leverage: int = 7
     margin_type: str = "ISOLATED"
 
     # RSI Parameters (優化後)

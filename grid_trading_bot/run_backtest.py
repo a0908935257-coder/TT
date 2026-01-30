@@ -319,8 +319,8 @@ async def main():
     parser.add_argument(
         "--leverage", "-l",
         type=int,
-        default=10,
-        help="槓桿倍數 (default: 10)"
+        default=7,
+        help="槓桿倍數 (default: 7)"
     )
     parser.add_argument(
         "--data-file",
@@ -330,8 +330,8 @@ async def main():
 
     args = parser.parse_args()
 
-    # RSI 策略：用 yaml leverage (5) 覆蓋 CLI 預設 (10)
-    if args.strategy == "rsi" and args.leverage == 10:
+    # RSI 策略：用 yaml leverage 覆蓋 CLI 預設
+    if args.strategy == "rsi" and args.leverage == 7:
         yaml_params = load_strategy_config("rsi_grid")
         args.leverage = yaml_params.get("leverage", 5)
 
