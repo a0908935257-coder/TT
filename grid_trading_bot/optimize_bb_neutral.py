@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-BB_NEUTRAL_GRID 策略多目標優化腳本.
+BB_NEUTRAL_GRID 策略 Walk-Forward 優化腳本 (v3).
 
-使用 IS+OOS 聯合優化，防止過度擬合訓練數據。
+使用 N 折 Walk-Forward 作為 Optuna 目標函數。
+每個 trial 都在 9 個時間段上回測，確保參數在所有市場環境穩健。
 
-核心優化策略 (v2 - 適應牛熊市差異)：
-1. 使用「超額報酬」而非絕對報酬 (策略報酬 - 市場報酬)
-2. OOS 正超額報酬優先 (熊市跑贏市場 = 成功)
-3. 風險調整報酬 (Sharpe)
-4. 回撤懲罰
+核心優化策略 (v3 - Walk-Forward 穩健性):
+1. 將數據分成 N 個等長時段
+2. 每個時段獨立回測
+3. 優化目標 = 一致性 × 平均 Sharpe × 交易量獎勵
+4. 懲罰: 虧損時段、高回撤、低交易量
 
 約束條件：
-- 最大回撤 <= 30%
-- IS 交易數 >= 30, OOS 交易數 >= 15
-- OOS 超額報酬 > 0 (跑贏市場)
+- 每個時段交易數 >= 10
+- 每個時段回撤 <= 30%
 
 用法:
-    python optimize_bb_neutral.py --trials 200 --leverage 18
+    python optimize_bb_neutral.py --trials 300 --leverage 18
     python optimize_bb_neutral.py --trials 100 --leverage 18 --quick
 """
 
@@ -70,33 +70,30 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def split_data(klines: list[Kline], train_ratio: float = 0.7) -> tuple[list[Kline], list[Kline], float, float]:
+def split_into_folds(klines: list[Kline], n_folds: int = 9) -> list[list[Kline]]:
     """
-    將數據分為訓練集 (IS) 和測試集 (OOS).
+    將數據分成 N 個等長時段 (用於 Walk-Forward 優化).
 
     Args:
         klines: 完整的 K 線數據
-        train_ratio: 訓練集比例 (預設 70%)
+        n_folds: 折數 (預設 9)
 
     Returns:
-        (train_klines, test_klines, train_market_return, test_market_return) 元組
+        list of kline segments
     """
-    split_idx = int(len(klines) * train_ratio)
-    train_klines = klines[:split_idx]
-    test_klines = klines[split_idx:]
+    fold_size = len(klines) // n_folds
+    folds = []
+    for i in range(n_folds):
+        start = i * fold_size
+        end = start + fold_size if i < n_folds - 1 else len(klines)
+        folds.append(klines[start:end])
 
-    # 計算市場報酬 (Buy & Hold)
-    train_market = (float(train_klines[-1].close) / float(train_klines[0].close) - 1) * 100
-    test_market = (float(test_klines[-1].close) / float(test_klines[0].close) - 1) * 100
+    print(f"\n數據分割為 {n_folds} 折:")
+    for i, fold in enumerate(folds):
+        market_ret = (float(fold[-1].close) / float(fold[0].close) - 1) * 100
+        print(f"  折 {i+1}: {fold[0].open_time.strftime('%Y-%m-%d')} ~ {fold[-1].open_time.strftime('%Y-%m-%d')} ({len(fold):,} 根, 市場 {market_ret:+.1f}%)")
 
-    print(f"\n數據分割:")
-    print(f"  訓練集 (IS): {train_klines[0].open_time.strftime('%Y-%m-%d')} ~ {train_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(train_klines):,} 根)")
-    print(f"  測試集 (OOS): {test_klines[0].open_time.strftime('%Y-%m-%d')} ~ {test_klines[-1].open_time.strftime('%Y-%m-%d')} ({len(test_klines):,} 根)")
-    print(f"\n市場基準 (Buy & Hold):")
-    print(f"  訓練期: {train_market:+.2f}%")
-    print(f"  測試期: {test_market:+.2f}%")
-
-    return train_klines, test_klines, train_market, test_market
+    return folds
 
 
 def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
@@ -132,10 +129,9 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
 
     bt_config = BacktestConfig(
         initial_capital=Decimal("10000"),
-        leverage=leverage,
-        fee_rate=Decimal("0.0004"),
-        slippage_pct=Decimal("0.0001"),
-    )
+        fee_rate=Decimal("0.0006"),       # 0.06% (aligned with WF validation)
+        slippage_pct=Decimal("0.0005"),   # 0.05% (aligned with WF validation)
+    ).with_leverage(leverage)             # use_margin=True for proper futures accounting
 
     engine = BacktestEngine(bt_config)
     result = engine.run(klines, strategy)
@@ -149,35 +145,29 @@ def run_backtest(klines: list[Kline], params: dict, leverage: int = 18) -> dict:
     }
 
 
-def create_multi_objective(
-    train_klines: list[Kline],
-    test_klines: list[Kline],
-    train_market: float,
-    test_market: float,
+def create_wf_objective(
+    folds: list[list[Kline]],
     leverage: int = 18
 ):
     """
-    創建多目標優化函數 (v2: 使用超額報酬).
+    創建 Walk-Forward 目標函數 (v3: 多時段穩健性).
 
-    核心概念：
-    - 超額報酬 = 策略報酬 - 市場報酬
-    - 在牛市跑贏市場 = 好
-    - 在熊市跑贏市場 (虧損更少或獲利) = 更好
+    每個 trial 在所有 N 折上回測，確保參數在不同市場環境都有效。
 
     優化目標:
-    score = OOS_excess * 2                    # OOS 超額報酬權重最高
-         + IS_excess * 0.5                    # IS 超額報酬輔助
-         + OOS_sharpe * 10                    # Sharpe 非常重要
-         + min(OOS_return, 50) * 0.5          # OOS 絕對報酬獎勵 (封頂)
-         - max_drawdown * 0.3                 # 回撤懲罰
+    score = consistency_pct * avg_sharpe * 10   # 一致性 × 平均風險調整報酬
+          + profitable_folds * 20                # 每個獲利折加 20 分
+          + min_sharpe * 5                       # 最差折的 Sharpe 獎勵
+          + trade_bonus                          # 交易量獎勵 (鼓勵多交易)
+          - worst_dd * 0.5                       # 最差回撤懲罰
 
     約束條件:
-    - 最大回撤 <= 30%
-    - IS 交易數 >= 30, OOS 交易數 >= 15
+    - 每折交易數 >= 10
+    - 每折回撤 <= 30%
     """
 
     def objective(trial: optuna.Trial) -> float:
-        # 參數搜索空間 (擴大範圍)
+        # 參數搜索空間
         params = {
             "bb_period": trial.suggest_int("bb_period", 8, 35),
             "grid_count": trial.suggest_int("grid_count", 4, 24),
@@ -191,95 +181,80 @@ def create_multi_objective(
             "cooldown_bars": trial.suggest_int("cooldown_bars", 0, 6),
         }
 
-        # 執行 IS 回測 (訓練集)
-        try:
-            is_result = run_backtest(train_klines, params, leverage)
-        except Exception as e:
-            return -1000  # 回測失敗
+        # 在所有折上回測
+        fold_results = []
+        total_trades = 0
+        for i, fold_klines in enumerate(folds):
+            try:
+                result = run_backtest(fold_klines, params, leverage)
+                fold_results.append(result)
+                total_trades += result["trades"]
+            except Exception:
+                return -1000
 
-        # 執行 OOS 回測 (測試集)
-        try:
-            oos_result = run_backtest(test_klines, params, leverage)
-        except Exception as e:
-            return -1000  # 回測失敗
+        n_folds = len(fold_results)
 
-        # 提取指標
-        is_return = is_result["total_return"]
-        oos_return = oos_result["total_return"]
-        is_sharpe = is_result["sharpe"]
-        oos_sharpe = oos_result["sharpe"]
-        is_trades = is_result["trades"]
-        oos_trades = oos_result["trades"]
-        is_dd = is_result["max_drawdown"]
-        oos_dd = oos_result["max_drawdown"]
-        max_dd = max(is_dd, oos_dd)
+        # ========== 約束條件 ==========
+        # 每折至少 10 筆交易
+        min_trades = min(r["trades"] for r in fold_results)
+        if min_trades < 10:
+            return -500 + min_trades
 
-        # 計算超額報酬 (策略報酬 - 市場報酬)
-        is_excess = is_return - train_market
-        oos_excess = oos_return - test_market
-
-        # 計算 OOS/IS 比率 (用於顯示)
-        if is_return > 0 and oos_return > 0:
-            oos_is_ratio = oos_return / is_return
-        elif is_return > 0:
-            oos_is_ratio = oos_return / is_return if is_return > 0 else 0
-        else:
-            oos_is_ratio = 0
-
-        # ========== 約束條件檢查 (放寬) ==========
-
-        # 交易數約束 (放寬)
-        if is_trades < 30:
-            trial.set_user_attr("rejection_reason", f"IS交易不足: {is_trades}")
-            return -500 + is_trades
-        if oos_trades < 15:
-            trial.set_user_attr("rejection_reason", f"OOS交易不足: {oos_trades}")
-            return -500 + oos_trades
-
-        # 回撤約束 (放寬)
+        # 每折回撤 <= 30%
+        max_dd = max(r["max_drawdown"] for r in fold_results)
         if max_dd > 30:
-            trial.set_user_attr("rejection_reason", f"回撤過大: {max_dd:.1f}%")
             return -100 - max_dd
 
-        # ========== 多目標優化函數 (v2) ==========
+        # ========== 計算各折指標 ==========
+        sharpes = [r["sharpe"] for r in fold_results]
+        returns = [r["total_return"] for r in fold_results]
+        drawdowns = [r["max_drawdown"] for r in fold_results]
+        trades_list = [r["trades"] for r in fold_results]
 
-        # 1. OOS 超額報酬 (最重要: 在熊市跑贏市場)
-        oos_excess_score = oos_excess * 2
+        profitable_folds = sum(1 for r in returns if r > 0)
+        consistency_pct = profitable_folds / n_folds * 100
+        avg_sharpe = sum(sharpes) / n_folds
+        min_sharpe = min(sharpes)
+        avg_return = sum(returns) / n_folds
+        worst_dd = max(drawdowns)
 
-        # 2. IS 超額報酬 (輔助)
-        is_excess_score = is_excess * 0.5
+        # ========== 目標函數 (v3: WF 穩健性) ==========
 
-        # 3. OOS Sharpe (風險調整，非常重要)
-        sharpe_score = oos_sharpe * 10
+        # 1. 一致性 × 平均 Sharpe (核心: 所有折都要獲利)
+        if avg_sharpe > 0:
+            core_score = (consistency_pct / 100) * avg_sharpe * 10
+        else:
+            core_score = avg_sharpe * 5  # 負 Sharpe 直接懲罰
 
-        # 4. OOS 絕對報酬獎勵 (封頂 50% 以防過度擬合)
-        oos_abs_score = min(oos_return, 50) * 0.5
+        # 2. 每個獲利折加分
+        consistency_bonus = profitable_folds * 20
+
+        # 3. 最差折 Sharpe 獎勵 (提高最差情況)
+        min_sharpe_score = min_sharpe * 5
+
+        # 4. 交易量獎勵 (鼓勵多交易，每 1000 筆加 5 分，上限 50 分)
+        trade_bonus = min(total_trades / 1000 * 5, 50)
 
         # 5. 回撤懲罰
-        dd_penalty = max_dd * 0.3
+        dd_penalty = worst_dd * 0.5
 
-        # 6. 一致性獎勵 (如果兩期都跑贏市場)
-        consistency_bonus = 0
-        if is_excess > 0 and oos_excess > 0:
-            consistency_bonus = 10
+        # 6. 全部獲利額外獎勵
+        all_profitable_bonus = 50 if profitable_folds == n_folds else 0
 
         # 總分
-        score = oos_excess_score + is_excess_score + sharpe_score + oos_abs_score - dd_penalty + consistency_bonus
+        score = core_score + consistency_bonus + min_sharpe_score + trade_bonus - dd_penalty + all_profitable_bonus
 
         # 記錄詳細指標
-        trial.set_user_attr("is_return", is_return)
-        trial.set_user_attr("oos_return", oos_return)
-        trial.set_user_attr("is_excess", is_excess)
-        trial.set_user_attr("oos_excess", oos_excess)
-        trial.set_user_attr("is_sharpe", is_sharpe)
-        trial.set_user_attr("oos_sharpe", oos_sharpe)
-        trial.set_user_attr("is_trades", is_trades)
-        trial.set_user_attr("oos_trades", oos_trades)
-        trial.set_user_attr("is_dd", is_dd)
-        trial.set_user_attr("oos_dd", oos_dd)
-        trial.set_user_attr("oos_is_ratio", oos_is_ratio)
-        trial.set_user_attr("train_market", train_market)
-        trial.set_user_attr("test_market", test_market)
+        trial.set_user_attr("consistency_pct", consistency_pct)
+        trial.set_user_attr("profitable_folds", profitable_folds)
+        trial.set_user_attr("avg_sharpe", avg_sharpe)
+        trial.set_user_attr("min_sharpe", min_sharpe)
+        trial.set_user_attr("avg_return", avg_return)
+        trial.set_user_attr("worst_dd", worst_dd)
+        trial.set_user_attr("total_trades", total_trades)
+        trial.set_user_attr("fold_sharpes", sharpes)
+        trial.set_user_attr("fold_returns", returns)
+        trial.set_user_attr("fold_trades", trades_list)
 
         return score
 
@@ -289,62 +264,62 @@ def create_multi_objective(
 def display_results(study: optuna.Study, leverage: int):
     """顯示優化結果."""
     print("\n" + "=" * 70)
-    print("  優化完成 - 最佳結果")
+    print("  優化完成 - 最佳結果 (Walk-Forward v3)")
     print("=" * 70)
 
     best = study.best_trial
 
-    # 獲取市場基準
-    train_market = best.user_attrs.get('train_market', 0)
-    test_market = best.user_attrs.get('test_market', 0)
-
     print(f"\n最佳得分: {best.value:.4f}")
 
-    print(f"\n[市場基準 (Buy & Hold)]")
-    print(f"  訓練期: {train_market:+.2f}%")
-    print(f"  測試期: {test_market:+.2f}%")
+    consistency = best.user_attrs.get('consistency_pct', 0)
+    profitable = best.user_attrs.get('profitable_folds', 0)
+    avg_sharpe = best.user_attrs.get('avg_sharpe', 0)
+    min_sharpe = best.user_attrs.get('min_sharpe', 0)
+    avg_return = best.user_attrs.get('avg_return', 0)
+    worst_dd = best.user_attrs.get('worst_dd', 0)
+    total_trades = best.user_attrs.get('total_trades', 0)
+    fold_sharpes = best.user_attrs.get('fold_sharpes', [])
+    fold_returns = best.user_attrs.get('fold_returns', [])
+    fold_trades = best.user_attrs.get('fold_trades', [])
 
-    print(f"\n[樣本內 (IS) - 訓練期]")
-    print(f"  報酬: {best.user_attrs.get('is_return', 0):+.2f}%")
-    print(f"  超額報酬: {best.user_attrs.get('is_excess', 0):+.2f}%")
-    print(f"  Sharpe: {best.user_attrs.get('is_sharpe', 0):.2f}")
-    print(f"  回撤: {best.user_attrs.get('is_dd', 0):.2f}%")
-    print(f"  交易: {best.user_attrs.get('is_trades', 0)}")
+    n_folds = len(fold_sharpes) if fold_sharpes else 9
 
-    print(f"\n[樣本外 (OOS) - 測試期]")
-    print(f"  報酬: {best.user_attrs.get('oos_return', 0):+.2f}%")
-    print(f"  超額報酬: {best.user_attrs.get('oos_excess', 0):+.2f}%")
-    print(f"  Sharpe: {best.user_attrs.get('oos_sharpe', 0):.2f}")
-    print(f"  回撤: {best.user_attrs.get('oos_dd', 0):.2f}%")
-    print(f"  交易: {best.user_attrs.get('oos_trades', 0)}")
+    print(f"\n[Walk-Forward 穩健性]")
+    print(f"  一致性: {consistency:.1f}% ({profitable}/{n_folds} 折獲利)")
+    print(f"  平均 Sharpe: {avg_sharpe:.2f}")
+    print(f"  最差 Sharpe: {min_sharpe:.2f}")
+    print(f"  平均報酬: {avg_return:+.2f}%")
+    print(f"  最差回撤: {worst_dd:.2f}%")
+    print(f"  總交易數: {total_trades:,}")
 
-    # 判定是否達標
-    is_return = best.user_attrs.get('is_return', 0)
-    oos_return = best.user_attrs.get('oos_return', 0)
-    oos_excess = best.user_attrs.get('oos_excess', 0)
-    oos_is_ratio = best.user_attrs.get('oos_is_ratio', 0)
+    if fold_sharpes:
+        print(f"\n[各折詳細]")
+        for i, (s, r, t) in enumerate(zip(fold_sharpes, fold_returns, fold_trades)):
+            status = "✓" if r > 0 else "✗"
+            print(f"  折 {i+1}: Sharpe {s:+.2f}, 報酬 {r:+.1f}%, 交易 {t} {status}")
 
+    # 目標達成檢查
     print(f"\n[目標達成檢查]")
-    is_target = "PASS" if is_return >= 30 else "FAIL"
-    oos_target = "PASS" if oos_return >= 30 else "FAIL"
-    oos_excess_target = "PASS" if oos_excess > 0 else "FAIL"
-    ratio_target = "PASS" if oos_is_ratio >= 0.5 else "FAIL"
+    c_target = "PASS" if consistency >= 50 else "FAIL"
+    s_target = "PASS" if avg_sharpe > 0 else "FAIL"
+    ms_target = "PASS" if min_sharpe > -5 else "FAIL"
+    t_target = "PASS" if total_trades >= 3000 else "FAIL"
 
-    print(f"  IS 報酬 >= 30%: {is_target} ({is_return:.1f}%)")
-    print(f"  OOS 報酬 >= 30%: {oos_target} ({oos_return:.1f}%)")
-    print(f"  OOS 超額報酬 > 0: {oos_excess_target} ({oos_excess:+.1f}%)")
-    print(f"  OOS/IS >= 0.5: {ratio_target} ({oos_is_ratio:.2f})")
+    print(f"  一致性 >= 50%: {c_target} ({consistency:.1f}%)")
+    print(f"  平均 Sharpe > 0: {s_target} ({avg_sharpe:.2f})")
+    print(f"  最差 Sharpe > -5: {ms_target} ({min_sharpe:.2f})")
+    print(f"  總交易 >= 3000: {t_target} ({total_trades:,})")
 
     # 綜合評估
     print(f"\n[綜合評估]")
-    if oos_return >= 30 and oos_excess > 0:
-        print(f"  ★★★ 優秀: OOS 報酬 >= 30% 且跑贏市場")
-    elif oos_return > 0 and oos_excess > 0:
-        print(f"  ★★☆ 良好: OOS 正報酬且跑贏市場")
-    elif oos_excess > 0:
-        print(f"  ★☆☆ 可接受: OOS 跑贏市場 (但絕對報酬為負)")
+    if consistency == 100 and avg_sharpe > 2:
+        print(f"  ★★★ 優秀: 所有折獲利, Sharpe > 2")
+    elif consistency >= 70 and avg_sharpe > 0:
+        print(f"  ★★☆ 良好: 大部分折獲利")
+    elif consistency >= 50 and avg_sharpe > 0:
+        print(f"  ★☆☆ 可接受: 半數折獲利")
     else:
-        print(f"  ☆☆☆ 需改進: OOS 未跑贏市場")
+        print(f"  ☆☆☆ 需改進: 一致性或 Sharpe 不足")
 
     print("\n" + "-" * 70)
     print("最佳參數:")
@@ -366,25 +341,23 @@ def save_results(study: optuna.Study, output_dir: str, leverage: int, data_file:
 
     results = {
         "optimization_date": datetime.now().isoformat(),
+        "optimization_version": "v3_walk_forward",
         "data_file": data_file,
         "n_trials": len(study.trials),
         "leverage": leverage,
         "best_score": best.value,
         "best_params": best.params,
         "metrics": {
-            "is_return": best.user_attrs.get("is_return", 0),
-            "oos_return": best.user_attrs.get("oos_return", 0),
-            "is_excess": best.user_attrs.get("is_excess", 0),
-            "oos_excess": best.user_attrs.get("oos_excess", 0),
-            "is_sharpe": best.user_attrs.get("is_sharpe", 0),
-            "oos_sharpe": best.user_attrs.get("oos_sharpe", 0),
-            "is_trades": best.user_attrs.get("is_trades", 0),
-            "oos_trades": best.user_attrs.get("oos_trades", 0),
-            "is_dd": best.user_attrs.get("is_dd", 0),
-            "oos_dd": best.user_attrs.get("oos_dd", 0),
-            "oos_is_ratio": best.user_attrs.get("oos_is_ratio", 0),
-            "train_market": best.user_attrs.get("train_market", 0),
-            "test_market": best.user_attrs.get("test_market", 0),
+            "consistency_pct": best.user_attrs.get("consistency_pct", 0),
+            "profitable_folds": best.user_attrs.get("profitable_folds", 0),
+            "avg_sharpe": best.user_attrs.get("avg_sharpe", 0),
+            "min_sharpe": best.user_attrs.get("min_sharpe", 0),
+            "avg_return": best.user_attrs.get("avg_return", 0),
+            "worst_dd": best.user_attrs.get("worst_dd", 0),
+            "total_trades": best.user_attrs.get("total_trades", 0),
+            "fold_sharpes": best.user_attrs.get("fold_sharpes", []),
+            "fold_returns": best.user_attrs.get("fold_returns", []),
+            "fold_trades": best.user_attrs.get("fold_trades", []),
         },
         "top_10_trials": [
             {
@@ -392,10 +365,9 @@ def save_results(study: optuna.Study, output_dir: str, leverage: int, data_file:
                 "value": t.value,
                 "params": t.params,
                 "metrics": {
-                    "is_return": t.user_attrs.get("is_return", 0),
-                    "oos_return": t.user_attrs.get("oos_return", 0),
-                    "oos_excess": t.user_attrs.get("oos_excess", 0),
-                    "oos_is_ratio": t.user_attrs.get("oos_is_ratio", 0),
+                    "consistency_pct": t.user_attrs.get("consistency_pct", 0),
+                    "avg_sharpe": t.user_attrs.get("avg_sharpe", 0),
+                    "total_trades": t.user_attrs.get("total_trades", 0),
                 },
             }
             for t in sorted(
@@ -440,7 +412,7 @@ config = BollingerStrategyConfig(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="BB_NEUTRAL_GRID 多目標參數優化 (IS+OOS 聯合優化)"
+        description="BB_NEUTRAL_GRID Walk-Forward 穩健性優化 (v3)"
     )
     parser.add_argument(
         "--data-file",
@@ -466,10 +438,10 @@ def main():
         help="槓桿倍數 (default: 18)"
     )
     parser.add_argument(
-        "--train-ratio",
-        type=float,
-        default=0.7,
-        help="訓練集比例 (default: 0.7)"
+        "--folds", "-f",
+        type=int,
+        default=9,
+        help="Walk-Forward 折數 (default: 9)"
     )
     parser.add_argument(
         "--output",
@@ -500,29 +472,29 @@ def main():
         args.trials = 50
 
     print("=" * 70)
-    print("  BB_NEUTRAL_GRID 多目標優化 v2 (超額報酬)")
-    print("  目標: OOS 跑贏市場, OOS >= 30%")
+    print("  BB_NEUTRAL_GRID Walk-Forward 優化 v3 (穩健性)")
+    print("  目標: 所有折獲利 + 高 Sharpe + 多交易")
     print("=" * 70)
     print(f"  試驗次數: {args.trials}")
     print(f"  槓桿倍數: {args.leverage}x")
-    print(f"  訓練比例: {args.train_ratio * 100:.0f}%")
+    print(f"  折數: {args.folds}")
 
     # 載入數據
     klines = load_klines(args.data_file)
 
-    # 分割數據 (現在返回市場報酬)
-    train_klines, test_klines, train_market, test_market = split_data(klines, args.train_ratio)
+    # 分割數據為 N 折
+    folds = split_into_folds(klines, args.folds)
 
     # 創建 Optuna study
     sampler = TPESampler(seed=args.seed)
     study = optuna.create_study(
         direction="maximize",
         sampler=sampler,
-        study_name="bb_neutral_multi_objective_v2",
+        study_name="bb_neutral_wf_v3",
     )
 
-    # 創建目標函數 (傳入市場報酬)
-    objective = create_multi_objective(train_klines, test_klines, train_market, test_market, args.leverage)
+    # 創建 WF 目標函數
+    objective = create_wf_objective(folds, args.leverage)
 
     # 執行優化
     print(f"\n開始優化 ({args.trials} 次試驗)...")

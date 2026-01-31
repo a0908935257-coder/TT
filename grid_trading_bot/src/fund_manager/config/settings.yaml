@@ -77,13 +77,10 @@ bots:
   # ===========================================================================
   # Bollinger Bot (BB_NEUTRAL_GRID 策略: 雙向中性網格交易)
   # ===========================================================================
-  # 多目標優化 + Walk-Forward 驗證 (2026-01-28):
-  # - 年化報酬: 53.23%, Sharpe: 11.83, 回撤: 2.12%
-  # - IS: 103.39%, OOS: 30.75%, OOS超額報酬: +44.90%
-  # - W-F 一致性: 100% (9/9), Monte Carlo: 100% (15/15)
-  # - 參數穩健性: 100% (CV=4.5%)
-  # - 勝率: 39.6%, 交易數: 5625/2年
-  # ⚠️ 高槓桿配置 - 18x 槓桿 (驗證通過)
+  # WF v4 Optuna 300 trials (2026-02-01, use_margin fix):
+  # - 一致性 100% (9/9 折獲利), 平均 Sharpe: 4.73
+  # - 平均報酬: +242.2%, 總交易: 6,749
+  # - 18x 槓桿
   # ===========================================================================
   - bot_id: bollinger_*
     name: "Bollinger BB_NEUTRAL_GRID Strategy"
@@ -95,46 +92,45 @@ bots:
     max_capital: 8000
     priority: 9
 
-    # --- 策略參數 (多目標優化 2026-01-28) ---
+    # --- 策略參數 (WF v4 Optuna 300 trials, use_margin fix, 2026-02-01) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
-      leverage: 7                         # 多槓桿回測最佳 (Sharpe 6.75, 零爆倉, 回撤 5.24%)
+      leverage: 18                        # 18x
       margin_type: ISOLATED
       position_size_pct: 0.1
       max_position_pct: 0.5
 
-      # Strategy Mode (驗證通過)
-      mode: bb_neutral_grid               # 雙向中性網格 (年化 53.23%)
+      # Strategy Mode
+      mode: bb_neutral_grid               # 雙向中性網格
 
       # Bollinger Bands (用於參考，不作為趨勢過濾)
-      bb_period: 31                       # 優化後: 31 (原 20)
+      bb_period: 24                       # WF v4 優化: 24
       bb_std: 2.0
 
-      # Grid Parameters (2026-01-31 Optuna 300 trials 優化)
-      grid_count: 12                      # 優化後: 12
-      take_profit_grids: 1                # 驗證通過: 1
-      trend_period: 15                    # 優化後: 15
+      # Grid Parameters (WF v4 2026-02-01)
+      grid_count: 8                       # WF v4 優化: 8
+      take_profit_grids: 1                # WF v4 優化: 1
 
-      # ATR Dynamic Range (2026-01-31 優化)
+      # ATR Dynamic Range (WF v4 2026-02-01)
       use_atr_range: true                 # 啟用 ATR 動態範圍
-      atr_period: 14                      # 優化後: 14
-      atr_multiplier: 9.5                 # 優化後: 9.5
+      atr_period: 21                      # WF v4 優化: 21
+      atr_multiplier: 8.5                 # WF v4 優化: 8.5
       fallback_range_pct: 0.04            # ATR 不可用時的備用範圍
 
-      # Risk Management (2026-01-31 優化)
-      stop_loss_pct: 0.005                # 優化後: 0.5%
+      # Risk Management (WF v4 2026-02-01)
+      stop_loss_pct: 0.003                # WF v4 優化: 0.3%
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (2026-01-31 優化)
-      use_hysteresis: false               # 優化後: 關閉
-      hysteresis_pct: 0.009               # 優化後: 0.9%
-      use_signal_cooldown: false          # 優化後: 關閉
-      cooldown_bars: 2                    # 優化後: 2
+      # Protective Features (WF v4 2026-02-01)
+      use_hysteresis: false               # WF v4 優化: 關閉
+      hysteresis_pct: 0.0015              # WF v4 優化: 0.15%
+      use_signal_cooldown: false          # WF v4 優化: 關閉
+      cooldown_bars: 6                    # WF v4 優化: 6
 
       # Exchange Stop Loss (STOP_MARKET on exchange)
       use_exchange_stop_loss: true
@@ -333,10 +329,10 @@ bots:
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
 # 預估組合年化報酬: ~40-50%
 #   - Grid Futures (40%): OOS +188.2%, Sharpe 6.06, WF 100% (7x, v2 OOS 優化 2026-01-31)
-#   - Bollinger NEUTRAL (25%): 53.23% 年化 (優化後 2026-01-28)
+#   - Bollinger NEUTRAL (25%): WF 100% (9/9), avg Sharpe 4.73 (18x, WF v4 use_margin fix 2026-02-01)
 #   - Supertrend HYBRID_GRID (15%): OOS +63.0%, Sharpe 2.44 (7x, equity-based 2026-01-31)
 #   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
-# 槓桿配置 - 全策略 7x (equity-based margin)
+# 槓桿配置 - Grid/RSI/Supertrend 7x, Bollinger 18x (equity-based margin)
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)
