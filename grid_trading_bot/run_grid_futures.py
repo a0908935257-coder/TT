@@ -89,17 +89,17 @@ def get_config_from_env() -> GridFuturesConfig:
         margin_type=params.get('margin_type', 'ISOLATED'),
 
         # 網格設定
-        grid_count=int(params.get('grid_count', 12)),
+        grid_count=int(params.get('grid_count', 8)),
         direction=direction,
 
         # 趨勢過濾
         use_trend_filter=bool(params.get('use_trend_filter', False)),
-        trend_period=int(params.get('trend_period', 24)),
+        trend_period=int(params.get('trend_period', 48)),
 
         # 動態 ATR 範圍
         use_atr_range=bool(params.get('use_atr_range', True)),
-        atr_period=int(params.get('atr_period', 41)),
-        atr_multiplier=Decimal(str(params.get('atr_multiplier', 10.0))),
+        atr_period=int(params.get('atr_period', 46)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 6.5))),
         fallback_range_pct=Decimal(str(params.get('fallback_range_pct', 0.08))),
 
         # 倉位管理
@@ -112,10 +112,10 @@ def get_config_from_env() -> GridFuturesConfig:
         rebuild_threshold_pct=Decimal(str(params.get('rebuild_threshold_pct', 0.02))),
 
         # Protective features
-        use_hysteresis=bool(params.get('use_hysteresis', False)),
-        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.005))),
-        use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
-        cooldown_bars=int(params.get('cooldown_bars', 2)),
+        use_hysteresis=bool(params.get('use_hysteresis', True)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.001))),
+        use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
+        cooldown_bars=int(params.get('cooldown_bars', 0)),
     )
 
 

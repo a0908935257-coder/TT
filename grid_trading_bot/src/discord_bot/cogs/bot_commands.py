@@ -260,23 +260,27 @@ class CreateBotModal(discord.ui.Modal):
                 bot_config = {
                     "symbol": symbol,
                     "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '3')),
+                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '7')),
                     "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
-                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '12')),
+                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '8')),
                     "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
                     "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
-                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '20')),
+                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '48')),
                     "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '14')),
-                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '2.0'),
+                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '46')),
+                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '6.5'),
                     "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
                     "max_capital": max_capital,
                     "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
                     "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
-                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.05'),
+                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.005'),
                     "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
+                    "use_hysteresis": os.getenv('GRID_FUTURES_USE_HYSTERESIS', 'true').lower() == 'true',
+                    "hysteresis_pct": os.getenv('GRID_FUTURES_HYSTERESIS_PCT', '0.001'),
+                    "use_signal_cooldown": os.getenv('GRID_FUTURES_USE_SIGNAL_COOLDOWN', 'true').lower() == 'true',
+                    "cooldown_bars": int(os.getenv('GRID_FUTURES_COOLDOWN_BARS', '0')),
                 }
-                type_info = f"Leverage: 3x | Grids: 12"
+                type_info = f"Leverage: 7x | Grids: 8"
 
             else:  # grid (spot)
                 bot_type = BotType.GRID
@@ -395,7 +399,7 @@ class BotCommands(commands.Cog):
     @app_commands.describe(bot_type="Type of bot to create")
     @app_commands.choices(bot_type=[
         app_commands.Choice(name="🔷 Bollinger Bot (合約 20x)", value="bollinger"),
-        app_commands.Choice(name="📊 Grid Futures Bot (合約 3x)", value="grid_futures"),
+        app_commands.Choice(name="📊 Grid Futures Bot (合約 7x)", value="grid_futures"),
         app_commands.Choice(name="🟢 Grid Bot (現貨)", value="grid"),
     ])
     @is_admin()
