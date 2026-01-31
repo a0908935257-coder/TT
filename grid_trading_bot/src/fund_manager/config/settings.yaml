@@ -196,11 +196,11 @@ bots:
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略)
   # ===========================================================================
-  # Optuna 300 trials + v2 強化 OOS 目標函數 (2026-01-31):
-  # - OOS 報酬: +188.2%, OOS Sharpe: 6.06, OOS 回撤: 2.76%
-  # - W-F 一致性: 100% (9/9), OOS/IS Sharpe: 1.09
-  # - Monte Carlo 獲利機率: 100%
-  # - 無過度擬合 (OOS Sharpe > IS Sharpe)
+  # Optuna 300 trials, fixed Sharpe MTM (2026-02-01):
+  # - OOS 報酬: +188.2%, OOS Sharpe: 5.57, OOS 回撤: 2.76%
+  # - W-F 一致性: 100% (9/9), OOS/IS Sharpe: 1.08
+  # - Monte Carlo 獲利機率: 100%, 破產機率: 0%
+  # - 無過度擬合 (avg OOS Sharpe 7.91)
   # ===========================================================================
   - bot_id: grid_futures_*
     name: "Grid Futures Trading"
@@ -212,8 +212,8 @@ bots:
     max_capital: 10000
     priority: 10
 
-    # --- 策略參數 (Optuna 300 trials, v2 OOS 優化 2026-01-31) ---
-    # IS: +7222%, OOS: +188.2%, OOS Sharpe: 6.06, WF 100% (9/9)
+    # --- 策略參數 (Optuna 300 trials, fixed Sharpe MTM 2026-02-01) ---
+    # IS: +7222%, OOS: +188.2%, OOS Sharpe: 5.57, WF 100% (9/9)
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
@@ -235,6 +235,9 @@ bots:
       atr_period: 46                     # 優化結果: 46 (原 41)
       atr_multiplier: 6.5                # 優化結果: 6.5 (原 10.0)
       fallback_range_pct: 0.08
+
+      # Take Profit
+      take_profit_grids: 1               # 優化結果: 1
 
       # Risk Management (優化後)
       stop_loss_pct: 0.005               # 0.5% 緊止損 (優化結果)
@@ -328,7 +331,7 @@ bots:
 
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
 # 預估組合年化報酬: ~40-50%
-#   - Grid Futures (40%): OOS +188.2%, Sharpe 6.06, WF 100% (7x, v2 OOS 優化 2026-01-31)
+#   - Grid Futures (40%): OOS +188.2%, Sharpe 5.57, WF 100% (7x, fixed Sharpe 2026-02-01)
 #   - Bollinger NEUTRAL (25%): WF 100% (9/9), avg Sharpe 4.73 (18x, WF v4 use_margin fix 2026-02-01)
 #   - Supertrend HYBRID_GRID (15%): OOS +63.0%, Sharpe 2.44 (7x, equity-based 2026-01-31)
 #   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
