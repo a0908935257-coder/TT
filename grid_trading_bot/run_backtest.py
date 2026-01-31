@@ -148,90 +148,132 @@ def _load_klines_from_file(filepath: str) -> list[Kline]:
 
 
 def create_strategy(strategy_name: str, params: dict):
-    """根據名稱創建策略實例"""
+    """根據名稱創建策略實例（從 settings.yaml 讀取基礎參數，params 可覆蓋）"""
+
+    # 策略名稱 -> YAML bot_type 映射
+    strategy_yaml_key = {
+        "bollinger": "bollinger",
+        "bollinger_neutral": "bollinger",
+        "supertrend": "supertrend",
+        "grid_futures": "grid_futures",
+        "rsi": "rsi_grid",
+    }
+
+    # 從 YAML 載入基礎參數，CLI params 覆蓋
+    if strategy_name in strategy_yaml_key:
+        p = load_strategy_config(strategy_yaml_key[strategy_name])
+        p.update(params)  # CLI 參數覆蓋 YAML
+    else:
+        p = params  # grid (spot) 無 YAML 定義
 
     if strategy_name == "bollinger":
-        # BB_TREND_GRID 模式 (驗證通過)
+        # BB_TREND_GRID 模式：強制覆蓋 mode
         config = BollingerStrategyConfig(
             mode=BollingerMode.BB_TREND_GRID,
-            bb_period=params.get("bb_period", 12),
-            bb_std=Decimal(str(params.get("bb_std", "2.0"))),
-            grid_count=params.get("grid_count", 6),
-            grid_range_pct=Decimal(str(params.get("grid_range_pct", "0.02"))),
-            take_profit_grids=params.get("take_profit_grids", 2),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.025"))),
+            bb_period=p.get("bb_period", 12),
+            bb_std=Decimal(str(p.get("bb_std", "2.0"))),
+            grid_count=p.get("grid_count", 6),
+            grid_range_pct=Decimal(str(p.get("grid_range_pct", "0.02"))),
+            take_profit_grids=p.get("take_profit_grids", 2),
+            stop_loss_pct=Decimal(str(p.get("stop_loss_pct", "0.025"))),
         )
         return BollingerBacktestStrategy(config)
 
     elif strategy_name == "bollinger_neutral":
-        # BB_NEUTRAL_GRID 模式 (新增 - 待優化)
+        # BB_NEUTRAL_GRID 模式：強制覆蓋 mode
         config = BollingerStrategyConfig(
             mode=BollingerMode.BB_NEUTRAL_GRID,
-            bb_period=params.get("bb_period", 20),
-            bb_std=Decimal(str(params.get("bb_std", "2.0"))),
-            grid_count=params.get("grid_count", 12),
-            take_profit_grids=params.get("take_profit_grids", 1),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.005"))),  # 0.5% tight SL
-            # ATR dynamic range
-            use_atr_range=True,
-            atr_period=params.get("atr_period", 21),
-            atr_multiplier=Decimal(str(params.get("atr_multiplier", "6.0"))),
-            fallback_range_pct=Decimal(str(params.get("fallback_range_pct", "0.04"))),
-            # Protective features
-            use_hysteresis=params.get("use_hysteresis", True),
-            hysteresis_pct=Decimal(str(params.get("hysteresis_pct", "0.002"))),
+            bb_period=p.get("bb_period", 20),
+            bb_std=Decimal(str(p.get("bb_std", "2.0"))),
+            grid_count=p.get("grid_count", 12),
+            take_profit_grids=p.get("take_profit_grids", 1),
+            stop_loss_pct=Decimal(str(p.get("stop_loss_pct", "0.005"))),
+            use_atr_range=p.get("use_atr_range", True),
+            atr_period=p.get("atr_period", 21),
+            atr_multiplier=Decimal(str(p.get("atr_multiplier", "6.0"))),
+            fallback_range_pct=Decimal(str(p.get("fallback_range_pct", "0.04"))),
+            use_hysteresis=p.get("use_hysteresis", True),
+            hysteresis_pct=Decimal(str(p.get("hysteresis_pct", "0.002"))),
         )
         return BollingerBacktestStrategy(config)
 
     elif strategy_name == "supertrend":
+        from src.backtest.strategy.supertrend import SupertrendMode
         config = SupertrendStrategyConfig(
-            atr_period=params.get("atr_period", 14),
-            atr_multiplier=Decimal(str(params.get("atr_multiplier", "3.0"))),
-            use_rsi_filter=params.get("use_rsi_filter", False),
+            mode=SupertrendMode(p.get("mode", "hybrid_grid")),
+            atr_period=p.get("atr_period", 14),
+            atr_multiplier=Decimal(str(p.get("atr_multiplier", "3.0"))),
+            grid_count=p.get("grid_count", 8),
+            grid_atr_multiplier=Decimal(str(p.get("grid_atr_multiplier", "7.5"))),
+            take_profit_grids=p.get("take_profit_grids", 1),
+            stop_loss_pct=Decimal(str(p.get("stop_loss_pct", "0.05"))),
+            use_rsi_filter=p.get("use_rsi_filter", True),
+            rsi_period=p.get("rsi_period", 21),
+            rsi_overbought=p.get("rsi_overbought", 75),
+            rsi_oversold=p.get("rsi_oversold", 37),
+            min_trend_bars=p.get("min_trend_bars", 1),
+            use_hysteresis=p.get("use_hysteresis", False),
+            hysteresis_pct=Decimal(str(p.get("hysteresis_pct", "0.0085"))),
+            use_signal_cooldown=p.get("use_signal_cooldown", False),
+            cooldown_bars=p.get("cooldown_bars", 3),
+            use_trailing_stop=p.get("use_trailing_stop", True),
+            trailing_stop_pct=Decimal(str(p.get("trailing_stop_pct", "0.01"))),
+            use_volatility_filter=p.get("use_volatility_filter", False),
+            vol_ratio_low=p.get("vol_ratio_low", 0.3),
+            vol_ratio_high=p.get("vol_ratio_high", 3.0),
+            max_hold_bars=p.get("max_hold_bars", 8),
+            hybrid_grid_bias_pct=Decimal(str(p.get("hybrid_grid_bias_pct", "0.65"))),
+            hybrid_tp_multiplier_trend=Decimal(str(p.get("hybrid_tp_multiplier_trend", "1.75"))),
+            hybrid_tp_multiplier_counter=Decimal(str(p.get("hybrid_tp_multiplier_counter", "0.5"))),
+            hybrid_sl_multiplier_counter=Decimal(str(p.get("hybrid_sl_multiplier_counter", "0.9"))),
+            hybrid_rsi_asymmetric=p.get("hybrid_rsi_asymmetric", False),
         )
         return SupertrendBacktestStrategy(config)
 
     elif strategy_name == "grid":
-        # Grid 策略 (現貨)
+        # Grid 策略 (現貨) — 無 YAML 定義
         config = GridStrategyConfig(
-            grid_count=params.get("grid_count", 10),
-            use_geometric=params.get("use_geometric", True),
-            take_profit_grids=params.get("take_profit_grids", 1),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.02"))),
+            grid_count=p.get("grid_count", 10),
+            use_geometric=p.get("use_geometric", True),
+            take_profit_grids=p.get("take_profit_grids", 1),
+            stop_loss_pct=Decimal(str(p.get("stop_loss_pct", "0.02"))),
         )
         return GridBacktestStrategy(config)
 
     elif strategy_name == "grid_futures":
-        # Grid Futures 策略 (合約)
         config = GridFuturesStrategyConfig(
-            grid_count=params.get("grid_count", 10),
-            direction=GridDirection.TREND_FOLLOW,
-            leverage=params.get("leverage", 2),
-            trend_period=params.get("trend_period", 20),
-            atr_multiplier=Decimal(str(params.get("atr_multiplier", "3.0"))),
-            stop_loss_pct=Decimal(str(params.get("stop_loss_pct", "0.05"))),
+            grid_count=p.get("grid_count", 8),
+            direction=GridDirection.NEUTRAL,
+            leverage=p.get("leverage", 7),
+            trend_period=p.get("trend_period", 48),
+            atr_period=p.get("atr_period", 46),
+            atr_multiplier=Decimal(str(p.get("atr_multiplier", "6.5"))),
+            stop_loss_pct=Decimal(str(p.get("stop_loss_pct", "0.005"))),
+            take_profit_grids=p.get("take_profit_grids", 1),
+            use_hysteresis=p.get("use_hysteresis", True),
+            hysteresis_pct=Decimal(str(p.get("hysteresis_pct", "0.001"))),
+            use_signal_cooldown=p.get("use_signal_cooldown", True),
+            cooldown_bars=p.get("cooldown_bars", 0),
         )
         return GridFuturesBacktestStrategy(config)
 
     elif strategy_name == "rsi":
-        # RSI-Grid v2 策略 (從 settings.yaml 讀取實戰參數)
-        yaml_params = load_strategy_config("rsi_grid")
         config = RSIGridStrategyConfig(
-            rsi_period=yaml_params.get("rsi_period", 14),
-            rsi_block_threshold=yaml_params.get("rsi_block_threshold", 0.7),
-            atr_period=yaml_params.get("atr_period", 14),
-            grid_count=yaml_params.get("grid_count", 15),
-            atr_multiplier=Decimal(str(yaml_params.get("atr_multiplier", "2.5"))),
-            stop_loss_atr_mult=Decimal(str(yaml_params.get("stop_loss_atr_mult", "1.5"))),
-            take_profit_grids=yaml_params.get("take_profit_grids", 1),
-            max_hold_bars=yaml_params.get("max_hold_bars", 24),
-            use_trailing_stop=yaml_params.get("use_trailing_stop", False),
-            trailing_activate_pct=yaml_params.get("trailing_activate_pct", 0.01),
-            trailing_distance_pct=yaml_params.get("trailing_distance_pct", 0.005),
-            use_volatility_filter=yaml_params.get("use_volatility_filter", True),
-            vol_atr_baseline_period=yaml_params.get("vol_atr_baseline_period", 200),
-            vol_ratio_low=yaml_params.get("vol_ratio_low", 0.5),
-            vol_ratio_high=yaml_params.get("vol_ratio_high", 2.0),
+            rsi_period=p.get("rsi_period", 14),
+            rsi_block_threshold=p.get("rsi_block_threshold", 0.7),
+            atr_period=p.get("atr_period", 14),
+            grid_count=p.get("grid_count", 15),
+            atr_multiplier=Decimal(str(p.get("atr_multiplier", "2.5"))),
+            stop_loss_atr_mult=Decimal(str(p.get("stop_loss_atr_mult", "1.5"))),
+            take_profit_grids=p.get("take_profit_grids", 1),
+            max_hold_bars=p.get("max_hold_bars", 24),
+            use_trailing_stop=p.get("use_trailing_stop", False),
+            trailing_activate_pct=p.get("trailing_activate_pct", 0.01),
+            trailing_distance_pct=p.get("trailing_distance_pct", 0.005),
+            use_volatility_filter=p.get("use_volatility_filter", True),
+            vol_atr_baseline_period=p.get("vol_atr_baseline_period", 200),
+            vol_ratio_low=p.get("vol_ratio_low", 0.5),
+            vol_ratio_high=p.get("vol_ratio_high", 2.0),
         )
         return RSIGridBacktestStrategy(config)
 
@@ -330,10 +372,14 @@ async def main():
 
     args = parser.parse_args()
 
-    # RSI 策略：用 yaml leverage 覆蓋 CLI 預設
-    if args.strategy == "rsi" and args.leverage == 7:
-        yaml_params = load_strategy_config("rsi_grid")
-        args.leverage = yaml_params.get("leverage", 5)
+    # 統一 leverage：從 YAML 讀取，CLI --leverage 只在明確指定時覆蓋
+    yaml_key_map = {
+        "bollinger": "bollinger", "bollinger_neutral": "bollinger",
+        "supertrend": "supertrend", "grid_futures": "grid_futures", "rsi": "rsi_grid",
+    }
+    if args.strategy in yaml_key_map and args.leverage == 7:
+        yaml_params = load_strategy_config(yaml_key_map[args.strategy])
+        args.leverage = yaml_params.get("leverage", 7)
 
     print("\n" + "=" * 60)
     print("         統一回測系統 - Unified Backtest Runner")

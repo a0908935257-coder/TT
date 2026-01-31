@@ -54,6 +54,7 @@ from src.backtest.strategy.rsi_grid import (
     RSIGridBacktestStrategy,
     RSIGridStrategyConfig,
 )
+from src.config import load_strategy_config
 from src.core.models import Kline
 from src.exchange import ExchangeClient
 
@@ -142,94 +143,101 @@ async def fetch_klines(symbol: str, interval: str, days: int, data_file: str = N
 
 
 def create_all_strategies() -> dict:
-    """建立所有策略實例"""
-    # Grid Futures: 使用優化後的積極策略參數 (2026-01-28)
-    # 目標: 年化 40%+, 回撤容忍 30%
-    # 優化結果: 年化 45.18%, 回撤 3.79%, Sharpe 10.30
-    # Grid Futures: Optuna 300 trials 優化 (2026-01-31, v2 強化 OOS 目標函數)
-    # IS: +7222%, OOS: +188.2%, OOS Sharpe: 6.06, OOS 回撤: 2.76%
+    """建立所有策略實例（從 settings.yaml 讀取參數）"""
+
+    # --- Grid Futures ---
+    gf = load_strategy_config("grid_futures")
     grid_futures_config = GridFuturesStrategyConfig(
-        leverage=7,  # 7x equity-based margin
-        direction=GridDirection.NEUTRAL,  # 優化結果: 中性雙向
-        grid_count=8,  # 優化結果 (原 12)
-        atr_multiplier=Decimal("6.5"),  # 優化結果 (原 10.0)
-        trend_period=48,  # 優化結果 (原 27)
-        atr_period=46,  # 優化結果 (原 41)
-        stop_loss_pct=Decimal("0.005"),  # 優化結果: 0.5% 緊止損
-        take_profit_grids=1,  # 優化結果
-        use_hysteresis=True,  # 優化結果: 啟用 (原 False)
-        hysteresis_pct=Decimal("0.001"),  # 優化結果 (原 0.005)
-        use_signal_cooldown=True,  # 優化結果: 啟用 (原 False)
-        cooldown_bars=0,  # 優化結果 (原 2)
+        leverage=gf.get("leverage", 7),
+        direction=GridDirection.NEUTRAL,
+        grid_count=gf.get("grid_count", 8),
+        atr_multiplier=Decimal(str(gf.get("atr_multiplier", "6.5"))),
+        trend_period=gf.get("trend_period", 48),
+        atr_period=gf.get("atr_period", 46),
+        stop_loss_pct=Decimal(str(gf.get("stop_loss_pct", "0.005"))),
+        take_profit_grids=gf.get("take_profit_grids", 1),
+        use_hysteresis=gf.get("use_hysteresis", True),
+        hysteresis_pct=Decimal(str(gf.get("hysteresis_pct", "0.001"))),
+        use_signal_cooldown=gf.get("use_signal_cooldown", True),
+        cooldown_bars=gf.get("cooldown_bars", 0),
     )
 
-    # Supertrend: HYBRID_GRID 優化參數 (2026-01-31, equity-based margin)
+    # --- Supertrend ---
+    st = load_strategy_config("supertrend")
     supertrend_config = SupertrendStrategyConfig(
-        mode=SupertrendMode.HYBRID_GRID,
-        atr_period=11,
-        atr_multiplier=Decimal("1.5"),
-        grid_count=8,
-        grid_atr_multiplier=Decimal("7.5"),
-        take_profit_grids=1,
-        stop_loss_pct=Decimal("0.05"),
-        use_rsi_filter=True,
-        rsi_period=21,
-        rsi_overbought=75,
-        rsi_oversold=37,
-        min_trend_bars=1,
-        use_hysteresis=False,
-        hysteresis_pct=Decimal("0.0085"),
-        use_signal_cooldown=False,
-        cooldown_bars=3,
-        use_trailing_stop=True,
-        trailing_stop_pct=Decimal("0.01"),
-        use_volatility_filter=False,
-        vol_ratio_low=0.3,
-        vol_ratio_high=3.0,
-        max_hold_bars=8,
-        hybrid_grid_bias_pct=Decimal("0.65"),
-        hybrid_tp_multiplier_trend=Decimal("1.75"),
-        hybrid_tp_multiplier_counter=Decimal("0.5"),
-        hybrid_sl_multiplier_counter=Decimal("0.9"),
-        hybrid_rsi_asymmetric=False,
+        mode=SupertrendMode(st.get("mode", "hybrid_grid")),
+        atr_period=st.get("atr_period", 11),
+        atr_multiplier=Decimal(str(st.get("atr_multiplier", "1.5"))),
+        grid_count=st.get("grid_count", 8),
+        grid_atr_multiplier=Decimal(str(st.get("grid_atr_multiplier", "7.5"))),
+        take_profit_grids=st.get("take_profit_grids", 1),
+        stop_loss_pct=Decimal(str(st.get("stop_loss_pct", "0.05"))),
+        use_rsi_filter=st.get("use_rsi_filter", True),
+        rsi_period=st.get("rsi_period", 21),
+        rsi_overbought=st.get("rsi_overbought", 75),
+        rsi_oversold=st.get("rsi_oversold", 37),
+        min_trend_bars=st.get("min_trend_bars", 1),
+        use_hysteresis=st.get("use_hysteresis", False),
+        hysteresis_pct=Decimal(str(st.get("hysteresis_pct", "0.0085"))),
+        use_signal_cooldown=st.get("use_signal_cooldown", False),
+        cooldown_bars=st.get("cooldown_bars", 3),
+        use_trailing_stop=st.get("use_trailing_stop", True),
+        trailing_stop_pct=Decimal(str(st.get("trailing_stop_pct", "0.01"))),
+        use_volatility_filter=st.get("use_volatility_filter", False),
+        vol_ratio_low=st.get("vol_ratio_low", 0.3),
+        vol_ratio_high=st.get("vol_ratio_high", 3.0),
+        max_hold_bars=st.get("max_hold_bars", 8),
+        hybrid_grid_bias_pct=Decimal(str(st.get("hybrid_grid_bias_pct", "0.65"))),
+        hybrid_tp_multiplier_trend=Decimal(str(st.get("hybrid_tp_multiplier_trend", "1.75"))),
+        hybrid_tp_multiplier_counter=Decimal(str(st.get("hybrid_tp_multiplier_counter", "0.5"))),
+        hybrid_sl_multiplier_counter=Decimal(str(st.get("hybrid_sl_multiplier_counter", "0.9"))),
+        hybrid_rsi_asymmetric=st.get("hybrid_rsi_asymmetric", False),
+    )
+
+    # --- Bollinger (BB_NEUTRAL_GRID) ---
+    bb = load_strategy_config("bollinger")
+    bollinger_config = BollingerStrategyConfig(
+        mode=BollingerMode.BB_NEUTRAL_GRID,
+        bb_period=bb.get("bb_period", 24),
+        bb_std=Decimal(str(bb.get("bb_std", "2.0"))),
+        grid_count=bb.get("grid_count", 8),
+        take_profit_grids=bb.get("take_profit_grids", 1),
+        stop_loss_pct=Decimal(str(bb.get("stop_loss_pct", "0.003"))),
+        use_atr_range=bb.get("use_atr_range", True),
+        atr_period=bb.get("atr_period", 21),
+        atr_multiplier=Decimal(str(bb.get("atr_multiplier", "8.5"))),
+        fallback_range_pct=Decimal(str(bb.get("fallback_range_pct", "0.04"))),
+        use_hysteresis=bb.get("use_hysteresis", False),
+        hysteresis_pct=Decimal(str(bb.get("hysteresis_pct", "0.0015"))),
+        use_signal_cooldown=bb.get("use_signal_cooldown", False),
+        cooldown_bars=bb.get("cooldown_bars", 6),
+    )
+
+    # --- RSI Grid ---
+    rsi = load_strategy_config("rsi_grid")
+    rsi_config = RSIGridStrategyConfig(
+        rsi_period=rsi.get("rsi_period", 5),
+        rsi_block_threshold=rsi.get("rsi_block_threshold", 0.9),
+        atr_period=rsi.get("atr_period", 10),
+        grid_count=rsi.get("grid_count", 8),
+        atr_multiplier=Decimal(str(rsi.get("atr_multiplier", "4.0"))),
+        stop_loss_atr_mult=Decimal(str(rsi.get("stop_loss_atr_mult", "2.0"))),
+        take_profit_grids=rsi.get("take_profit_grids", 2),
+        max_hold_bars=rsi.get("max_hold_bars", 8),
+        use_trailing_stop=rsi.get("use_trailing_stop", True),
+        trailing_activate_pct=rsi.get("trailing_activate_pct", 0.01),
+        trailing_distance_pct=rsi.get("trailing_distance_pct", 0.003),
+        use_volatility_filter=rsi.get("use_volatility_filter", True),
+        vol_atr_baseline_period=rsi.get("vol_atr_baseline_period", 100),
+        vol_ratio_low=rsi.get("vol_ratio_low", 0.5),
+        vol_ratio_high=rsi.get("vol_ratio_high", 2.5),
     )
 
     return {
-        "bollinger": BollingerBacktestStrategy(BollingerStrategyConfig(
-            mode=BollingerMode.BB_NEUTRAL_GRID,
-            bb_period=24,
-            bb_std=Decimal("2.0"),
-            grid_count=8,
-            take_profit_grids=1,
-            stop_loss_pct=Decimal("0.003"),
-            use_atr_range=True,
-            atr_period=21,
-            atr_multiplier=Decimal("8.5"),
-            fallback_range_pct=Decimal("0.04"),
-            use_hysteresis=False,
-            hysteresis_pct=Decimal("0.0015"),
-            use_signal_cooldown=False,
-            cooldown_bars=6,
-        )),
+        "bollinger": BollingerBacktestStrategy(bollinger_config),
         "supertrend": SupertrendBacktestStrategy(supertrend_config),
         "grid": GridBacktestStrategy(GridStrategyConfig()),
-        "rsi_grid": RSIGridBacktestStrategy(RSIGridStrategyConfig(
-            rsi_period=5,
-            rsi_block_threshold=0.9,
-            atr_period=10,
-            grid_count=8,
-            atr_multiplier=Decimal("4.0"),
-            stop_loss_atr_mult=Decimal("2.0"),
-            take_profit_grids=2,
-            max_hold_bars=8,
-            use_trailing_stop=True,
-            trailing_activate_pct=0.01,
-            trailing_distance_pct=0.003,
-            use_volatility_filter=True,
-            vol_atr_baseline_period=100,
-            vol_ratio_low=0.5,
-            vol_ratio_high=2.5,
-        )),
+        "rsi_grid": RSIGridBacktestStrategy(rsi_config),
         "grid_futures": GridFuturesBacktestStrategy(grid_futures_config),
     }
 
@@ -601,14 +609,13 @@ async def main():
         else:
             strategies_to_test = {args.strategy: all_strategies[args.strategy]}
 
-        # 策略對應的槓桿倍數
-        strategy_leverage = {
-            "rsi_grid": 7,
-            "grid_futures": 7,
-            "bollinger": 18,
-            "supertrend": 7,
-            "grid": 7,
-        }
+        # 策略對應的槓桿倍數（從 YAML 動態讀取）
+        strategy_leverage = {"grid": 7}  # grid (spot) 無 YAML 定義
+        for bot_type in ["rsi_grid", "grid_futures", "bollinger", "supertrend"]:
+            try:
+                strategy_leverage[bot_type] = load_strategy_config(bot_type).get("leverage", 7)
+            except (FileNotFoundError, ValueError):
+                strategy_leverage[bot_type] = 7
 
         all_results = []
 
