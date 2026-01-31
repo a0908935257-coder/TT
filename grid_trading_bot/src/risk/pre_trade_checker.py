@@ -82,7 +82,7 @@ class PreTradeConfig:
     blacklisted_symbols: Set[str] = field(default_factory=set)
 
     # Daily trade limit
-    max_daily_trades: int = 50  # Max trades per day (0 = unlimited)
+    max_daily_trades: int = 100  # Max trades per bot per day (0 = unlimited)
 
     # Behavior settings
     reject_on_warning: bool = False  # Whether to reject on warning

@@ -6101,7 +6101,7 @@ class BaseBot(ABC):
     STRATEGY_DRAWDOWN_PAUSE_PCT = Decimal("0.08")    # 8% drawdown -> pause
     STRATEGY_CONSECUTIVE_LOSS_WARNING = 3  # 3 consecutive losses
     STRATEGY_CONSECUTIVE_LOSS_PAUSE = 5    # 5 consecutive losses -> pause
-    STRATEGY_MAX_DAILY_TRADES = 50         # Max trades per day (0 = unlimited)
+    STRATEGY_MAX_DAILY_TRADES = 100        # Max trades per bot per day (0 = unlimited)
 
     def _init_strategy_risk_tracking(self) -> None:
         """Initialize per-strategy risk tracking."""

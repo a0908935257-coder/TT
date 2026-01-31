@@ -65,7 +65,7 @@ risk:
   liquidation_warning: 80
   margin_warning: 50
   min_order_interval: 1
-  max_daily_trades: 50                   # Max trades per bot per day (0 = unlimited)
+  max_daily_trades: 100                  # Max trades per bot per day (0 = unlimited)
   circuit_breaker_enabled: true
   circuit_breaker_cooldown: 3600
 
