@@ -232,28 +232,33 @@ class CreateBotModal(discord.ui.Modal):
                 bot_type = BotType.BOLLINGER
                 bot_config = {
                     "symbol": symbol,
-                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '15m'),
-                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '20')),
+                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '1h'),
+                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '18')),
+                    "margin_type": os.getenv('BOLLINGER_MARGIN_TYPE', 'ISOLATED'),
                     "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
-                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '20')),
-                    "bb_std": os.getenv('BOLLINGER_BB_STD', '3.25'),
+                    "mode": os.getenv('BOLLINGER_MODE', 'bb_neutral_grid'),
+                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '24')),
+                    "bb_std": os.getenv('BOLLINGER_BB_STD', '2.0'),
+                    "grid_count": int(os.getenv('BOLLINGER_GRID_COUNT', '8')),
+                    "take_profit_grids": int(os.getenv('BOLLINGER_TAKE_PROFIT_GRIDS', '1')),
+                    "use_atr_range": os.getenv('BOLLINGER_USE_ATR_RANGE', 'true').lower() == 'true',
+                    "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '21')),
+                    "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '8.5'),
+                    "fallback_range_pct": os.getenv('BOLLINGER_FALLBACK_RANGE_PCT', '0.04'),
+                    "max_position_pct": os.getenv('BOLLINGER_MAX_POSITION_PCT', '0.5'),
+                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.003'),
+                    "rebuild_threshold_pct": os.getenv('BOLLINGER_REBUILD_THRESHOLD_PCT', '0.02'),
                     "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-                    "bbw_threshold_pct": int(os.getenv('BOLLINGER_BBW_THRESHOLD', '20')),
-                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.015'),
-                    "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '48')),
+                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
+                    "use_hysteresis": os.getenv('BOLLINGER_USE_HYSTERESIS', 'false').lower() == 'true',
+                    "hysteresis_pct": os.getenv('BOLLINGER_HYSTERESIS_PCT', '0.0015'),
+                    "use_signal_cooldown": os.getenv('BOLLINGER_USE_SIGNAL_COOLDOWN', 'false').lower() == 'true',
+                    "cooldown_bars": int(os.getenv('BOLLINGER_COOLDOWN_BARS', '6')),
+                    "use_exchange_stop_loss": os.getenv('BOLLINGER_USE_EXCHANGE_STOP_LOSS', 'true').lower() == 'true',
+                    "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '0')),
                     "max_capital": max_capital,
-                    # Trend filter settings
-                    "use_trend_filter": os.getenv('BOLLINGER_USE_TREND_FILTER', 'false').lower() == 'true',
-                    "trend_period": int(os.getenv('BOLLINGER_TREND_PERIOD', '50')),
-                    # ATR stop loss settings
-                    "use_atr_stop": os.getenv('BOLLINGER_USE_ATR_STOP', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '14')),
-                    "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '2.0'),
-                    # Trailing stop settings
-                    "use_trailing_stop": os.getenv('BOLLINGER_USE_TRAILING_STOP', 'true').lower() == 'true',
-                    "trailing_atr_mult": os.getenv('BOLLINGER_TRAILING_ATR_MULT', '2.0'),
                 }
-                type_info = f"Leverage: 20x | Timeframe: 15m"
+                type_info = f"Leverage: 18x | Timeframe: 1h"
 
             elif self.bot_type_str == "grid_futures":
                 bot_type = BotType.GRID_FUTURES

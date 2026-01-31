@@ -133,7 +133,7 @@ class SupertrendConfig:
     use_volatility_filter: bool = False  # 優化後: 關閉
     vol_atr_baseline_period: int = 200
     vol_ratio_low: float = 0.3  # 同步 settings.yaml
-    vol_ratio_high: float = 2.5
+    vol_ratio_high: float = 3.0
 
     # Timeout Exit (v2)
     max_hold_bars: int = 8  # 同步 settings.yaml

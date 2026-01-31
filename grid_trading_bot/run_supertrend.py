@@ -93,12 +93,12 @@ def get_config_from_env() -> SupertrendConfig:
 
         # RSI 過濾器
         use_rsi_filter=bool(params.get('use_rsi_filter', True)),
-        rsi_period=int(params.get('rsi_period', 18)),
+        rsi_period=int(params.get('rsi_period', 21)),
         rsi_overbought=int(params.get('rsi_overbought', 75)),
         rsi_oversold=int(params.get('rsi_oversold', 37)),
 
         # 趨勢確認
-        min_trend_bars=int(params.get('min_trend_bars', 3)),
+        min_trend_bars=int(params.get('min_trend_bars', 1)),
 
         # 止損設定
         stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.05))),
@@ -108,7 +108,7 @@ def get_config_from_env() -> SupertrendConfig:
         trailing_stop_pct=Decimal(str(params.get('trailing_stop_pct', 0.01))),
 
         # Protective features
-        use_hysteresis=bool(params.get('use_hysteresis', True)),
+        use_hysteresis=bool(params.get('use_hysteresis', False)),
         hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0085))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
         cooldown_bars=int(params.get('cooldown_bars', 3)),
