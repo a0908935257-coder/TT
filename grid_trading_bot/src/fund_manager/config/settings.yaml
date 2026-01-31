@@ -135,6 +135,9 @@ bots:
       use_signal_cooldown: false          # 驗證通過: 關閉
       cooldown_bars: 1                    # 優化後: 1 (原 0)
 
+      # Exchange Stop Loss (STOP_MARKET on exchange)
+      use_exchange_stop_loss: true
+
       # Timeout Exit (0 = disabled)
       max_hold_bars: 0                    # 停用 (可設 8-20 啟用)
 

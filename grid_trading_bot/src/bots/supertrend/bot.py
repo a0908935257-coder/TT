@@ -1349,6 +1349,11 @@ class SupertrendBot(BaseBot):
             price: Entry price
             take_profit: Optional take profit price (grid-based)
         """
+        # Stage 6: Close old position if reversing direction
+        if self._position and self._position.side != side:
+            logger.info(f"Reversing direction: closing {self._position.side.value} before opening {side.value}")
+            await self._close_position(ExitReason.SIGNAL_FLIP)
+
         # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
         entry_allowed, entry_reason = self.check_entry_allowed()
         if not entry_allowed:

@@ -159,6 +159,9 @@ class BollingerConfig:
     # Fee rate (Binance Futures: 0.04% maker/taker)
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
+    # Exchange stop loss order (place STOP_MARKET on exchange instead of local-only monitoring)
+    use_exchange_stop_loss: bool = True
+
     # ATR dynamic range (BB_NEUTRAL_GRID 啟用)
     use_atr_range: bool = True                                                 # 優化後: 啟用
     atr_period: int = 29                                                       # 優化後: 29 (原 21)
@@ -355,6 +358,7 @@ class Position:
     grid_level_index: Optional[int] = None
     take_profit_price: Optional[Decimal] = None
     stop_loss_price: Optional[Decimal] = None
+    stop_loss_order_id: Optional[str] = None  # Exchange stop loss order ID
 
     def __post_init__(self):
         """Ensure Decimal types."""

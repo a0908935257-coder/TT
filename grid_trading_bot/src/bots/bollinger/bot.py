@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
 from src.core import get_logger
-from src.core.models import Kline, MarketType
+from src.core.models import Kline, MarketType, OrderSide
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationResult
@@ -978,6 +978,11 @@ class BollingerBot(BaseBot):
     ) -> bool:
         """Open a new position."""
         try:
+            # Stage 6: Close old position if reversing direction
+            if self._position and self._position.side != side:
+                logger.info(f"Reversing direction: closing {self._position.side.value} before opening {side.value}")
+                await self._close_position(price, ExitReason.TREND_CHANGE)
+
             # Validate price before calculation (indicator boundary check)
             if not self._validate_price(price, "entry_price"):
                 logger.warning(f"Invalid entry price: {price}")
@@ -1211,6 +1216,10 @@ class BollingerBot(BaseBot):
                 # Record entry bar for timeout tracking
                 self._entry_bar = self._current_bar
 
+                # Place exchange stop loss order if enabled
+                if self._config.use_exchange_stop_loss:
+                    await self._place_stop_loss_order()
+
                 # Mark grid level as filled
                 if self._grid and 0 <= grid_level_index < len(self._grid.levels):
                     level = self._grid.levels[grid_level_index]
@@ -1277,12 +1286,81 @@ class BollingerBot(BaseBot):
 
         return False
 
+    async def _place_stop_loss_order(self) -> None:
+        """Place stop loss order on exchange using STOP_MARKET."""
+        if not self._position or not self._position.stop_loss_price:
+            return
+
+        try:
+            # Determine close side (opposite of position)
+            if self._position.side == PositionSide.LONG:
+                close_side = OrderSide.SELL
+            else:
+                close_side = OrderSide.BUY
+
+            # Place STOP_MARKET order
+            sl_order = await self._exchange.futures_create_order(
+                symbol=self._config.symbol,
+                side=close_side.value,
+                order_type="STOP_MARKET",
+                quantity=self._position.quantity,
+                stop_price=self._position.stop_loss_price,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
+
+            if sl_order:
+                self._position.stop_loss_order_id = str(sl_order.order_id)
+                logger.info(
+                    f"Stop loss order placed: {close_side.value} {self._position.quantity} "
+                    f"@ {self._position.stop_loss_price}, ID={sl_order.order_id}"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to place stop loss order: {e}")
+
+    async def _cancel_stop_loss_order(self) -> bool:
+        """Cancel stop loss order with verification."""
+        if not self._position or not self._position.stop_loss_order_id:
+            return True
+
+        # Use BaseBot's robust algo cancel with verification
+        result = await self._cancel_algo_order_with_verification(
+            algo_id=self._position.stop_loss_order_id,
+            symbol=self._config.symbol,
+        )
+
+        if result["is_cancelled"]:
+            logger.info(f"Stop loss order cancelled: {self._position.stop_loss_order_id}")
+            self._position.stop_loss_order_id = None
+            return True
+
+        elif result["was_triggered"]:
+            logger.warning(
+                f"Stop loss {self._position.stop_loss_order_id} was triggered - "
+                f"forcing position sync"
+            )
+            self._position.stop_loss_order_id = None
+            await self._sync_position()
+            return True
+
+        else:
+            logger.error(
+                f"Failed to cancel stop loss after {result['attempts']} attempts: "
+                f"{result['error_message']}"
+            )
+            return False
+
     async def _close_position(self, price: Decimal, reason: ExitReason) -> bool:
         """Close current position."""
         if not self._position:
             return False
 
         try:
+            # Cancel stop loss order first (if any)
+            if self._position.stop_loss_order_id:
+                await self._cancel_stop_loss_order()
+
             side = self._position.side
             quantity = self._position.quantity
 
@@ -1431,6 +1509,7 @@ class BollingerBot(BaseBot):
                 "grid_level_index": self._position.grid_level_index,
                 "take_profit_price": str(self._position.take_profit_price) if self._position.take_profit_price else None,
                 "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "stop_loss_order_id": self._position.stop_loss_order_id,
             }
 
         return state_data
@@ -1624,6 +1703,7 @@ class BollingerBot(BaseBot):
                     grid_level_index=position_data.get("grid_level_index"),
                     take_profit_price=Decimal(position_data["take_profit_price"]) if position_data.get("take_profit_price") else None,
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
+                    stop_loss_order_id=position_data.get("stop_loss_order_id"),
                 )
 
             # Verify position sync with exchange
