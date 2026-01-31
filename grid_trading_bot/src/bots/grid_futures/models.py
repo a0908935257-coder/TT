@@ -129,11 +129,12 @@ class GridFuturesConfig:
     Example:
         >>> config = GridFuturesConfig(
         ...     symbol="BTCUSDT",
-        ...     leverage=10,  # 同步 settings.yaml (多槓桿回測最佳)
-        ...     grid_count=18,  # W-F 驗證通過: 18
+        ...     leverage=7,
+        ...     grid_count=12,
         ...     direction=GridDirection.NEUTRAL,
-        ...     atr_period=28,  # W-F 驗證通過: 28
-        ...     atr_multiplier=Decimal("9.5"),  # 超寬範圍
+        ...     trend_period=15,
+        ...     atr_period=14,
+        ...     atr_multiplier=Decimal("9.5"),
         ...     stop_loss_pct=Decimal("0.005"),  # 0.5% 緊止損
         ... )
     """
@@ -149,12 +150,12 @@ class GridFuturesConfig:
 
     # Trend filter (NEUTRAL 模式不使用趨勢過濾)
     use_trend_filter: bool = False
-    trend_period: int = 27  # 同步 settings.yaml
+    trend_period: int = 15  # 同步 settings.yaml
 
     # Dynamic ATR range
     use_atr_range: bool = True
-    atr_period: int = 41  # 同步 settings.yaml
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("10.0"))  # 同步 settings.yaml
+    atr_period: int = 14  # 同步 settings.yaml
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))  # 同步 settings.yaml
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))
 
     # Position sizing (optimized: 10% per trade)
@@ -177,7 +178,7 @@ class GridFuturesConfig:
 
     # Protective features (W-F 驗證通過)
     use_hysteresis: bool = False  # 同步 settings.yaml
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.005"))  # 同步 settings.yaml
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.009"))  # 同步 settings.yaml
     use_signal_cooldown: bool = False  # 同步 settings.yaml
     cooldown_bars: int = 2  # 同步 settings.yaml
 

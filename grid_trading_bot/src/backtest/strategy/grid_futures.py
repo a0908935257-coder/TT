@@ -9,22 +9,23 @@ Strategy Logic:
 - Dynamic ATR-based grid range
 - Leverage support with proper PnL calculation
 
-⚠️ Walk-Forward Validated Parameters (2026-01-28) - 積極策略超高槓桿高風險:
+⚠️ Walk-Forward Validated Parameters (2026-01-31) - 7x 槓桿:
 - Direction: NEUTRAL (雙向交易)
-- Leverage: 42x (超高槓桿)
-- Grid Count: 18
-- ATR Period: 28
-- ATR Multiplier: 9.5 (超寬範圍)
+- Leverage: 7x
+- Grid Count: 12
+- ATR Period: 14
+- ATR Multiplier: 9.5
+- Trend Period: 15
 - Stop Loss: 0.5% (緊止損)
 
-Validation Results (BTCUSDT 1h, 2024-01 ~ 2026-01):
-- 年化報酬: 45.18%
-- 回撤: 3.79%
-- 勝率: 55.77%
-- 交易次數: 4,976
-- Walk-Forward 一致性: 88.9% (8/9)
-- OOS/IS Sharpe: 0.72
-- Monte Carlo 獲利機率: 100%
+Validation Results (BTCUSDT 15m, 2024-01 ~ 2026-01):
+- 總報酬: 306.85%
+- 最大回撤: 53.02%
+- 勝率: 59.26%
+- 交易次數: 9,068
+- Walk-Forward 一致性: 44.4% (4/9)
+- OOS/IS Sharpe Ratio: 1.66 (無過擬合)
+- Monte Carlo 獲利機率: 100% (ROBUST)
 """
 
 from dataclasses import dataclass, field
