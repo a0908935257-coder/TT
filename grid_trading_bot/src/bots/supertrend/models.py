@@ -282,3 +282,5 @@ class Trade:
     exit_time: datetime
     exit_reason: ExitReason
     holding_duration: int  # in bars
+    mfe: Optional[Decimal] = None  # Max Favorable Excursion (%)
+    mae: Optional[Decimal] = None  # Max Adverse Excursion (%)

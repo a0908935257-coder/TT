@@ -1797,6 +1797,15 @@ class SupertrendBot(BaseBot):
                 fee = (self._position.entry_price + exit_price) * self._position.quantity * self.FEE_RATE
                 net_pnl = pnl - fee
 
+                # Calculate MFE/MAE
+                mfe, mae = self.calculate_mfe_mae(
+                    side=self._position.side.value,
+                    entry_price=self._position.entry_price,
+                    highest_price=self._position.highest_price,
+                    lowest_price=self._position.lowest_price,
+                    leverage=self._config.leverage,
+                )
+
                 # Record trade
                 trade = Trade(
                     side=self._position.side,
@@ -1809,6 +1818,8 @@ class SupertrendBot(BaseBot):
                     exit_time=datetime.now(timezone.utc),
                     exit_reason=reason,
                     holding_duration=self._current_bar - self._entry_bar,
+                    mfe=mfe,
+                    mae=mae,
                 )
                 self._trades.append(trade)
                 self._total_pnl += net_pnl
@@ -1854,6 +1865,7 @@ class SupertrendBot(BaseBot):
                 quantity=self._position.quantity if self._position else Decimal("0"),
                 error=e,
             )
+            await self._on_close_position_failure(self._config.symbol, e)
 
     # =========================================================================
     # Risk Control (每日虧損限制 + 連續虧損保護)

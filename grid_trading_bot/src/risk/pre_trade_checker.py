@@ -16,7 +16,7 @@ Checks performed:
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Deque, Dict, List, Optional, Protocol, Set
@@ -47,6 +47,7 @@ class RejectionReason(Enum):
     BLACKLISTED_SYMBOL = "blacklisted_symbol"
     CIRCUIT_BREAKER_ACTIVE = "circuit_breaker_active"
     MAX_ORDERS_PER_SYMBOL = "max_orders_per_symbol"
+    DAILY_TRADE_LIMIT = "daily_trade_limit"
 
 
 @dataclass
@@ -79,6 +80,9 @@ class PreTradeConfig:
 
     # Blacklist
     blacklisted_symbols: Set[str] = field(default_factory=set)
+
+    # Daily trade limit
+    max_daily_trades: int = 50  # Max trades per day (0 = unlimited)
 
     # Behavior settings
     reject_on_warning: bool = False  # Whether to reject on warning
@@ -233,6 +237,10 @@ class PreTradeRiskChecker:
         self._order_timestamps: Deque[datetime] = deque(maxlen=1000)
         self._last_order_time: Optional[datetime] = None
 
+        # Daily trade count tracking
+        self._daily_trade_count: int = 0
+        self._daily_trade_date: Optional[date] = None
+
         # Statistics
         self._total_checks: int = 0
         self._total_rejections: int = 0
@@ -285,6 +293,7 @@ class PreTradeRiskChecker:
         # Run all checks
         self._check_circuit_breaker(order, result)
         self._check_blacklist(order, result)
+        self._check_daily_trade_limit(order, result)
         self._check_frequency_limit(order, result)
         self._check_position_limit_symbol(order, result)
         self._check_position_limit_total(order, result)
@@ -298,6 +307,8 @@ class PreTradeRiskChecker:
             now = datetime.now(timezone.utc)
             self._order_timestamps.append(now)
             self._last_order_time = now
+            if not order.reduce_only:
+                self._daily_trade_count += 1
         else:
             self._total_rejections += 1
             for reason in result.rejection_reasons:
@@ -372,6 +383,50 @@ class PreTradeRiskChecker:
                     check_name="blacklist",
                     result=CheckResult.PASSED,
                     message="Symbol not blacklisted",
+                )
+            )
+
+    def _check_daily_trade_limit(
+        self, order: OrderRequest, result: PreTradeCheckResult
+    ) -> None:
+        """Check daily trade count limit."""
+        if self._config.max_daily_trades <= 0:
+            return  # Unlimited
+
+        # Skip for reduce-only orders (always allow closing)
+        if order.reduce_only:
+            result.add_check(
+                CheckDetail(
+                    check_name="daily_trade_limit",
+                    result=CheckResult.PASSED,
+                    message="Reduce-only order, skipping daily trade limit",
+                )
+            )
+            return
+
+        # Reset counter on new day
+        today = date.today()
+        if self._daily_trade_date != today:
+            self._daily_trade_count = 0
+            self._daily_trade_date = today
+
+        if self._daily_trade_count >= self._config.max_daily_trades:
+            result.add_check(
+                CheckDetail(
+                    check_name="daily_trade_limit",
+                    result=CheckResult.REJECTED,
+                    message=f"Daily trade limit reached ({self._daily_trade_count} >= {self._config.max_daily_trades})",
+                    current_value=Decimal(str(self._daily_trade_count)),
+                    threshold=Decimal(str(self._config.max_daily_trades)),
+                    rejection_reason=RejectionReason.DAILY_TRADE_LIMIT,
+                )
+            )
+        else:
+            result.add_check(
+                CheckDetail(
+                    check_name="daily_trade_limit",
+                    result=CheckResult.PASSED,
+                    message=f"Daily trades OK ({self._daily_trade_count}/{self._config.max_daily_trades})",
                 )
             )
 

@@ -1027,6 +1027,15 @@ class RSIGridBot(BaseBot):
 
                 fee = close_qty * fill_price * self._config.fee_rate * 2
 
+                # Calculate MFE/MAE
+                mfe, mae = self.calculate_mfe_mae(
+                    side=self._position.side.value,
+                    entry_price=self._position.entry_price,
+                    highest_price=self._position.highest_price,
+                    lowest_price=self._position.lowest_price,
+                    leverage=self._config.leverage,
+                )
+
                 # Record trade
                 exit_rsi = self._rsi_calc.rsi if self._rsi_calc else Decimal("50")
                 trade = RSIGridTrade(
@@ -1046,6 +1055,8 @@ class RSIGridBot(BaseBot):
                     exit_rsi=exit_rsi,
                     entry_zone=self._position.entry_zone,
                     grid_level=self._position.grid_level,
+                    mfe=mfe,
+                    mae=mae,
                 )
                 self._stats.record_trade(trade)
 
@@ -1101,6 +1112,7 @@ class RSIGridBot(BaseBot):
                 quantity=quantity or (self._position.quantity if self._position else Decimal("0")),
                 error=e,
             )
+            await self._on_close_position_failure(self._config.symbol, e)
 
         return False
 

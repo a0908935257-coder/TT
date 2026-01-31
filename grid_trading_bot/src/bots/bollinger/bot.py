@@ -605,6 +605,7 @@ class BollingerBot(BaseBot):
                     current_price = self._klines[-1].close if self._klines and len(self._klines) > 0 else Decimal("0")
                     if current_price > 0:
                         self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+                        self._position.update_extremes(current_price)
                         # Record price for CB validation
                         self.record_price_for_validation(current_price)
 
@@ -1400,6 +1401,15 @@ class BollingerBot(BaseBot):
                 denominator = entry_price * quantity
                 pnl_pct = (pnl / denominator * Decimal("100")) if denominator > 0 else Decimal("0")
 
+                # Calculate MFE/MAE
+                mfe, mae = self.calculate_mfe_mae(
+                    side=side.value,
+                    entry_price=entry_price,
+                    highest_price=self._position.highest_price,
+                    lowest_price=self._position.lowest_price,
+                    leverage=self._config.leverage,
+                )
+
                 # Record trade
                 trade = TradeRecord(
                     trade_id=str(uuid.uuid4()),
@@ -1414,6 +1424,8 @@ class BollingerBot(BaseBot):
                     entry_time=self._position.entry_time,
                     exit_time=datetime.now(timezone.utc),
                     exit_reason=reason.value,
+                    mfe=mfe,
+                    mae=mae,
                 )
                 self._stats.record_trade(trade)
 
@@ -1462,6 +1474,7 @@ class BollingerBot(BaseBot):
                 quantity=self._position.quantity if self._position else Decimal("0"),
                 error=e,
             )
+            await self._on_close_position_failure(self._config.symbol, e)
 
         return False
 

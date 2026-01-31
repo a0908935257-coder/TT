@@ -310,6 +310,8 @@ class FuturesPosition:
     liquidation_price: Optional[Decimal] = None
     stop_loss_order_id: Optional[str] = None  # Exchange stop loss order ID
     stop_loss_price: Optional[Decimal] = None  # Stop loss trigger price
+    highest_price: Decimal = field(default_factory=lambda: Decimal("0"))  # MFE/MAE tracking
+    lowest_price: Decimal = field(default_factory=lambda: Decimal("0"))   # MFE/MAE tracking
 
     def __post_init__(self):
         for attr in ['entry_price', 'quantity', 'unrealized_pnl']:
@@ -320,6 +322,13 @@ class FuturesPosition:
             self.liquidation_price = Decimal(str(self.liquidation_price))
         if self.stop_loss_price is not None and not isinstance(self.stop_loss_price, Decimal):
             self.stop_loss_price = Decimal(str(self.stop_loss_price))
+
+    def update_extremes(self, current_price: Decimal) -> None:
+        """Update highest/lowest prices for MFE/MAE tracking."""
+        if self.highest_price == Decimal("0") or current_price > self.highest_price:
+            self.highest_price = current_price
+        if self.lowest_price == Decimal("0") or current_price < self.lowest_price:
+            self.lowest_price = current_price
 
     @property
     def notional_value(self) -> Decimal:
@@ -373,6 +382,8 @@ class GridTrade:
     exit_time: datetime
     exit_reason: ExitReason
     grid_level: int
+    mfe: Optional[Decimal] = None  # Max Favorable Excursion (%)
+    mae: Optional[Decimal] = None  # Max Adverse Excursion (%)
 
     def __post_init__(self):
         for attr in ['entry_price', 'exit_price', 'quantity', 'pnl', 'fee']:

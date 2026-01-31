@@ -363,6 +363,8 @@ class RSIGridTrade:
     exit_rsi: Decimal
     entry_zone: RSIZone
     grid_level: int
+    mfe: Optional[Decimal] = None  # Max Favorable Excursion (%)
+    mae: Optional[Decimal] = None  # Max Adverse Excursion (%)
 
     def __post_init__(self):
         for attr in ['entry_price', 'exit_price', 'quantity', 'pnl', 'fee', 'entry_rsi', 'exit_rsi']:

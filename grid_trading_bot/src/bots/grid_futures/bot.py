@@ -1057,6 +1057,15 @@ class GridFuturesBot(BaseBot):
                 fee = close_qty * fill_price * self._config.fee_rate * 2  # Entry + exit fee
 
                 # Record trade
+                # Calculate MFE/MAE
+                mfe, mae = self.calculate_mfe_mae(
+                    side=self._position.side.value,
+                    entry_price=self._position.entry_price,
+                    highest_price=self._position.highest_price,
+                    lowest_price=self._position.lowest_price,
+                    leverage=self._config.leverage,
+                )
+
                 trade = GridTrade(
                     trade_id=str(uuid.uuid4())[:8],
                     symbol=self._config.symbol,
@@ -1071,6 +1080,8 @@ class GridFuturesBot(BaseBot):
                     exit_time=datetime.now(timezone.utc),
                     exit_reason=reason,
                     grid_level=0,
+                    mfe=mfe,
+                    mae=mae,
                 )
                 self._grid_stats.record_trade(trade)
 
@@ -1124,6 +1135,7 @@ class GridFuturesBot(BaseBot):
                 quantity=quantity or (self._position.quantity if self._position else Decimal("0")),
                 error=e,
             )
+            await self._on_close_position_failure(self._config.symbol, e)
 
         return False
 
@@ -1216,6 +1228,7 @@ class GridFuturesBot(BaseBot):
             # Update position PnL and check stop loss / timeout
             if self._position:
                 self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
+                self._position.update_extremes(current_price)
                 if await self._check_stop_loss(current_price):
                     logger.warning(f"Stop loss triggered at {current_price}")
                 elif self._check_timeout_exit(current_price):

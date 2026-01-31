@@ -3203,6 +3203,32 @@ class BaseBot(ABC):
         # Return True if retry is possible
         return error_code == self.ORDER_ERROR_RATE_LIMIT
 
+    async def _on_close_position_failure(self, symbol: str, error: Exception) -> None:
+        """
+        Handle close position failure after all retries exhausted.
+
+        Pauses the bot and sends critical alert requiring manual intervention.
+        """
+        logger.critical(
+            f"[{self._bot_id}] CLOSE POSITION FAILED for {symbol}: {error}\n"
+            f"Bot is being PAUSED - manual intervention required!"
+        )
+
+        # Pause the bot
+        self._init_strategy_risk_tracking()
+        self._strategy_risk["is_paused_by_risk"] = True
+
+        if self._notifier:
+            await self._notifier.send_alert(
+                title=f"🚨 CRITICAL: Close Position Failed - {self._bot_id}",
+                message=(
+                    f"Symbol: {symbol}\n"
+                    f"Error: {error}\n"
+                    f"Action: Bot PAUSED - manual intervention required!\n"
+                    f"Check exchange for open positions and resolve manually."
+                ),
+            )
+
     # =========================================================================
     # Order Precision Handling (Price/Quantity Normalization)
     # =========================================================================
@@ -6025,6 +6051,44 @@ class BaseBot(ABC):
         return int((datetime.now(timezone.utc) - self._stats.start_time).total_seconds())
 
     # =========================================================================
+    # MFE/MAE Calculation Helper
+    # =========================================================================
+
+    @staticmethod
+    def calculate_mfe_mae(
+        side: str,
+        entry_price: Decimal,
+        highest_price: Decimal,
+        lowest_price: Decimal,
+        leverage: int = 1,
+    ) -> Tuple[Decimal, Decimal]:
+        """
+        Calculate Max Favorable Excursion and Max Adverse Excursion.
+
+        Args:
+            side: "LONG" or "SHORT"
+            entry_price: Position entry price
+            highest_price: Highest price during position
+            lowest_price: Lowest price during position
+            leverage: Position leverage
+
+        Returns:
+            (mfe_pct, mae_pct) as percentages
+        """
+        if entry_price <= 0 or highest_price <= 0 or lowest_price <= 0:
+            return Decimal("0"), Decimal("0")
+
+        lev = Decimal(leverage)
+        if side.upper() == "LONG":
+            mfe = (highest_price - entry_price) / entry_price * lev * Decimal("100")
+            mae = (entry_price - lowest_price) / entry_price * lev * Decimal("100")
+        else:  # SHORT
+            mfe = (entry_price - lowest_price) / entry_price * lev * Decimal("100")
+            mae = (highest_price - entry_price) / entry_price * lev * Decimal("100")
+
+        return max(mfe, Decimal("0")), max(mae, Decimal("0"))
+
+    # =========================================================================
     # Per-Strategy Risk Isolation (風控相互影響)
     # Prevents one strategy's losses from affecting healthy strategies
     # =========================================================================
@@ -6037,6 +6101,7 @@ class BaseBot(ABC):
     STRATEGY_DRAWDOWN_PAUSE_PCT = Decimal("0.08")    # 8% drawdown -> pause
     STRATEGY_CONSECUTIVE_LOSS_WARNING = 3  # 3 consecutive losses
     STRATEGY_CONSECUTIVE_LOSS_PAUSE = 5    # 5 consecutive losses -> pause
+    STRATEGY_MAX_DAILY_TRADES = 50         # Max trades per day (0 = unlimited)
 
     def _init_strategy_risk_tracking(self) -> None:
         """Initialize per-strategy risk tracking."""
@@ -6214,6 +6279,17 @@ class BaseBot(ABC):
             )
             await self._on_strategy_risk_warning(result)
 
+        # Check daily trade count limit
+        if self.STRATEGY_MAX_DAILY_TRADES > 0 and risk["daily_trades"] >= self.STRATEGY_MAX_DAILY_TRADES:
+            if result["risk_level"] in ("NORMAL", "WARNING"):
+                result["risk_level"] = "DANGER"
+                result["action"] = "PAUSE_SELF"
+                risk["is_paused_by_risk"] = True
+                await self._on_strategy_risk_pause(result)
+            result["alerts"].append(
+                f"Daily trade limit reached ({risk['daily_trades']} >= {self.STRATEGY_MAX_DAILY_TRADES})"
+            )
+
         # Record event if there's an alert
         if result["alerts"]:
             risk["risk_events"].append({
@@ -6339,6 +6415,7 @@ class BaseBot(ABC):
             "consecutive_wins": risk["consecutive_wins"],
             "daily_loss": str(risk["daily_loss"]),
             "daily_trades": risk["daily_trades"],
+            "max_daily_trades": self.STRATEGY_MAX_DAILY_TRADES,
             "is_paused_by_risk": risk["is_paused_by_risk"],
             "is_stopped_by_risk": risk["is_stopped_by_risk"],
             "last_check_time": risk["last_check_time"].isoformat() if risk["last_check_time"] else None,
