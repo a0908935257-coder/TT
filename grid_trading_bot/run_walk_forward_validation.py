@@ -146,19 +146,21 @@ def create_all_strategies() -> dict:
     # Grid Futures: 使用優化後的積極策略參數 (2026-01-28)
     # 目標: 年化 40%+, 回撤容忍 30%
     # 優化結果: 年化 45.18%, 回撤 3.79%, Sharpe 10.30
+    # Grid Futures: Optuna 300 trials 優化 (2026-01-31, v2 強化 OOS 目標函數)
+    # IS: +7222%, OOS: +188.2%, OOS Sharpe: 6.06, OOS 回撤: 2.76%
     grid_futures_config = GridFuturesStrategyConfig(
-        leverage=7,  # 優化結果 2026-01-31 (equity-based margin)
+        leverage=7,  # 7x equity-based margin
         direction=GridDirection.NEUTRAL,  # 優化結果: 中性雙向
-        grid_count=12,  # 優化結果
-        atr_multiplier=Decimal("10.0"),  # 優化結果: 寬範圍
-        trend_period=27,  # 優化結果
-        atr_period=41,  # 優化結果
+        grid_count=8,  # 優化結果 (原 12)
+        atr_multiplier=Decimal("6.5"),  # 優化結果 (原 10.0)
+        trend_period=48,  # 優化結果 (原 27)
+        atr_period=46,  # 優化結果 (原 41)
         stop_loss_pct=Decimal("0.005"),  # 優化結果: 0.5% 緊止損
         take_profit_grids=1,  # 優化結果
-        use_hysteresis=False,  # 優化結果: 關閉
-        hysteresis_pct=Decimal("0.005"),  # 優化結果
-        use_signal_cooldown=False,  # 優化結果: 關閉
-        cooldown_bars=2,  # 優化結果
+        use_hysteresis=True,  # 優化結果: 啟用 (原 False)
+        hysteresis_pct=Decimal("0.001"),  # 優化結果 (原 0.005)
+        use_signal_cooldown=True,  # 優化結果: 啟用 (原 False)
+        cooldown_bars=0,  # 優化結果 (原 2)
     )
 
     # Supertrend: HYBRID_GRID 優化參數 (2026-01-31, equity-based margin)

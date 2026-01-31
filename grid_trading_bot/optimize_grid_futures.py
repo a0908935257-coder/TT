@@ -197,39 +197,50 @@ def create_grid_futures_objective(
             return -500 + is_trades
         if oos_trades < 40:
             return -500 + oos_trades
-        if max_dd > 35:
+        if max_dd > 20:  # 收緊: 35% → 20%
             return -100 - max_dd
 
-        # ========== 目標函數 (IS+OOS 聯合) ==========
+        # ========== 目標函數 (IS+OOS 聯合, v2 強化 OOS) ==========
 
-        # IS 報酬
-        is_return_score = is_return * 1.0
+        # IS 報酬 (降低權重，避免偏重 IS)
+        is_return_score = is_return * 0.5
 
-        # OOS 報酬（高權重）
-        oos_return_score = oos_return * 2.5
+        # OOS 報酬（大幅提高權重: 2.5 → 4.0）
+        oos_return_score = oos_return * 4.0
 
         # OOS 超額報酬
-        oos_excess_score = oos_excess * 1.0
+        oos_excess_score = oos_excess * 1.5
 
-        # Sharpe
-        sharpe_score = oos_sharpe * 2
+        # OOS Sharpe (提高權重)
+        sharpe_score = oos_sharpe * 3
 
-        # 回撤懲罰
-        dd_penalty = max(0, max_dd - 15) * 0.5
+        # OOS Sharpe 門檻懲罰: < 1.0 直接扣分
+        oos_sharpe_penalty = 0
+        if oos_sharpe < 1.0:
+            oos_sharpe_penalty = (1.0 - oos_sharpe) * 20
 
-        # 一致性獎勵
+        # 回撤懲罰 (更嚴格)
+        dd_penalty = max(0, max_dd - 10) * 1.0
+
+        # 一致性獎勵 (提高)
         consistency_bonus = 0
         if is_excess > 0 and oos_excess > 0:
-            consistency_bonus = 10
+            consistency_bonus = 15
 
-        # Overfit penalty: IS 遠高於 OOS
+        # WF 模擬獎勵: OOS/IS 比率 > 0.5 額外加分
+        wf_bonus = 0
+        if oos_is_ratio > 0.5:
+            wf_bonus = (oos_is_ratio - 0.5) * 30
+
+        # Overfit penalty: 閾值 0.3→0.5, 係數 50→100
         overfit_penalty = 0
-        if is_return > 0 and oos_is_ratio < 0.3:
-            overfit_penalty = (0.3 - oos_is_ratio) * 50
+        if is_return > 0 and oos_is_ratio < 0.5:
+            overfit_penalty = (0.5 - oos_is_ratio) * 100
 
         # 總分
         score = (is_return_score + oos_return_score + oos_excess_score
-                 + sharpe_score - dd_penalty + consistency_bonus - overfit_penalty)
+                 + sharpe_score - oos_sharpe_penalty - dd_penalty
+                 + consistency_bonus + wf_bonus - overfit_penalty)
 
         # 記錄指標
         trial.set_user_attr("is_return", is_return)
