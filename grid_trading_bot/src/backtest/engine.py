@@ -449,7 +449,7 @@ class BacktestEngine:
             if triggered:
                 # Liquidation fee on notional × leverage
                 liq_fee = position.notional * Decimal(self._config.leverage) * self._config.liquidation_fee_pct
-                exit_fee = liq_fee + position.entry_price * position.quantity * self._config.fee_rate
+                exit_fee = liq_fee + position.entry_price * position.quantity * self._config.fee_rate * Decimal(self._config.leverage)
 
                 trade = self._position_manager.close_position(
                     position=position,

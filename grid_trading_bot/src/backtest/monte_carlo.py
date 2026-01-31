@@ -645,8 +645,16 @@ class MonteCarloSimulator:
                 original_result=result,
             )
 
-        # Calculate return statistics
-        returns = [float(t.pnl_pct) / 100 for t in result.trades]  # Convert to decimal
+        # Calculate account-level return statistics (consistent with shuffle/bootstrap)
+        returns: list[float] = []
+        equity = float(initial_capital)
+        for trade in result.trades:
+            pnl = float(trade.pnl)
+            if equity > 0:
+                returns.append(pnl / equity)
+            else:
+                returns.append(0.0)
+            equity += pnl
         mu = sum(returns) / len(returns)  # Mean return
         sigma = math.sqrt(sum((r - mu) ** 2 for r in returns) / max(len(returns) - 1, 1))
 

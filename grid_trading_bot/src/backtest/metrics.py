@@ -117,8 +117,8 @@ class MetricsCalculator:
         result.max_drawdown, result.max_drawdown_pct = self._calculate_max_drawdown(
             equity_curve
         )
-        result.sharpe_ratio = self._calculate_sharpe_ratio(daily_returns)
-        result.sortino_ratio = self._calculate_sortino_ratio(daily_returns)
+        result.sharpe_ratio = self._calculate_sharpe_ratio(daily_returns, equity_curve)
+        result.sortino_ratio = self._calculate_sortino_ratio(daily_returns, equity_curve)
         result.calmar_ratio = self._calculate_calmar_ratio(
             result.total_profit_pct, result.max_drawdown_pct
         )
@@ -164,6 +164,7 @@ class MetricsCalculator:
     def _calculate_sharpe_ratio(
         self,
         daily_returns: dict[str, Decimal],
+        equity_curve: list[Decimal] | None = None,
         annualize: bool = True,
     ) -> Decimal:
         """
@@ -171,6 +172,7 @@ class MetricsCalculator:
 
         Args:
             daily_returns: Daily P&L values
+            equity_curve: Equity curve for running-equity-based returns
             annualize: Whether to annualize the ratio
 
         Returns:
@@ -181,8 +183,8 @@ class MetricsCalculator:
 
         returns = list(daily_returns.values())
 
-        # Convert to percentage returns
-        returns_pct = [r / self._initial_capital for r in returns]
+        # Convert to percentage returns using running equity as denominator
+        returns_pct = self._compute_equity_based_returns(returns, equity_curve)
 
         # Mean return
         mean_return = sum(returns_pct) / Decimal(len(returns_pct))
@@ -214,6 +216,7 @@ class MetricsCalculator:
     def _calculate_sortino_ratio(
         self,
         daily_returns: dict[str, Decimal],
+        equity_curve: list[Decimal] | None = None,
         annualize: bool = True,
     ) -> Decimal:
         """
@@ -221,6 +224,7 @@ class MetricsCalculator:
 
         Args:
             daily_returns: Daily P&L values
+            equity_curve: Equity curve for running-equity-based returns
             annualize: Whether to annualize the ratio
 
         Returns:
@@ -230,7 +234,7 @@ class MetricsCalculator:
             return Decimal("0")
 
         returns = list(daily_returns.values())
-        returns_pct = [r / self._initial_capital for r in returns]
+        returns_pct = self._compute_equity_based_returns(returns, equity_curve)
 
         # Mean return
         mean_return = sum(returns_pct) / Decimal(len(returns_pct))
@@ -266,6 +270,34 @@ class MetricsCalculator:
             sortino *= Decimal(str(math.sqrt(float(self.TRADING_DAYS_PER_YEAR))))
 
         return sortino
+
+    def _compute_equity_based_returns(
+        self,
+        returns: list[Decimal],
+        equity_curve: list[Decimal] | None = None,
+    ) -> list[Decimal]:
+        """
+        Convert daily P&L to percentage returns using running equity.
+
+        If equity_curve is provided, builds a date-aligned equity series
+        to divide each day's PnL by the prior day's equity. Otherwise
+        falls back to initial_capital (legacy behaviour).
+        """
+        if not equity_curve or len(equity_curve) < 2:
+            return [r / self._initial_capital for r in returns]
+
+        # equity_curve has one entry per bar; daily_returns has one per calendar day.
+        # We approximate daily starting equity by walking equity forward day-by-day.
+        # Build running start-of-day equity from cumulative daily PnL
+        returns_pct: list[Decimal] = []
+        running_equity = self._initial_capital
+        for r in returns:
+            if running_equity > 0:
+                returns_pct.append(r / running_equity)
+            else:
+                returns_pct.append(Decimal("0"))
+            running_equity += r
+        return returns_pct
 
     def _calculate_calmar_ratio(
         self, total_return_pct: Decimal, max_drawdown_pct: Decimal
