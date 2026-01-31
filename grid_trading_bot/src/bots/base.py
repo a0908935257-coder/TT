@@ -5399,44 +5399,6 @@ class BaseBot(ABC):
 
         return False, None, execution_details
 
-    async def _classify_order_error(self, error: Exception) -> tuple[str, str]:
-        """
-        Classify order error for retry decision.
-
-        Returns:
-            Tuple of (error_code, error_category)
-
-        Categories:
-        - RETRYABLE: Temporary issues (network, rate limit)
-        - INSUFFICIENT_BALANCE: Not enough funds
-        - POSITION_LIMIT: Max position reached
-        - SYMBOL_NOT_FOUND: Invalid symbol
-        - UNKNOWN: Unclassified error
-        """
-        error_str = str(error).lower()
-
-        # Insufficient balance
-        if "insufficient" in error_str or "balance" in error_str or "margin" in error_str:
-            return str(error), "INSUFFICIENT_BALANCE"
-
-        # Position limit
-        if "position" in error_str and ("limit" in error_str or "max" in error_str):
-            return str(error), "POSITION_LIMIT"
-
-        # Symbol not found
-        if "symbol" in error_str and "not found" in error_str:
-            return str(error), "SYMBOL_NOT_FOUND"
-
-        # Rate limit
-        if "rate" in error_str or "too many" in error_str:
-            return str(error), "RETRYABLE"
-
-        # Network/timeout
-        if "timeout" in error_str or "connection" in error_str or "network" in error_str:
-            return str(error), "RETRYABLE"
-
-        return str(error), "UNKNOWN"
-
     # =========================================================================
     # Liquidity Monitoring
     # =========================================================================
