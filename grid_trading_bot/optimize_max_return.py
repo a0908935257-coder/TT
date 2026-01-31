@@ -121,10 +121,9 @@ def create_supertrend_objective(klines: list[Kline], leverage: int = 10):
 
         bt_config = BacktestConfig(
             initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
-        )
+            fee_rate=Decimal("0.0006"),       # 0.06% (aligned with WF validation)
+            slippage_pct=Decimal("0.0005"),   # 0.05% (aligned with WF validation)
+        ).with_leverage(leverage)             # use_margin=True for proper futures accounting
 
         engine = BacktestEngine(bt_config)
         result = engine.run(klines, strategy)
@@ -209,10 +208,9 @@ def create_rsi_grid_objective(klines: list[Kline], leverage: int = 5):
 
         bt_config = BacktestConfig(
             initial_capital=Decimal("10000"),
-            leverage=leverage,
-            fee_rate=Decimal("0.0004"),
-            slippage_pct=Decimal("0.0001"),
-        )
+            fee_rate=Decimal("0.0006"),       # 0.06% (aligned with WF validation)
+            slippage_pct=Decimal("0.0005"),   # 0.05% (aligned with WF validation)
+        ).with_leverage(leverage)             # use_margin=True for proper futures accounting
 
         engine = BacktestEngine(bt_config)
         result = engine.run(klines, strategy)
