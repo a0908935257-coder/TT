@@ -221,8 +221,8 @@ class CreateBotModal(discord.ui.Modal):
         await interaction.response.defer()
 
         try:
-            import os
             from src.master import BotType
+            from src.config import load_strategy_config
 
             symbol = self.symbol.value.upper()
             max_capital = self.max_capital.value
@@ -230,62 +230,17 @@ class CreateBotModal(discord.ui.Modal):
             # Build config based on bot type
             if self.bot_type_str == "bollinger":
                 bot_type = BotType.BOLLINGER
-                bot_config = {
-                    "symbol": symbol,
-                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '1h'),
-                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '18')),
-                    "margin_type": os.getenv('BOLLINGER_MARGIN_TYPE', 'ISOLATED'),
-                    "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
-                    "mode": os.getenv('BOLLINGER_MODE', 'bb_neutral_grid'),
-                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '24')),
-                    "bb_std": os.getenv('BOLLINGER_BB_STD', '2.0'),
-                    "grid_count": int(os.getenv('BOLLINGER_GRID_COUNT', '8')),
-                    "take_profit_grids": int(os.getenv('BOLLINGER_TAKE_PROFIT_GRIDS', '1')),
-                    "use_atr_range": os.getenv('BOLLINGER_USE_ATR_RANGE', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '21')),
-                    "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '8.5'),
-                    "fallback_range_pct": os.getenv('BOLLINGER_FALLBACK_RANGE_PCT', '0.04'),
-                    "max_position_pct": os.getenv('BOLLINGER_MAX_POSITION_PCT', '0.5'),
-                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.003'),
-                    "rebuild_threshold_pct": os.getenv('BOLLINGER_REBUILD_THRESHOLD_PCT', '0.02'),
-                    "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
-                    "use_hysteresis": os.getenv('BOLLINGER_USE_HYSTERESIS', 'false').lower() == 'true',
-                    "hysteresis_pct": os.getenv('BOLLINGER_HYSTERESIS_PCT', '0.0015'),
-                    "use_signal_cooldown": os.getenv('BOLLINGER_USE_SIGNAL_COOLDOWN', 'false').lower() == 'true',
-                    "cooldown_bars": int(os.getenv('BOLLINGER_COOLDOWN_BARS', '6')),
-                    "use_exchange_stop_loss": os.getenv('BOLLINGER_USE_EXCHANGE_STOP_LOSS', 'true').lower() == 'true',
-                    "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '0')),
-                    "max_capital": max_capital,
-                }
-                type_info = f"Leverage: 18x | Timeframe: 1h"
+                bot_config = load_strategy_config("bollinger")
+                bot_config["symbol"] = symbol
+                bot_config["max_capital"] = max_capital
+                type_info = f"Leverage: {bot_config.get('leverage', 18)}x | Timeframe: {bot_config.get('timeframe', '1h')}"
 
             elif self.bot_type_str == "grid_futures":
                 bot_type = BotType.GRID_FUTURES
-                bot_config = {
-                    "symbol": symbol,
-                    "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '7')),
-                    "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
-                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '8')),
-                    "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
-                    "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
-                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '48')),
-                    "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '46')),
-                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '6.5'),
-                    "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
-                    "max_capital": max_capital,
-                    "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
-                    "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
-                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.005'),
-                    "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
-                    "use_hysteresis": os.getenv('GRID_FUTURES_USE_HYSTERESIS', 'true').lower() == 'true',
-                    "hysteresis_pct": os.getenv('GRID_FUTURES_HYSTERESIS_PCT', '0.001'),
-                    "use_signal_cooldown": os.getenv('GRID_FUTURES_USE_SIGNAL_COOLDOWN', 'true').lower() == 'true',
-                    "cooldown_bars": int(os.getenv('GRID_FUTURES_COOLDOWN_BARS', '0')),
-                }
-                type_info = f"Leverage: 7x | Grids: 8"
+                bot_config = load_strategy_config("grid_futures")
+                bot_config["symbol"] = symbol
+                bot_config["max_capital"] = max_capital
+                type_info = f"Leverage: {bot_config.get('leverage', 7)}x | Grids: {bot_config.get('grid_count', 8)}"
 
             else:  # grid (spot)
                 bot_type = BotType.GRID

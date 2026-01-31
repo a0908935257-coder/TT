@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from dotenv import load_dotenv
 
 from src.core import get_logger
+from src.config import load_strategy_config
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
@@ -200,89 +201,18 @@ Dashboard 摘要:
 
             elif bot_type_str == 'bollinger':
                 bot_type = BotType.BOLLINGER
-                bot_config = {
-                    "symbol": symbol,
-                    "timeframe": os.getenv('BOLLINGER_TIMEFRAME', '1h'),
-                    "leverage": int(os.getenv('BOLLINGER_LEVERAGE', '18')),
-                    "margin_type": os.getenv('BOLLINGER_MARGIN_TYPE', 'ISOLATED'),
-                    "position_size_pct": os.getenv('BOLLINGER_POSITION_SIZE', '0.1'),
-                    "mode": os.getenv('BOLLINGER_MODE', 'bb_neutral_grid'),
-                    "bb_period": int(os.getenv('BOLLINGER_BB_PERIOD', '24')),
-                    "bb_std": os.getenv('BOLLINGER_BB_STD', '2.0'),
-                    "grid_count": int(os.getenv('BOLLINGER_GRID_COUNT', '8')),
-                    "take_profit_grids": int(os.getenv('BOLLINGER_TAKE_PROFIT_GRIDS', '1')),
-                    "use_atr_range": os.getenv('BOLLINGER_USE_ATR_RANGE', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('BOLLINGER_ATR_PERIOD', '21')),
-                    "atr_multiplier": os.getenv('BOLLINGER_ATR_MULTIPLIER', '8.5'),
-                    "fallback_range_pct": os.getenv('BOLLINGER_FALLBACK_RANGE_PCT', '0.04'),
-                    "max_position_pct": os.getenv('BOLLINGER_MAX_POSITION_PCT', '0.5'),
-                    "stop_loss_pct": os.getenv('BOLLINGER_STOP_LOSS_PCT', '0.003'),
-                    "rebuild_threshold_pct": os.getenv('BOLLINGER_REBUILD_THRESHOLD_PCT', '0.02'),
-                    "bbw_lookback": int(os.getenv('BOLLINGER_BBW_LOOKBACK', '200')),
-                    "bbw_threshold_pct": os.getenv('BOLLINGER_BBW_THRESHOLD', '20'),
-                    "use_hysteresis": os.getenv('BOLLINGER_USE_HYSTERESIS', 'false').lower() == 'true',
-                    "hysteresis_pct": os.getenv('BOLLINGER_HYSTERESIS_PCT', '0.0015'),
-                    "use_signal_cooldown": os.getenv('BOLLINGER_USE_SIGNAL_COOLDOWN', 'false').lower() == 'true',
-                    "cooldown_bars": int(os.getenv('BOLLINGER_COOLDOWN_BARS', '6')),
-                    "use_exchange_stop_loss": os.getenv('BOLLINGER_USE_EXCHANGE_STOP_LOSS', 'true').lower() == 'true',
-                    "max_hold_bars": int(os.getenv('BOLLINGER_MAX_HOLD_BARS', '0')),
-                }
+                bot_config = load_strategy_config("bollinger")
+                bot_config["symbol"] = symbol
 
             elif bot_type_str == 'supertrend':
                 bot_type = BotType.SUPERTREND
-                bot_config = {
-                    "symbol": symbol,
-                    "timeframe": os.getenv('SUPERTREND_TIMEFRAME', '1h'),
-                    "atr_period": int(os.getenv('SUPERTREND_ATR_PERIOD', '11')),
-                    "atr_multiplier": os.getenv('SUPERTREND_ATR_MULTIPLIER', '1.5'),
-                    "leverage": int(os.getenv('SUPERTREND_LEVERAGE', '7')),
-                    "margin_type": os.getenv('SUPERTREND_MARGIN_TYPE', 'ISOLATED'),
-                    "max_capital": os.getenv('SUPERTREND_MAX_CAPITAL'),
-                    "position_size_pct": os.getenv('SUPERTREND_POSITION_SIZE', '0.1'),
-                    "mode": os.getenv('SUPERTREND_MODE', 'hybrid_grid'),
-                    "grid_count": int(os.getenv('SUPERTREND_GRID_COUNT', '8')),
-                    "grid_atr_multiplier": os.getenv('SUPERTREND_GRID_ATR_MULTIPLIER', '7.5'),
-                    "take_profit_grids": int(os.getenv('SUPERTREND_TAKE_PROFIT_GRIDS', '1')),
-                    "use_rsi_filter": os.getenv('SUPERTREND_USE_RSI_FILTER', 'true').lower() == 'true',
-                    "rsi_period": int(os.getenv('SUPERTREND_RSI_PERIOD', '21')),
-                    "rsi_overbought": int(os.getenv('SUPERTREND_RSI_OVERBOUGHT', '75')),
-                    "rsi_oversold": int(os.getenv('SUPERTREND_RSI_OVERSOLD', '37')),
-                    "min_trend_bars": int(os.getenv('SUPERTREND_MIN_TREND_BARS', '1')),
-                    "stop_loss_pct": os.getenv('SUPERTREND_STOP_LOSS_PCT', '0.05'),
-                    "use_trailing_stop": os.getenv('SUPERTREND_USE_TRAILING_STOP', 'true').lower() == 'true',
-                    "trailing_stop_pct": os.getenv('SUPERTREND_TRAILING_STOP_PCT', '0.01'),
-                    "use_hysteresis": os.getenv('SUPERTREND_USE_HYSTERESIS', 'false').lower() == 'true',
-                    "hysteresis_pct": os.getenv('SUPERTREND_HYSTERESIS_PCT', '0.0085'),
-                    "use_signal_cooldown": os.getenv('SUPERTREND_USE_SIGNAL_COOLDOWN', 'false').lower() == 'true',
-                    "cooldown_bars": int(os.getenv('SUPERTREND_COOLDOWN_BARS', '3')),
-                    "hybrid_grid_bias_pct": os.getenv('SUPERTREND_HYBRID_GRID_BIAS_PCT', '0.65'),
-                }
+                bot_config = load_strategy_config("supertrend")
+                bot_config["symbol"] = symbol
 
             elif bot_type_str in ('grid_futures', 'gridfutures'):
                 bot_type = BotType.GRID_FUTURES
-                bot_config = {
-                    "symbol": symbol,
-                    "timeframe": os.getenv('GRID_FUTURES_TIMEFRAME', '1h'),
-                    "leverage": int(os.getenv('GRID_FUTURES_LEVERAGE', '7')),
-                    "margin_type": os.getenv('GRID_FUTURES_MARGIN_TYPE', 'ISOLATED'),
-                    "grid_count": int(os.getenv('GRID_FUTURES_COUNT', '8')),
-                    "direction": os.getenv('GRID_FUTURES_DIRECTION', 'neutral'),
-                    "use_trend_filter": os.getenv('GRID_FUTURES_USE_TREND_FILTER', 'false').lower() == 'true',
-                    "trend_period": int(os.getenv('GRID_FUTURES_TREND_PERIOD', '48')),
-                    "use_atr_range": os.getenv('GRID_FUTURES_USE_ATR_RANGE', 'true').lower() == 'true',
-                    "atr_period": int(os.getenv('GRID_FUTURES_ATR_PERIOD', '46')),
-                    "atr_multiplier": os.getenv('GRID_FUTURES_ATR_MULTIPLIER', '6.5'),
-                    "fallback_range_pct": os.getenv('GRID_FUTURES_RANGE_PCT', '0.08'),
-                    "max_capital": os.getenv('GRID_FUTURES_MAX_CAPITAL'),
-                    "position_size_pct": os.getenv('GRID_FUTURES_POSITION_SIZE', '0.1'),
-                    "max_position_pct": os.getenv('GRID_FUTURES_MAX_POSITION', '0.5'),
-                    "stop_loss_pct": os.getenv('GRID_FUTURES_STOP_LOSS', '0.005'),
-                    "rebuild_threshold_pct": os.getenv('GRID_FUTURES_REBUILD_THRESHOLD', '0.02'),
-                    "use_hysteresis": os.getenv('GRID_FUTURES_USE_HYSTERESIS', 'true').lower() == 'true',
-                    "hysteresis_pct": os.getenv('GRID_FUTURES_HYSTERESIS_PCT', '0.001'),
-                    "use_signal_cooldown": os.getenv('GRID_FUTURES_USE_SIGNAL_COOLDOWN', 'true').lower() == 'true',
-                    "cooldown_bars": int(os.getenv('GRID_FUTURES_COOLDOWN_BARS', '0')),
-                }
+                bot_config = load_strategy_config("grid_futures")
+                bot_config["symbol"] = symbol
 
             else:
                 print(f"未知的機器人類型: {bot_type_str}")
