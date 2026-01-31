@@ -10,7 +10,7 @@ from typing import Any, Optional
 from sqlalchemy import select, update
 
 from src.core import get_logger
-from src.data.database import BotStateModel, DatabaseManager
+from src.data.database import BotStateBackupModel, BotStateModel, DatabaseManager
 
 from .base import BaseRepository
 
@@ -41,6 +41,77 @@ class BotStateRepository(BaseRepository[dict, BotStateModel]):
     # State Operations
     # =========================================================================
 
+    async def backup_state(self, bot_id: str) -> Optional[dict]:
+        """
+        Backup current bot state before saving new state.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            Backup dict or None if no state to backup
+        """
+        query = select(BotStateModel).where(BotStateModel.bot_id == bot_id)
+        existing = await self._fetch_one(query)
+
+        if not existing:
+            return None
+
+        try:
+            backup = BotStateBackupModel(
+                bot_id=existing.bot_id,
+                bot_type=existing.bot_type,
+                status=existing.status,
+                config=existing.config,
+                state_data=existing.state_data,
+            )
+            async with self._db.get_session() as session:
+                session.add(backup)
+            logger.debug(f"Backed up bot state: {bot_id}")
+            return backup.to_dict()
+        except Exception as e:
+            logger.error(f"Failed to backup bot state {bot_id}: {e}")
+            return None
+
+    async def restore_from_backup(self, bot_id: str) -> Optional[dict]:
+        """
+        Restore bot state from most recent backup.
+
+        Args:
+            bot_id: Bot identifier
+
+        Returns:
+            Restored state dict or None if no backup found
+        """
+        from sqlalchemy import desc
+
+        query = (
+            select(BotStateBackupModel)
+            .where(BotStateBackupModel.bot_id == bot_id)
+            .order_by(desc(BotStateBackupModel.backed_up_at))
+            .limit(1)
+        )
+
+        async with self._db.get_session() as session:
+            result = await session.execute(query)
+            backup = result.scalar_one_or_none()
+
+        if not backup:
+            logger.warning(f"No backup found for bot: {bot_id}")
+            return None
+
+        # Restore by saving the backup data as current state
+        restored = await self.save_state(
+            bot_id=backup.bot_id,
+            bot_type=backup.bot_type,
+            status=backup.status,
+            config=backup.config,
+            state_data=backup.state_data,
+        )
+
+        logger.info(f"Restored bot state from backup: {bot_id}")
+        return restored
+
     async def save_state(
         self,
         bot_id: str,
@@ -50,7 +121,7 @@ class BotStateRepository(BaseRepository[dict, BotStateModel]):
         state_data: dict[str, Any],
     ) -> dict:
         """
-        Save or update bot state.
+        Save or update bot state (auto-backup before update).
 
         Args:
             bot_id: Bot identifier
@@ -67,6 +138,8 @@ class BotStateRepository(BaseRepository[dict, BotStateModel]):
         existing = await self._fetch_one(query)
 
         if existing:
+            # Auto-backup before update
+            await self.backup_state(bot_id)
             # Update existing state
             existing.bot_type = bot_type
             existing.status = status

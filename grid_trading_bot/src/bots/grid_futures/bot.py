@@ -121,6 +121,10 @@ class GridFuturesBot(BaseBot):
         self._last_triggered_level: Optional[int] = None
         self._hysteresis_pct: Decimal = self._config.hysteresis_pct
 
+        # Bar counting for timeout exit
+        self._current_bar: int = 0
+        self._entry_bar: int = 0
+
         # Tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
@@ -954,6 +958,9 @@ class GridFuturesBot(BaseBot):
                         entry_time=datetime.now(timezone.utc),
                     )
 
+                    # Record entry bar for timeout tracking
+                    self._entry_bar = self._current_bar
+
                     # Place exchange stop loss order
                     if self._config.use_exchange_stop_loss:
                         await self._place_stop_loss_order()
@@ -1175,6 +1182,9 @@ class GridFuturesBot(BaseBot):
             kline_low = kline.low
             kline_high = kline.high
 
+            # Increment bar counter for timeout tracking
+            self._current_bar += 1
+
             # Decrement signal cooldown
             if self._signal_cooldown > 0:
                 self._signal_cooldown -= 1
@@ -1203,11 +1213,14 @@ class GridFuturesBot(BaseBot):
             # Process grid logic with kline high/low (與回測一致)
             await self._process_grid_kline(kline_low, kline_high, current_price)
 
-            # Update position PnL and check stop loss
+            # Update position PnL and check stop loss / timeout
             if self._position:
                 self._position.unrealized_pnl = self._position.calculate_pnl(current_price)
                 if await self._check_stop_loss(current_price):
                     logger.warning(f"Stop loss triggered at {current_price}")
+                elif self._check_timeout_exit(current_price):
+                    logger.warning(f"Timeout exit triggered: held {self._current_bar - self._entry_bar} bars")
+                    await self._close_position(current_price, ExitReason.TIMEOUT)
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")
@@ -1418,6 +1431,20 @@ class GridFuturesBot(BaseBot):
             return True
 
         return False
+
+    def _check_timeout_exit(self, current_price: Decimal) -> bool:
+        """檢查是否超時出場（僅虧損時）。"""
+        max_hold = self._config.max_hold_bars
+        if max_hold <= 0 or not self._position:
+            return False
+        bars_held = self._current_bar - self._entry_bar
+        if bars_held < max_hold:
+            return False
+        # Only exit if losing
+        if self._position.side == PositionSide.LONG:
+            return current_price < self._position.entry_price
+        else:
+            return current_price > self._position.entry_price
 
     # =========================================================================
     # Exchange Stop Loss

@@ -135,6 +135,9 @@ bots:
       use_signal_cooldown: false          # 驗證通過: 關閉
       cooldown_bars: 1                    # 優化後: 1 (原 0)
 
+      # Timeout Exit (0 = disabled)
+      max_hold_bars: 0                    # 停用 (可設 8-20 啟用)
+
   # ===========================================================================
   # RSI-Grid Hybrid Bot (RSI 區域 + 網格進場)
   # ===========================================================================
@@ -242,6 +245,9 @@ bots:
       hysteresis_pct: 0.005              # 優化結果: 0.5%
       use_signal_cooldown: false         # 優化結果: 關閉
       cooldown_bars: 2                   # 優化結果: 2
+
+      # Timeout Exit (0 = disabled)
+      max_hold_bars: 0                    # 停用 (可設 8-20 啟用)
 
   # ===========================================================================
   # Supertrend HYBRID_GRID Bot (超級趨勢 + 雙向網格 + 趨勢偏移)

@@ -123,6 +123,10 @@ class BollingerBot(BaseBot):
         self._signal_cooldown: int = 0
         self._cooldown_bars: int = config.cooldown_bars  # Use config value
 
+        # Bar counting for timeout exit
+        self._current_bar: int = 0
+        self._entry_bar: int = 0
+
         # Background tasks
         self._monitor_task: Optional[asyncio.Task] = None
 
@@ -572,6 +576,9 @@ class BollingerBot(BaseBot):
             if len(self._klines) > 300:
                 self._klines = self._klines[-300:]
 
+            # Increment bar counter for timeout tracking
+            self._current_bar += 1
+
             # Process grid trading logic
             await self._process_grid_kline(kline)
 
@@ -886,6 +893,12 @@ class BollingerBot(BaseBot):
                 await self._close_position(current_price, ExitReason.TREND_CHANGE)
                 return
 
+            # Check timeout exit (close losing position after max_hold_bars)
+            if self._check_timeout_exit(current_price):
+                logger.warning(f"Timeout exit triggered: held {self._current_bar - self._entry_bar} bars")
+                await self._close_position(current_price, ExitReason.TIMEOUT)
+                return
+
         else:  # SHORT
             tp_price = entry_price - (grid_spacing * self._config.take_profit_grids)
             sl_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
@@ -906,6 +919,26 @@ class BollingerBot(BaseBot):
             if self._current_trend == 1:
                 await self._close_position(current_price, ExitReason.TREND_CHANGE)
                 return
+
+            # Check timeout exit (close losing position after max_hold_bars)
+            if self._check_timeout_exit(current_price):
+                logger.warning(f"Timeout exit triggered: held {self._current_bar - self._entry_bar} bars")
+                await self._close_position(current_price, ExitReason.TIMEOUT)
+                return
+
+    def _check_timeout_exit(self, current_price: Decimal) -> bool:
+        """檢查是否超時出場（僅虧損時）。"""
+        max_hold = self._config.max_hold_bars
+        if max_hold <= 0 or not self._position:
+            return False
+        bars_held = self._current_bar - self._entry_bar
+        if bars_held < max_hold:
+            return False
+        # Only exit if losing
+        if self._position.side == PositionSide.LONG:
+            return current_price < self._position.entry_price
+        else:
+            return current_price > self._position.entry_price
 
     # =========================================================================
     # Position Management
@@ -1174,6 +1207,9 @@ class BollingerBot(BaseBot):
                     take_profit_price=tp_price,
                     stop_loss_price=sl_price,
                 )
+
+                # Record entry bar for timeout tracking
+                self._entry_bar = self._current_bar
 
                 # Mark grid level as filled
                 if self._grid and 0 <= grid_level_index < len(self._grid.levels):

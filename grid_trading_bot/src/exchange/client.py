@@ -230,6 +230,9 @@ class ExchangeClient:
             await self._spot_ws.connect()
             await self._futures_ws.connect()
 
+            # Check API key permissions (warn if withdraw enabled)
+            await self._check_api_permissions()
+
             # Start order queue processor
             await self._start_order_queue_processor()
 
@@ -282,6 +285,30 @@ class ExchangeClient:
                 f"(threshold: {self._time_offset_warning_ms}ms). "
                 f"Consider syncing your system clock."
             )
+
+    async def _check_api_permissions(self) -> None:
+        """
+        Check API key permissions and warn if withdraw is enabled.
+
+        Does not block startup, only logs a warning.
+        """
+        try:
+            account = await self._spot.get_account()
+            permissions = getattr(account, "permissions", None)
+            if permissions and isinstance(permissions, (list, set)):
+                # Check for withdraw-related permissions
+                withdraw_perms = {"WITHDRAW", "INTERNAL_TRANSFER"}
+                found = withdraw_perms & set(permissions)
+                if found:
+                    logger.warning(
+                        f"⚠️ SECURITY WARNING: API key has {found} permissions. "
+                        f"It is strongly recommended to use an API key WITHOUT "
+                        f"withdrawal permissions for trading bots."
+                    )
+                else:
+                    logger.info("API key permissions OK (no withdraw permission)")
+        except Exception as e:
+            logger.debug(f"Could not check API permissions: {e}")
 
     async def close(self) -> None:
         """Close all connections gracefully."""

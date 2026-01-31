@@ -829,19 +829,23 @@ class PreTradeRiskChecker:
                     )
                     return
 
+            # Include fee (0.1%) + slippage (0.05%) in required funds
+            fee_and_slippage_rate = Decimal("0.0015")  # 0.1% fee + 0.05% slippage
+            required_value = order_value * (Decimal("1") + fee_and_slippage_rate)
+
             # Check available balance
             min_reserve = total * self._config.min_available_balance_pct
             available_for_trading = available - min_reserve
 
-            if order_value > available_for_trading:
+            if required_value > available_for_trading:
                 result.add_check(
                     CheckDetail(
                         check_name="available_funds",
                         result=CheckResult.REJECTED,
-                        message=f"Insufficient funds: need {order_value}, "
+                        message=f"Insufficient funds: need {required_value} (incl. fee+slippage), "
                         f"available {available_for_trading} (after {self._config.min_available_balance_pct:.0%} reserve)",
                         current_value=available_for_trading,
-                        threshold=order_value,
+                        threshold=required_value,
                         rejection_reason=RejectionReason.INSUFFICIENT_FUNDS,
                     )
                 )
@@ -856,7 +860,7 @@ class PreTradeRiskChecker:
                     CheckDetail(
                         check_name="available_funds",
                         result=CheckResult.PASSED,
-                        message=f"Funds OK (need: {order_value}, available: {available_for_trading})",
+                        message=f"Funds OK (need: {required_value} incl. fee+slippage, available: {available_for_trading})",
                         current_value=available_for_trading,
                     )
                 )

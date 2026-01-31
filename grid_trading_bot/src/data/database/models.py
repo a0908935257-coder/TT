@@ -426,3 +426,32 @@ class BotStateModel(Base):
             config=data.get("config", {}),
             state_data=data.get("state_data", {}),
         )
+
+
+class BotStateBackupModel(Base):
+    """Bot state backup database model."""
+
+    __tablename__ = "bot_state_backups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    bot_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    state_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    backed_up_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "bot_id": self.bot_id,
+            "bot_type": self.bot_type,
+            "status": self.status,
+            "config": self.config,
+            "state_data": self.state_data,
+            "backed_up_at": self.backed_up_at,
+        }

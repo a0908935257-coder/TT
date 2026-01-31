@@ -76,6 +76,7 @@ class ExitReason(str, Enum):
     TREND_CHANGE = "trend_change"    # Trend direction changed
     STOP_LOSS = "stop_loss"          # Stop loss triggered
     GRID_REBUILD = "grid_rebuild"    # Grid needs rebuilding
+    TIMEOUT = "timeout"              # Max hold bars exceeded (losing position)
     MANUAL = "manual"                # Manual exit
     BOT_STOP = "bot_stop"            # Bot stopped
 
@@ -151,6 +152,9 @@ class BollingerConfig:
     hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0025")) # 優化後: 0.25% (原 0.2%)
     use_signal_cooldown: bool = False                                          # 優化後: 關閉
     cooldown_bars: int = 1                                                     # 優化後: 1 (原 0)
+
+    # Max hold bars (0 = disabled, >0 = close losing position after N bars)
+    max_hold_bars: int = 0
 
     # Fee rate (Binance Futures: 0.04% maker/taker)
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))

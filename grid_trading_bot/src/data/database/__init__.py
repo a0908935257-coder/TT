@@ -3,6 +3,7 @@ from .connection import DatabaseManager
 from .models import (
     Base,
     BalanceModel,
+    BotStateBackupModel,
     BotStateModel,
     KlineModel,
     OrderModel,
@@ -22,4 +23,5 @@ __all__ = [
     "BalanceModel",
     "KlineModel",
     "BotStateModel",
+    "BotStateBackupModel",
 ]
