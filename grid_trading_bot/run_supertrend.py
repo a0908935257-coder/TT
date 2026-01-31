@@ -38,7 +38,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.supertrend import SupertrendBot, SupertrendConfig
-from src.config import load_strategy_config
+from src.config import load_strategy_config, validate_config_consistency
 
 # Load environment variables
 load_dotenv()
@@ -75,7 +75,7 @@ def get_config_from_env() -> SupertrendConfig:
         # 基本設定
         symbol=params.get('symbol', 'BTCUSDT'),
         timeframe=params.get('timeframe', '1h'),
-        leverage=int(params.get('leverage', 2)),
+        leverage=int(params.get('leverage', 7)),
         margin_type=params.get('margin_type', 'ISOLATED'),
 
         # 資金分配
@@ -83,43 +83,43 @@ def get_config_from_env() -> SupertrendConfig:
         position_size_pct=Decimal(str(params.get('position_size_pct', 0.1))),
 
         # Supertrend 設定
-        atr_period=int(params.get('atr_period', 46)),
-        atr_multiplier=Decimal(str(params.get('atr_multiplier', 2.5))),
+        atr_period=int(params.get('atr_period', 11)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 1.5))),
 
         # Grid 設定 (TREND_GRID 模式)
         grid_count=int(params.get('grid_count', 8)),
-        grid_atr_multiplier=Decimal(str(params.get('grid_atr_multiplier', 5.0))),
+        grid_atr_multiplier=Decimal(str(params.get('grid_atr_multiplier', 7.5))),
         take_profit_grids=int(params.get('take_profit_grids', 1)),
 
         # RSI 過濾器
         use_rsi_filter=bool(params.get('use_rsi_filter', True)),
         rsi_period=int(params.get('rsi_period', 18)),
-        rsi_overbought=int(params.get('rsi_overbought', 62)),
-        rsi_oversold=int(params.get('rsi_oversold', 31)),
+        rsi_overbought=int(params.get('rsi_overbought', 75)),
+        rsi_oversold=int(params.get('rsi_oversold', 37)),
 
         # 趨勢確認
         min_trend_bars=int(params.get('min_trend_bars', 3)),
 
         # 止損設定
-        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.04))),
+        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.05))),
 
         # 追蹤止損
         use_trailing_stop=bool(params.get('use_trailing_stop', True)),
-        trailing_stop_pct=Decimal(str(params.get('trailing_stop_pct', 0.03))),
+        trailing_stop_pct=Decimal(str(params.get('trailing_stop_pct', 0.01))),
 
         # Protective features
         use_hysteresis=bool(params.get('use_hysteresis', True)),
-        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.004))),
-        use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
-        cooldown_bars=int(params.get('cooldown_bars', 4)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0085))),
+        use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
+        cooldown_bars=int(params.get('cooldown_bars', 3)),
 
         # HYBRID_GRID mode (v3)
         mode=params.get('mode', 'hybrid_grid'),
-        hybrid_grid_bias_pct=Decimal(str(params.get('hybrid_grid_bias_pct', 0.75))),
-        hybrid_tp_multiplier_trend=Decimal(str(params.get('hybrid_tp_multiplier_trend', 1.25))),
-        hybrid_tp_multiplier_counter=Decimal(str(params.get('hybrid_tp_multiplier_counter', 0.75))),
-        hybrid_sl_multiplier_counter=Decimal(str(params.get('hybrid_sl_multiplier_counter', 0.5))),
-        hybrid_rsi_asymmetric=bool(params.get('hybrid_rsi_asymmetric', True)),
+        hybrid_grid_bias_pct=Decimal(str(params.get('hybrid_grid_bias_pct', 0.65))),
+        hybrid_tp_multiplier_trend=Decimal(str(params.get('hybrid_tp_multiplier_trend', 1.75))),
+        hybrid_tp_multiplier_counter=Decimal(str(params.get('hybrid_tp_multiplier_counter', 0.5))),
+        hybrid_sl_multiplier_counter=Decimal(str(params.get('hybrid_sl_multiplier_counter', 0.9))),
+        hybrid_rsi_asymmetric=bool(params.get('hybrid_rsi_asymmetric', False)),
     )
 
 
@@ -192,6 +192,12 @@ async def main() -> None:
 
     # 讀取配置
     config = get_config_from_env()
+
+    # 啟動時參數衝突檢查
+    logger = get_logger("supertrend")
+    warnings = validate_config_consistency("supertrend", config)
+    for w in warnings:
+        logger.warning(f"Config mismatch: {w}")
 
     print(f"\n✅ Walk-Forward 驗證通過 (70% 一致性, OOS Sharpe 5.84)")
     print(f"\n配置資訊：")

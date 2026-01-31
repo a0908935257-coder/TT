@@ -87,8 +87,8 @@ class SupertrendConfig:
     """
     symbol: str
     timeframe: str = "1h"
-    atr_period: int = 25  # 優化後: 25
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.5"))  # 優化後: 3.5
+    atr_period: int = 11  # 同步 settings.yaml
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("1.5"))  # 同步 settings.yaml
     leverage: int = 7  # 優化後: 7x (多槓桿回測最佳: Sharpe 1.85, 零爆倉)
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
@@ -98,17 +98,17 @@ class SupertrendConfig:
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
     # Grid Settings (網格設定) - 優化後
-    grid_count: int = 10  # 優化後: 10
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))  # 優化後: 9.5
+    grid_count: int = 8  # 同步 settings.yaml
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("7.5"))  # 同步 settings.yaml
     take_profit_grids: int = 1  # 止盈網格數
 
     # Trailing stop (優化後啟用)
     use_trailing_stop: bool = True
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # 優化後: 3%
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # 同步 settings.yaml
 
     # Exchange-based stop loss (recommended for safety)
     use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # 優化後: 1%
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 同步 settings.yaml
 
     # Risk control (風險控制)
     daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
@@ -117,33 +117,33 @@ class SupertrendConfig:
     # RSI Filter (RSI 過濾器) - 優化後
     use_rsi_filter: bool = True
     rsi_period: int = 21  # 優化後: 21
-    rsi_overbought: int = 71  # 優化後: 71
-    rsi_oversold: int = 31  # 優化後: 31
+    rsi_overbought: int = 75  # 同步 settings.yaml
+    rsi_oversold: int = 37  # 同步 settings.yaml
 
     # Trend confirmation (優化後)
     min_trend_bars: int = 1  # 優化後: 1
 
     # Protective Features (優化後)
     use_hysteresis: bool = False  # 優化後: 關閉
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.008"))  # 優化後: 0.8%
-    use_signal_cooldown: bool = False  # 優化後: 關閉
-    cooldown_bars: int = 0  # 優化後: 0
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0085"))  # 同步 settings.yaml
+    use_signal_cooldown: bool = False  # 同步 settings.yaml
+    cooldown_bars: int = 3  # 同步 settings.yaml
 
     # Volatility Regime Filter (v2)
     use_volatility_filter: bool = False  # 優化後: 關閉
     vol_atr_baseline_period: int = 200
-    vol_ratio_low: float = 0.6
+    vol_ratio_low: float = 0.3  # 同步 settings.yaml
     vol_ratio_high: float = 2.5
 
     # Timeout Exit (v2)
-    max_hold_bars: int = 12  # 優化後: 12
+    max_hold_bars: int = 8  # 同步 settings.yaml
 
     # HYBRID_GRID mode (v3)
     mode: str = "hybrid_grid"  # "trend_grid" or "hybrid_grid"
-    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.75"))  # 優化後: 0.75
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.65"))  # 同步 settings.yaml
     hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.75"))  # 優化後: 1.75
     hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 優化後: 0.5
-    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 優化後: 0.5
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.9"))  # 同步 settings.yaml
     hybrid_rsi_asymmetric: bool = False  # 優化後: 關閉
 
     @classmethod

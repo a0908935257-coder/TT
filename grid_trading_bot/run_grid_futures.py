@@ -38,7 +38,7 @@ from src.data import MarketDataManager
 from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.grid_futures import GridFuturesBot, GridFuturesConfig, GridDirection
-from src.config import load_strategy_config
+from src.config import load_strategy_config, validate_config_consistency
 
 # Load environment variables
 load_dotenv()
@@ -85,11 +85,11 @@ def get_config_from_env() -> GridFuturesConfig:
         # 基本設定
         symbol=params.get('symbol', 'BTCUSDT'),
         timeframe=params.get('timeframe', '1h'),
-        leverage=int(params.get('leverage', 42)),
+        leverage=int(params.get('leverage', 7)),
         margin_type=params.get('margin_type', 'ISOLATED'),
 
         # 網格設定
-        grid_count=int(params.get('grid_count', 18)),
+        grid_count=int(params.get('grid_count', 12)),
         direction=direction,
 
         # 趨勢過濾
@@ -98,8 +98,8 @@ def get_config_from_env() -> GridFuturesConfig:
 
         # 動態 ATR 範圍
         use_atr_range=bool(params.get('use_atr_range', True)),
-        atr_period=int(params.get('atr_period', 28)),
-        atr_multiplier=Decimal(str(params.get('atr_multiplier', 9.5))),
+        atr_period=int(params.get('atr_period', 41)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 10.0))),
         fallback_range_pct=Decimal(str(params.get('fallback_range_pct', 0.08))),
 
         # 倉位管理
@@ -112,10 +112,10 @@ def get_config_from_env() -> GridFuturesConfig:
         rebuild_threshold_pct=Decimal(str(params.get('rebuild_threshold_pct', 0.02))),
 
         # Protective features
-        use_hysteresis=bool(params.get('use_hysteresis', True)),
-        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.001))),
-        use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
-        cooldown_bars=int(params.get('cooldown_bars', 0)),
+        use_hysteresis=bool(params.get('use_hysteresis', False)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.005))),
+        use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
+        cooldown_bars=int(params.get('cooldown_bars', 2)),
     )
 
 
@@ -188,6 +188,12 @@ async def main() -> None:
 
     # 讀取配置
     config = get_config_from_env()
+
+    # 啟動時參數衝突檢查
+    logger = get_logger("grid_futures")
+    warnings = validate_config_consistency("grid_futures", config)
+    for w in warnings:
+        logger.warning(f"Config mismatch: {w}")
 
     # 方向模式顯示
     direction_names = {

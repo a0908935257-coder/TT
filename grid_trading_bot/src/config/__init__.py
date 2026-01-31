@@ -27,6 +27,7 @@ from .strategy_loader import (
     get_all_bot_configs,
     get_bot_allocation,
     load_strategy_config,
+    validate_config_consistency,
 )
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "load_strategy_config",
     "get_all_bot_configs",
     "get_bot_allocation",
+    "validate_config_consistency",
     # Models - Base
     "BaseConfig",
     # Models - Individual configs

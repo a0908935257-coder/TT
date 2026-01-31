@@ -46,8 +46,8 @@ class ExchangeConfig(BaseConfig):
         le=125,
         description="Default leverage for futures trading",
     )
-    margin_type: Literal["isolated", "crossed"] = Field(
-        default="isolated",
+    margin_type: Literal["ISOLATED", "CROSSED"] = Field(
+        default="ISOLATED",
         description="Margin type for futures",
     )
 

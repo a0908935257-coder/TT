@@ -154,6 +154,65 @@ def load_strategy_config(
     return params
 
 
+def validate_config_consistency(
+    bot_type: str,
+    config_obj,
+    settings_path: str | Path | None = None,
+) -> list[str]:
+    """
+    比對 dataclass 實際值與 settings.yaml 值，回報差異。
+
+    Args:
+        bot_type: Bot 類型名稱 (e.g., "grid_futures", "bollinger", "supertrend")
+        config_obj: 已實例化的 config 物件 (dataclass)
+        settings_path: settings.yaml 路徑（可選）
+
+    Returns:
+        差異清單，每筆格式: "{param}: yaml={yaml_val} actual={actual_val}"
+    """
+    from decimal import Decimal
+
+    try:
+        yaml_params = load_strategy_config(bot_type, settings_path)
+    except (FileNotFoundError, ValueError):
+        return [f"Cannot load settings.yaml for bot_type='{bot_type}'"]
+
+    warnings = []
+    for param_name, yaml_val in yaml_params.items():
+        if not hasattr(config_obj, param_name):
+            continue
+        actual_val = getattr(config_obj, param_name)
+
+        # Normalize for comparison: convert both to same type
+        try:
+            if isinstance(actual_val, Decimal):
+                yaml_comparable = Decimal(str(yaml_val))
+                actual_comparable = actual_val
+            elif isinstance(actual_val, bool):
+                yaml_comparable = bool(yaml_val) if not isinstance(yaml_val, bool) else yaml_val
+                actual_comparable = actual_val
+            elif isinstance(actual_val, int):
+                yaml_comparable = int(yaml_val)
+                actual_comparable = actual_val
+            elif isinstance(actual_val, float):
+                yaml_comparable = float(yaml_val)
+                actual_comparable = actual_val
+            else:
+                yaml_comparable = str(yaml_val)
+                actual_comparable = str(actual_val)
+
+            if yaml_comparable != actual_comparable:
+                warnings.append(
+                    f"{param_name}: yaml={yaml_val} actual={actual_val}"
+                )
+        except (ValueError, TypeError):
+            warnings.append(
+                f"{param_name}: type mismatch yaml={yaml_val!r} actual={actual_val!r}"
+            )
+
+    return warnings
+
+
 def get_all_bot_configs(
     settings_path: str | Path | None = None,
 ) -> dict[str, dict[str, Any]]:

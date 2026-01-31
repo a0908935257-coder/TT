@@ -139,21 +139,21 @@ class GridFuturesConfig:
 
     symbol: str
     timeframe: str = "1h"
-    leverage: int = 10  # 同步 settings.yaml (多槓桿回測最佳: Sharpe 1.86, 零爆倉)
+    leverage: int = 7  # 同步 settings.yaml
     margin_type: str = "ISOLATED"
 
     # Grid settings (NEUTRAL 雙向交易)
-    grid_count: int = 18  # W-F 驗證通過: 18
+    grid_count: int = 12  # 同步 settings.yaml
     direction: GridDirection = GridDirection.NEUTRAL
 
     # Trend filter (NEUTRAL 模式不使用趨勢過濾)
     use_trend_filter: bool = False
-    trend_period: int = 24  # W-F 驗證通過: 24
+    trend_period: int = 27  # 同步 settings.yaml
 
-    # Dynamic ATR range (W-F 驗證通過)
+    # Dynamic ATR range
     use_atr_range: bool = True
-    atr_period: int = 28  # W-F 驗證通過: 28
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("9.5"))  # 超寬範圍
+    atr_period: int = 41  # 同步 settings.yaml
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("10.0"))  # 同步 settings.yaml
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))
 
     # Position sizing (optimized: 10% per trade)
@@ -172,10 +172,10 @@ class GridFuturesConfig:
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
     # Protective features (W-F 驗證通過)
-    use_hysteresis: bool = True  # 遲滯緩衝區 (啟用)
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.001"))  # 0.1%
-    use_signal_cooldown: bool = True  # 啟用
-    cooldown_bars: int = 0
+    use_hysteresis: bool = False  # 同步 settings.yaml
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.005"))  # 同步 settings.yaml
+    use_signal_cooldown: bool = False  # 同步 settings.yaml
+    cooldown_bars: int = 2  # 同步 settings.yaml
 
     @classmethod
     def from_yaml(cls, symbol: str, settings_path=None, **overrides):

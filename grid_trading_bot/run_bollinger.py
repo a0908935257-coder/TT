@@ -39,7 +39,7 @@ from src.exchange import ExchangeClient
 from src.notification import NotificationManager
 from src.bots.bollinger.bot import BollingerBot
 from src.bots.bollinger.models import BollingerConfig
-from src.config import load_strategy_config
+from src.config import load_strategy_config, validate_config_consistency
 
 # Load environment variables
 load_dotenv()
@@ -76,24 +76,24 @@ def get_config_from_env() -> BollingerConfig:
         # 基本設定
         symbol=params.get('symbol', 'BTCUSDT'),
         timeframe=params.get('timeframe', '1h'),
-        leverage=int(params.get('leverage', 18)),
+        leverage=int(params.get('leverage', 7)),
         margin_type=params.get('margin_type', 'ISOLATED'),
 
         # Strategy Mode
         mode=params.get('mode', 'bb_neutral_grid'),
 
         # Bollinger Bands 參數
-        bb_period=int(params.get('bb_period', 20)),
+        bb_period=int(params.get('bb_period', 31)),
         bb_std=Decimal(str(params.get('bb_std', 2.0))),
 
         # Grid 參數
-        grid_count=int(params.get('grid_count', 12)),
+        grid_count=int(params.get('grid_count', 14)),
         take_profit_grids=int(params.get('take_profit_grids', 1)),
 
         # ATR Dynamic Range
         use_atr_range=bool(params.get('use_atr_range', True)),
-        atr_period=int(params.get('atr_period', 21)),
-        atr_multiplier=Decimal(str(params.get('atr_multiplier', 6.0))),
+        atr_period=int(params.get('atr_period', 29)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 9.5))),
         fallback_range_pct=Decimal(str(params.get('fallback_range_pct', 0.04))),
 
         # 倉位管理
@@ -102,7 +102,7 @@ def get_config_from_env() -> BollingerConfig:
         max_position_pct=Decimal(str(params.get('max_position_pct', 0.5))),
 
         # 風險管理
-        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.005))),
+        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.002))),
         rebuild_threshold_pct=Decimal(str(params.get('rebuild_threshold_pct', 0.02))),
 
         # BBW 過濾
@@ -111,9 +111,9 @@ def get_config_from_env() -> BollingerConfig:
 
         # Protective features
         use_hysteresis=bool(params.get('use_hysteresis', True)),
-        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.002))),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0025))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
-        cooldown_bars=int(params.get('cooldown_bars', 0)),
+        cooldown_bars=int(params.get('cooldown_bars', 1)),
     )
 
 
@@ -188,6 +188,12 @@ async def main() -> None:
 
     # 讀取配置
     config = get_config_from_env()
+
+    # 啟動時參數衝突檢查
+    logger = get_logger("bollinger")
+    warnings = validate_config_consistency("bollinger", config)
+    for w in warnings:
+        logger.warning(f"Config mismatch: {w}")
 
     print(f"\n配置資訊：")
     print(f"  交易對: {config.symbol}")
