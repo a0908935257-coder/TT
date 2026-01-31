@@ -111,29 +111,30 @@ bots:
       bb_period: 31                       # 優化後: 31 (原 20)
       bb_std: 2.0
 
-      # Grid Parameters (優化後)
-      grid_count: 14                      # 優化後: 14 (原 12)
+      # Grid Parameters (2026-01-31 Optuna 300 trials 優化)
+      grid_count: 12                      # 優化後: 12
       take_profit_grids: 1                # 驗證通過: 1
+      trend_period: 15                    # 優化後: 15
 
-      # ATR Dynamic Range (優化後)
+      # ATR Dynamic Range (2026-01-31 優化)
       use_atr_range: true                 # 啟用 ATR 動態範圍
-      atr_period: 29                      # 優化後: 29 (原 21)
-      atr_multiplier: 9.5                 # 優化後: 9.5 (原 6.0，更寬範圍)
+      atr_period: 14                      # 優化後: 14
+      atr_multiplier: 9.5                 # 優化後: 9.5
       fallback_range_pct: 0.04            # ATR 不可用時的備用範圍
 
-      # Risk Management (優化後)
-      stop_loss_pct: 0.002                # 優化後: 0.2% (原 0.5%)
+      # Risk Management (2026-01-31 優化)
+      stop_loss_pct: 0.005                # 優化後: 0.5%
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (優化後)
-      use_hysteresis: true                # 驗證通過: 啟用
-      hysteresis_pct: 0.0025              # 優化後: 0.25% (原 0.2%)
-      use_signal_cooldown: false          # 驗證通過: 關閉
-      cooldown_bars: 1                    # 優化後: 1 (原 0)
+      # Protective Features (2026-01-31 優化)
+      use_hysteresis: false               # 優化後: 關閉
+      hysteresis_pct: 0.009               # 優化後: 0.9%
+      use_signal_cooldown: false          # 優化後: 關閉
+      cooldown_bars: 2                    # 優化後: 2
 
       # Exchange Stop Loss (STOP_MARKET on exchange)
       use_exchange_stop_loss: true
