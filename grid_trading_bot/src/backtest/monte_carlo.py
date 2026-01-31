@@ -257,6 +257,10 @@ class MonteCarloSimulator:
         is independent of trade sequence. High variance indicates
         the strategy may be dependent on specific market conditions.
 
+        Uses account-level returns (pnl / equity_at_entry) rather than
+        position-level pnl_pct to correctly handle equity-based margin
+        strategies where position sizing scales with equity.
+
         Args:
             result: Original backtest result with trades
             initial_capital: Starting capital for equity calculation
@@ -274,6 +278,19 @@ class MonteCarloSimulator:
         trades = result.trades
         n_sims = self._config.n_simulations
 
+        # Pre-compute account-level return percentages from original sequence.
+        # Each trade's pnl is the absolute P&L which depends on equity at entry.
+        # We normalize by reconstructing equity to get: account_pct = pnl / equity * 100
+        account_pcts: list[float] = []
+        equity = float(initial_capital)
+        for trade in trades:
+            pnl = float(trade.pnl)
+            if equity > 0:
+                account_pcts.append(pnl / equity * 100)
+            else:
+                account_pcts.append(0.0)
+            equity += pnl
+
         # Storage for metrics
         total_returns: list[float] = []
         sharpe_ratios: list[float] = []
@@ -283,29 +300,64 @@ class MonteCarloSimulator:
         final_equities: list[float] = []
         equity_paths: list[list[float]] = []
 
+        # Also precompute win/loss info per trade for shuffled metrics
+        trade_wins = [1 if float(t.pnl) > 0 else 0 for t in trades]
+        trade_pnls = [float(t.pnl) for t in trades]
+
         for sim_idx in range(n_sims):
-            # Shuffle trades
-            shuffled = trades.copy()
-            random.shuffle(shuffled)
+            # Shuffle indices (preserves correspondence between account_pcts and trade info)
+            indices = list(range(len(trades)))
+            random.shuffle(indices)
 
-            # Rebuild equity curve from shuffled trades
-            equity_curve = self._build_equity_from_trades(shuffled, initial_capital)
+            # Rebuild equity curve using account-level percentages (multiplicative)
+            equity = float(initial_capital)
+            equity_curve = [equity]
+            for idx in indices:
+                equity *= (1 + account_pcts[idx] / 100)
+                if equity > 1e15:
+                    equity = 1e15
+                elif equity < 0:
+                    equity = 0
+                equity_curve.append(equity)
 
-            # Calculate metrics
-            metrics = self._calculate_metrics_from_shuffled(
-                shuffled, equity_curve, initial_capital
-            )
+            # Total return from equity curve
+            total_ret = (equity_curve[-1] / float(initial_capital) - 1) * 100
+            total_returns.append(total_ret)
 
-            total_returns.append(metrics["total_return"])
-            sharpe_ratios.append(metrics["sharpe_ratio"])
-            max_drawdowns.append(metrics["max_drawdown"])
-            win_rates.append(metrics["win_rate"])
-            profit_factors.append(metrics["profit_factor"])
-            final_equities.append(float(equity_curve[-1]) if equity_curve else float(initial_capital))
+            # Max drawdown
+            max_dd = self._calculate_drawdown(equity_curve)
+            max_drawdowns.append(max_dd)
+
+            # Win rate (same regardless of shuffle)
+            n_wins = sum(trade_wins[i] for i in indices)
+            win_rates.append(n_wins / len(indices) * 100 if indices else 0)
+
+            # Profit factor
+            gross_profit = sum(trade_pnls[i] for i in indices if trade_pnls[i] > 0)
+            gross_loss = abs(sum(trade_pnls[i] for i in indices if trade_pnls[i] <= 0))
+            profit_factors.append(gross_profit / gross_loss if gross_loss > 0 else 999.0)
+
+            # Sharpe from account-level returns
+            shuffled_pcts = [account_pcts[i] for i in indices]
+            if len(shuffled_pcts) > 1:
+                mean_ret = math.fsum(shuffled_pcts) / len(shuffled_pcts)
+                try:
+                    std_ret = math.sqrt(
+                        math.fsum((r - mean_ret) ** 2 for r in shuffled_pcts)
+                        / (len(shuffled_pcts) - 1)
+                    )
+                except (OverflowError, ValueError):
+                    std_ret = float('inf')
+                sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
+            else:
+                sharpe = 0.0
+            sharpe_ratios.append(sharpe)
+
+            final_equities.append(equity_curve[-1])
 
             # Store sample of equity paths
-            if sim_idx < 100:  # Keep first 100 paths
-                equity_paths.append([float(e) for e in equity_curve])
+            if sim_idx < 100:
+                equity_paths.append(equity_curve)
 
         # Build result
         mc_result = MonteCarloResult(
@@ -318,7 +370,7 @@ class MonteCarloSimulator:
             win_rate=self._build_distribution(win_rates),
             profit_factor=self._build_distribution(profit_factors),
             final_equity=self._build_distribution(final_equities),
-            equity_paths=equity_paths[:10],  # Keep 10 sample paths
+            equity_paths=equity_paths[:10],
         )
 
         # Calculate risk metrics
@@ -356,7 +408,7 @@ class MonteCarloSimulator:
         Returns:
             MonteCarloResult with distributions
         """
-        # Get returns from trades
+        # Get returns from trades (account-level, not position-level)
         if not result.trades:
             return MonteCarloResult(
                 method=MonteCarloMethod.RETURNS_BOOTSTRAP,
@@ -364,7 +416,17 @@ class MonteCarloSimulator:
                 original_result=result,
             )
 
-        returns = [float(t.pnl_pct) for t in result.trades]
+        # Compute account-level return percentages (pnl / equity_at_entry * 100)
+        # instead of position-level pnl_pct which inflates compounding
+        returns: list[float] = []
+        equity = float(initial_capital)
+        for t in result.trades:
+            pnl = float(t.pnl)
+            if equity > 0:
+                returns.append(pnl / equity * 100)
+            else:
+                returns.append(0.0)
+            equity += pnl
         n_returns = len(returns)
         n_sims = self._config.n_simulations
         block_size = min(self._config.block_size, n_returns)
@@ -657,13 +719,24 @@ class MonteCarloSimulator:
         trades: list[Trade],
         initial_capital: Decimal,
     ) -> list[Decimal]:
-        """Build equity curve from trade sequence."""
-        equity = initial_capital
-        curve = [equity]
+        """Build equity curve from trade sequence using percentage returns.
+
+        Uses multiplicative (percentage-based) compounding instead of additive
+        absolute PnL, so that shuffled trade sequences produce realistic equity
+        paths regardless of when the trade originally occurred.
+        """
+        equity = float(initial_capital)
+        curve = [Decimal(str(equity))]
 
         for trade in trades:
-            equity += trade.pnl
-            curve.append(equity)
+            pct = float(trade.pnl_pct)
+            equity *= (1 + pct / 100)
+            # Clamp to prevent float overflow on high leverage
+            if equity > 1e15:
+                equity = 1e15
+            elif equity < 0:
+                equity = 0
+            curve.append(Decimal(str(equity)))
 
         return curve
 
@@ -683,8 +756,9 @@ class MonteCarloSimulator:
                 "profit_factor": 0.0,
             }
 
-        total_pnl = sum(t.pnl for t in trades)
-        total_return = float(total_pnl / initial_capital * 100)
+        # Use equity curve endpoint for total return (consistent with multiplicative compounding)
+        final_equity = float(equity_curve[-1])
+        total_return = (final_equity / float(initial_capital) - 1) * 100
 
         wins = [t for t in trades if t.pnl > 0]
         losses = [t for t in trades if t.pnl <= 0]
