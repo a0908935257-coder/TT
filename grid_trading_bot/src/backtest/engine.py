@@ -51,6 +51,7 @@ class BacktestEngine:
         # State
         self._equity_curve: list[Decimal] = []
         self._daily_pnl: dict[str, Decimal] = {}
+        self._daily_equity: dict[str, Decimal] = {}  # End-of-day equity for Sharpe
         self._liquidation_count: int = 0
         self._last_funding_time: Optional[datetime] = None
         self._max_margin_utilization_pct: Decimal = Decimal("0")
@@ -242,6 +243,7 @@ class BacktestEngine:
         self._position_manager.reset()
         self._equity_curve.clear()
         self._daily_pnl.clear()
+        self._daily_equity.clear()
         self._liquidation_count = 0
         self._last_funding_time = None
         self._max_margin_utilization_pct = Decimal("0")
@@ -419,6 +421,10 @@ class BacktestEngine:
         )
         self._equity_curve.append(equity)
 
+        # Track end-of-day equity for mark-to-market daily returns
+        date_key = kline.close_time.strftime("%Y-%m-%d")
+        self._daily_equity[date_key] = equity
+
         # Track margin utilization
         if self._config.use_margin and equity > 0:
             used = self._position_manager.used_margin()
@@ -449,7 +455,7 @@ class BacktestEngine:
             if triggered:
                 # Liquidation fee on notional × leverage
                 liq_fee = position.notional * Decimal(self._config.leverage) * self._config.liquidation_fee_pct
-                exit_fee = liq_fee + position.entry_price * position.quantity * self._config.fee_rate * Decimal(self._config.leverage)
+                exit_fee = liq_fee + liq_price * position.quantity * self._config.fee_rate * Decimal(self._config.leverage)
 
                 trade = self._position_manager.close_position(
                     position=position,
@@ -496,10 +502,21 @@ class BacktestEngine:
 
     def _calculate_result(self) -> BacktestResult:
         """Calculate final backtest result."""
+        # Build mark-to-market daily returns from end-of-day equity snapshots.
+        # This captures both realized and unrealized P&L changes, and includes
+        # all calendar days (no missing zero-return days).
+        mtm_daily_returns: dict[str, Decimal] = {}
+        sorted_dates = sorted(self._daily_equity.keys())
+        prev_equity = self._config.initial_capital
+        for date_key in sorted_dates:
+            day_equity = self._daily_equity[date_key]
+            mtm_daily_returns[date_key] = day_equity - prev_equity
+            prev_equity = day_equity
+
         result = self._metrics.calculate_all(
             trades=self._position_manager.trades,
             equity_curve=self._equity_curve,
-            daily_returns=self._daily_pnl,
+            daily_returns=mtm_daily_returns,
         )
         result.liquidation_count = self._liquidation_count
         result.total_funding_paid = self._position_manager.total_funding_paid

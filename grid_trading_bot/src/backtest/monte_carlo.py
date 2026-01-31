@@ -337,10 +337,13 @@ class MonteCarloSimulator:
             gross_loss = abs(sum(trade_pnls[i] for i in indices if trade_pnls[i] <= 0))
             profit_factors.append(gross_profit / gross_loss if gross_loss > 0 else 999.0)
 
-            # Sharpe from account-level returns
+            # Sharpe from account-level returns (subtract risk-free rate for consistency)
             shuffled_pcts = [account_pcts[i] for i in indices]
             if len(shuffled_pcts) > 1:
                 mean_ret = math.fsum(shuffled_pcts) / len(shuffled_pcts)
+                # Daily risk-free rate: 2% annual / 252 trading days, converted to %
+                daily_rf = 0.02 / 252 * 100
+                excess_mean = mean_ret - daily_rf
                 try:
                     std_ret = math.sqrt(
                         math.fsum((r - mean_ret) ** 2 for r in shuffled_pcts)
@@ -348,7 +351,7 @@ class MonteCarloSimulator:
                     )
                 except (OverflowError, ValueError):
                     std_ret = float('inf')
-                sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
+                sharpe = (excess_mean / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
             else:
                 sharpe = 0.0
             sharpe_ratios.append(sharpe)
@@ -459,9 +462,11 @@ class MonteCarloSimulator:
             total_ret = (equity_curve[-1] / float(initial_capital) - 1) * 100
             total_returns.append(total_ret)
 
-            # Simple Sharpe calculation
+            # Simple Sharpe calculation (subtract risk-free rate for consistency)
             if len(bootstrapped_returns) > 1:
                 mean_ret = math.fsum(bootstrapped_returns) / len(bootstrapped_returns)
+                daily_rf = 0.02 / 252 * 100
+                excess_mean = mean_ret - daily_rf
                 try:
                     std_ret = math.sqrt(
                         math.fsum((r - mean_ret) ** 2 for r in bootstrapped_returns)
@@ -469,7 +474,7 @@ class MonteCarloSimulator:
                     )
                 except (OverflowError, ValueError):
                     std_ret = float('inf')
-                sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
+                sharpe = (excess_mean / std_ret * math.sqrt(252)) if std_ret > 0 and math.isfinite(std_ret) else 0
             else:
                 sharpe = 0
             sharpe_ratios.append(sharpe)
@@ -780,14 +785,16 @@ class MonteCarloSimulator:
         # Max drawdown
         max_dd = self._calculate_drawdown([float(e) for e in equity_curve])
 
-        # Simple Sharpe from trade returns
+        # Simple Sharpe from trade returns (subtract risk-free rate)
         if len(trades) > 1:
             returns = [float(t.pnl_pct) for t in trades]
             mean_ret = sum(returns) / len(returns)
+            daily_rf = 0.02 / 252 * 100
+            excess_mean = mean_ret - daily_rf
             std_ret = math.sqrt(
                 sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
             )
-            sharpe = (mean_ret / std_ret * math.sqrt(252)) if std_ret > 0 else 0
+            sharpe = (excess_mean / std_ret * math.sqrt(252)) if std_ret > 0 else 0
         else:
             sharpe = 0.0
 
