@@ -58,7 +58,8 @@ class MarketDataManager:
         db_config: dict,
         redis_config: dict,
         exchange: Optional[ExchangeClient] = None,
-        market_type: MarketType = MarketType.SPOT,
+        *,
+        market_type: MarketType,
     ):
         """
         Initialize MarketDataManager.

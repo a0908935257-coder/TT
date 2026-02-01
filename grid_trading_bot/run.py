@@ -134,6 +134,7 @@ async def create_data_manager(exchange: ExchangeClient) -> MarketDataManager:
         db_config=db_config,
         redis_config=redis_config,
         exchange=exchange,
+        market_type=MarketType.SPOT,
     )
     await manager.connect()
     return manager

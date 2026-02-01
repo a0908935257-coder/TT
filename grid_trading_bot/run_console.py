@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from dotenv import load_dotenv
 
 from src.core import get_logger
+from src.core.models import MarketType
 from src.discord_bot import TradingBot
 from src.discord_bot.config import DiscordConfig, ChannelConfig
 
@@ -80,6 +81,7 @@ class SimpleMaster:
             db_config=db_config,
             redis_config=redis_config,
             exchange=self._exchange,
+            market_type=MarketType.FUTURES,
         )
         await self._data_manager.connect()
         logger.info("Data manager connected")

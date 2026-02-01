@@ -48,7 +48,7 @@ class KlineManager:
         redis: RedisManager,
         database: DatabaseManager,
         exchange: ExchangeClient,
-        market_type: MarketType = MarketType.SPOT,
+        market_type: MarketType,
     ):
         """
         Initialize KlineManager.
