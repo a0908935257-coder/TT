@@ -202,7 +202,7 @@ class TestBacktestConfig:
         assert config.initial_capital == Decimal("10000")
         assert config.fee_rate == Decimal("0.0004")
         assert config.leverage == 1
-        assert config.position_size_pct == Decimal("0.1")
+        assert config.position_size_pct == Decimal("0.02")
 
     def test_custom_config(self):
         """Test custom configuration."""
