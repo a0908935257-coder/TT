@@ -105,32 +105,32 @@ bots:
       mode: bb_neutral_grid               # 雙向中性網格
 
       # Bollinger Bands (用於參考，不作為趨勢過濾)
-      bb_period: 24                       # WF v4 優化: 24
+      bb_period: 21                       # WF v5 優化: 21
       bb_std: 2.0
 
-      # Grid Parameters (WF v4 2026-02-01)
-      grid_count: 8                       # WF v4 優化: 8
-      take_profit_grids: 1                # WF v4 優化: 1
+      # Grid Parameters (WF v5 2026-02-01)
+      grid_count: 10                      # WF v5 優化: 10
+      take_profit_grids: 1                # WF v5 優化: 1
 
-      # ATR Dynamic Range (WF v4 2026-02-01)
+      # ATR Dynamic Range (WF v5 2026-02-01)
       use_atr_range: true                 # 啟用 ATR 動態範圍
-      atr_period: 21                      # WF v4 優化: 21
-      atr_multiplier: 8.5                 # WF v4 優化: 8.5
+      atr_period: 13                      # WF v5 優化: 13
+      atr_multiplier: 6.5                 # WF v5 優化: 6.5
       fallback_range_pct: 0.04            # ATR 不可用時的備用範圍
 
-      # Risk Management (WF v4 2026-02-01)
-      stop_loss_pct: 0.003                # WF v4 優化: 0.3%
+      # Risk Management (WF v5 2026-02-01)
+      stop_loss_pct: 0.002                # WF v5 優化: 0.2%
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (WF v4 2026-02-01)
-      use_hysteresis: false               # WF v4 優化: 關閉
-      hysteresis_pct: 0.0015              # WF v4 優化: 0.15%
-      use_signal_cooldown: false          # WF v4 優化: 關閉
-      cooldown_bars: 6                    # WF v4 優化: 6
+      # Protective Features (WF v5 2026-02-01)
+      use_hysteresis: true                # WF v5 優化: 開啟
+      hysteresis_pct: 0.003               # WF v5 優化: 0.3%
+      use_signal_cooldown: false          # WF v5 優化: 關閉
+      cooldown_bars: 1                    # WF v5 優化: 1
 
       # Exchange Stop Loss (STOP_MARKET on exchange)
       use_exchange_stop_loss: true
