@@ -478,6 +478,9 @@ class AccountInfo(TradingBaseModel):
     balances: list[Balance]
     positions: list[Position] = Field(default_factory=list)
     updated_at: datetime
+    # Futures account-level fields (from Binance /fapi/v2/account)
+    total_wallet_balance: Optional[Decimal] = None
+    available_balance: Optional[Decimal] = None
 
     def get_balance(self, asset: str) -> Optional[Balance]:
         """
@@ -547,6 +550,8 @@ class AccountInfo(TradingBaseModel):
             balances=balances,
             positions=positions,
             updated_at=datetime.now(timezone.utc),
+            total_wallet_balance=Decimal(str(data.get("totalWalletBalance", "0"))),
+            available_balance=Decimal(str(data.get("availableBalance", "0"))),
         )
 
 

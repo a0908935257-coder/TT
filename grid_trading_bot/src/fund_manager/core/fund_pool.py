@@ -168,15 +168,23 @@ class FundPool:
         # Get account info
         account = await self._exchange.get_account(self._market_type)
 
-        # Calculate totals from balances
-        total_balance = Decimal("0")
-        available_balance = Decimal("0")
-
-        for balance in account.balances:
-            # Only count USDT — USDC/BUSD cannot be used as futures margin
-            if balance.asset == "USDT":
-                total_balance += balance.total
-                available_balance += balance.free
+        # Use Binance futures account-level fields if available
+        # These reflect the actual margin balance (USDT-M) from the API
+        if (
+            self._market_type == MarketType.FUTURES
+            and account.total_wallet_balance is not None
+            and account.available_balance is not None
+        ):
+            total_balance = account.total_wallet_balance
+            available_balance = account.available_balance
+        else:
+            # Fallback: sum USDT balances (for spot or missing fields)
+            total_balance = Decimal("0")
+            available_balance = Decimal("0")
+            for balance in account.balances:
+                if balance.asset == "USDT":
+                    total_balance += balance.total
+                    available_balance += balance.free
 
         # Create snapshot with lock protection for consistent allocated balance
         async with self._allocation_lock:
