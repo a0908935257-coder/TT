@@ -82,19 +82,19 @@ class RSIGridConfig:
     Attributes:
         symbol: Trading pair (e.g., "BTCUSDT")
         timeframe: Kline timeframe (default "15m", v2 optimized)
-        leverage: Futures leverage (default 7, v2 validated)
+        leverage: Futures leverage (default 10, v4 validated)
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # RSI Parameters
-        rsi_period: RSI calculation period (default 5, v3)
+        rsi_period: RSI calculation period (default 7, v4)
         oversold_level: RSI oversold threshold (default 33)
         overbought_level: RSI overbought threshold (default 66)
-        rsi_block_threshold: tanh score threshold (default 0.9, v3)
+        rsi_block_threshold: tanh score threshold (default 0.9, v4)
 
         # Grid Parameters
-        grid_count: Number of grid levels (default 10, v3)
-        atr_period: ATR calculation period (default 7, v3)
-        atr_multiplier: ATR multiplier for grid range (default 4.0, v3)
+        grid_count: Number of grid levels (default 8, v4)
+        atr_period: ATR calculation period (default 7, v4)
+        atr_multiplier: ATR multiplier for grid range (default 3.0, v4)
 
         # Trend Filter
         trend_sma_period: SMA period for trend detection (default 39)
@@ -102,18 +102,18 @@ class RSIGridConfig:
 
         # Risk Management
         max_capital: Maximum capital to use
-        position_size_pct: Size per trade as % of capital (default 10%)
+        position_size_pct: Size per trade as % of capital (default 5%, v4)
         max_position_pct: Maximum total position as % (default 50%)
-        stop_loss_atr_mult: Stop loss as ATR multiple (default 2.0, v3)
+        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.5, v4)
         max_stop_loss_pct: Maximum stop loss percentage (default 3%)
         max_positions: Maximum concurrent positions (default 5)
-        max_hold_bars: Maximum holding duration in bars (default 16, v3)
+        max_hold_bars: Maximum holding duration in bars (default 6, v4)
 
-        # Volatility Filter (v3)
-        use_volatility_filter: Enable volatility regime filter (default True, v3)
-        vol_atr_baseline_period: Baseline ATR period (default 300, v3)
-        vol_ratio_low: Low volatility threshold (default 0.3, v3)
-        vol_ratio_high: High volatility threshold (default 2.0, v3)
+        # Volatility Filter (v4)
+        use_volatility_filter: Enable volatility regime filter (default True, v4)
+        vol_atr_baseline_period: Baseline ATR period (default 200, v4)
+        vol_ratio_low: Low volatility threshold (default 0.5, v4)
+        vol_ratio_high: High volatility threshold (default 2.0, v4)
 
     Example:
         >>> config = RSIGridConfig(symbol="BTCUSDT")  # Use defaults

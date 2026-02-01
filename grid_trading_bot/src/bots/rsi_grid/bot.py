@@ -2044,13 +2044,13 @@ class RSIGridBot(BaseBot):
             config_data = state_data.get("config", {})
             config = RSIGridConfig(
                 symbol=config_data.get("symbol", ""),
-                timeframe=config_data.get("timeframe", "15m"),
-                rsi_period=config_data.get("rsi_period", 14),
-                oversold_level=config_data.get("oversold_level", 30),
-                overbought_level=config_data.get("overbought_level", 70),
-                grid_count=config_data.get("grid_count", 10),
+                timeframe=config_data.get("timeframe", "1h"),
+                rsi_period=config_data.get("rsi_period", 7),
+                oversold_level=config_data.get("oversold_level", 33),
+                overbought_level=config_data.get("overbought_level", 66),
+                grid_count=config_data.get("grid_count", 8),
                 atr_multiplier=Decimal(config_data.get("atr_multiplier", "3.0")),
-                leverage=config_data.get("leverage", 2),
+                leverage=config_data.get("leverage", 10),
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
             )
 
