@@ -75,7 +75,7 @@ def run_backtest(klines: list[Kline], config: RSIGridStrategyConfig, leverage: i
     return engine.run(klines, strategy)
 
 
-def create_objective(klines: list[Kline], leverage: int = 7):
+def create_objective(klines: list[Kline], leverage: int = 7, search_leverage: bool = False):
     """創建 Optuna 目標函數（內建 train/test split）."""
 
     # 70/30 split
@@ -86,15 +86,21 @@ def create_objective(klines: list[Kline], leverage: int = 7):
     print(f"Train: {len(train_klines)} bars, Test: {len(test_klines)} bars")
 
     def objective(trial: optuna.Trial) -> float:
-        # 全 categorical 參數（11 個離散值，擴展適應 15m 時間框架）
-        rsi_period = trial.suggest_categorical("rsi_period", [5, 7, 10, 14])
-        rsi_block_threshold = trial.suggest_categorical("rsi_block_threshold", [0.5, 0.6, 0.7, 0.8, 0.9])
-        atr_period = trial.suggest_categorical("atr_period", [7, 10, 14, 21, 28])
-        grid_count = trial.suggest_categorical("grid_count", [8, 10, 12, 15, 18, 20, 25])
-        atr_multiplier = trial.suggest_categorical("atr_multiplier", [1.5, 2.0, 2.5, 3.0, 3.5, 4.0])
-        stop_loss_atr_mult = trial.suggest_categorical("stop_loss_atr_mult", [1.0, 1.5, 2.0])
-        take_profit_grids = trial.suggest_categorical("take_profit_grids", [1, 2])
-        max_hold_bars = trial.suggest_categorical("max_hold_bars", [4, 6, 8, 12, 16])
+        # 槓桿搜索
+        if search_leverage:
+            leverage_val = trial.suggest_categorical("leverage", [7, 10, 15])
+        else:
+            leverage_val = leverage
+
+        # 全 categorical 參數（擴大搜索空間 v5）
+        rsi_period = trial.suggest_categorical("rsi_period", [5, 7, 10, 14, 21])
+        rsi_block_threshold = trial.suggest_categorical("rsi_block_threshold", [0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        atr_period = trial.suggest_categorical("atr_period", [5, 7, 10, 14, 21, 28])
+        grid_count = trial.suggest_categorical("grid_count", [6, 8, 10, 12, 15, 18, 20])
+        atr_multiplier = trial.suggest_categorical("atr_multiplier", [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0])
+        stop_loss_atr_mult = trial.suggest_categorical("stop_loss_atr_mult", [0.8, 1.0, 1.5, 2.0, 2.5])
+        take_profit_grids = trial.suggest_categorical("take_profit_grids", [1, 2, 3])
+        max_hold_bars = trial.suggest_categorical("max_hold_bars", [4, 6, 8, 12, 16, 24, 48])
         use_trailing_stop = trial.suggest_categorical("use_trailing_stop", [True, False])
         trailing_activate_pct = trial.suggest_categorical("trailing_activate_pct", [0.005, 0.01, 0.015])
         trailing_distance_pct = trial.suggest_categorical("trailing_distance_pct", [0.003, 0.005, 0.008])
@@ -124,16 +130,16 @@ def create_objective(klines: list[Kline], leverage: int = 7):
         )
 
         # Train backtest
-        train_result = run_backtest(train_klines, config, leverage)
+        train_result = run_backtest(train_klines, config, leverage_val)
         train_trades = train_result.total_trades
         train_sharpe = float(train_result.sharpe_ratio)
 
         # 品質過濾: train 交易太少 → prune
-        if train_trades < 100:
-            raise optuna.TrialPruned(f"train_trades={train_trades} < 100")
+        if train_trades < 200:
+            raise optuna.TrialPruned(f"train_trades={train_trades} < 200")
 
         # Test backtest
-        test_result = run_backtest(test_klines, config, leverage)
+        test_result = run_backtest(test_klines, config, leverage_val)
         test_trades = test_result.total_trades
         test_sharpe = float(test_result.sharpe_ratio)
         test_return = float(test_result.total_profit_pct)
@@ -145,29 +151,41 @@ def create_objective(klines: list[Kline], leverage: int = 7):
         else:
             oos_is_ratio = 0.0
 
+        # 交易次數懲罰（總交易 < 1000 → penalty）
+        total_trades_est = train_trades + test_trades
+        if total_trades_est < 500:
+            trade_penalty = 3.0
+        elif total_trades_est < 1000:
+            trade_penalty = 1.5
+        else:
+            trade_penalty = 0.0
+
         # 漸進式 overfit 懲罰（取代二元懲罰）
         if oos_is_ratio < 0.4:
             overfit_penalty = 5.0    # 嚴重
-        elif oos_is_ratio < 0.6:
+        elif oos_is_ratio < 0.5:
             overfit_penalty = 3.0    # 中等
+        elif oos_is_ratio < 0.6:
+            overfit_penalty = 1.5    # 輕微
         elif oos_is_ratio < 0.7:
-            overfit_penalty = 1.0    # 輕微
+            overfit_penalty = 0.5    # 微小
         else:
             overfit_penalty = 0.0
 
-        # 更強的一致性獎勵（門檻從 0.5 提高到 0.6）
-        consistency_bonus = min(oos_is_ratio, 1.0) * 3.0 if oos_is_ratio >= 0.6 else 0.0
+        # 更強的一致性獎勵（門檻 0.5）
+        consistency_bonus = min(oos_is_ratio, 1.0) * 3.0 if oos_is_ratio >= 0.5 else 0.0
 
         # 穩定性獎勵：OOS/IS 比率接近 1.0
-        stability_bonus = 1.0 if 0.7 <= oos_is_ratio <= 1.3 else 0.0
+        stability_bonus = 1.5 if 0.7 <= oos_is_ratio <= 1.3 else 0.0
 
-        # Score = 重新平衡權重（降低 IS 權重）
+        # Score = OOS 權重更高（v5: test 0.45, train 0.10）
         score = (
-            test_sharpe * 0.35
-            + train_sharpe * 0.15
+            test_sharpe * 0.45
+            + train_sharpe * 0.10
             + consistency_bonus
             + stability_bonus
             - overfit_penalty
+            - trade_penalty
         )
 
         # Record attrs
@@ -211,6 +229,11 @@ def main():
         help="槓桿倍數 (default: 7)"
     )
     parser.add_argument(
+        "--search-leverage",
+        action="store_true",
+        help="將槓桿加入搜索空間 (7, 10, 15)"
+    )
+    parser.add_argument(
         "--output",
         default="optimization_results",
         help="輸出目錄"
@@ -238,7 +261,7 @@ def main():
     print(f"\n開始優化 ({args.trials} 次試驗, 70/30 train/test split)...")
     print("=" * 60)
 
-    objective = create_objective(klines, args.leverage)
+    objective = create_objective(klines, args.leverage, args.search_leverage)
 
     study.optimize(
         objective,
@@ -290,7 +313,8 @@ def main():
         vol_ratio_high=best.params["vol_ratio_high"],
     )
 
-    full_result = run_backtest(klines, best_config, args.leverage)
+    best_leverage = best.params.get("leverage", args.leverage)
+    full_result = run_backtest(klines, best_config, best_leverage)
 
     total_return = float(full_result.total_profit_pct)
     # 從數據推算天數（不假設固定 interval）

@@ -156,11 +156,11 @@ bots:
     max_capital: 5000
     priority: 8
 
-    # --- 策略參數 (v4 Optuna 優化 2026-02-01) ---
-    # Optuna 100 trials, fixed 5% position sizing, 10x leverage
-    # Train Sharpe: 2.47, Test Sharpe: 3.20, OOS/IS: 1.30
-    # 完整回測: Sharpe 3.08, 報酬 142.67%, 年化 55.78%, 回撤 7.48%
-    # WF 驗證: 一致性 66.7%, OOS Sharpe 2.51, Monte Carlo ROBUST
+    # --- 策略參數 (v5 Optuna 優化 2026-02-01) ---
+    # Optuna 300 trials, 10x leverage, search-leverage, anti-overfit scoring
+    # Train Sharpe: 7.66, Test Sharpe: 7.47, OOS/IS: 0.976
+    # 完整回測: Sharpe 7.16, 報酬 302.05%, 年化 100.52%, 回撤 1.91%
+    # 交易數: 3570/2年, Monte Carlo ROBUST
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
@@ -169,30 +169,32 @@ bots:
       position_size_pct: 0.05
       max_position_pct: 0.5
 
-      # RSI Parameters (v4 Optuna 優化)
-      rsi_period: 7
+      # RSI Parameters (v5 Optuna 優化)
+      rsi_period: 5
       rsi_block_threshold: 0.9
       oversold_level: 33
       overbought_level: 66
 
-      # Grid Parameters (v4 Optuna 優化)
-      grid_count: 8
-      atr_period: 7
-      atr_multiplier: 3.0
+      # Grid Parameters (v5 Optuna 優化)
+      grid_count: 6
+      atr_period: 21
+      atr_multiplier: 4.0
 
-      # Risk Management (v4 Optuna 優化)
-      stop_loss_atr_mult: 1.5
-      take_profit_grids: 2
-      max_hold_bars: 6
+      # Risk Management (v5 Optuna 優化)
+      stop_loss_atr_mult: 1.0
+      take_profit_grids: 3
+      max_hold_bars: 8
 
-      # Trailing Stop (v4: 關閉)
-      use_trailing_stop: false
+      # Trailing Stop (v5: 啟用)
+      use_trailing_stop: true
+      trailing_activate_pct: 0.005
+      trailing_distance_pct: 0.005
       trailing_stop_pct: 0.01
 
-      # Volatility Regime Filter (v4 Optuna 優化)
+      # Volatility Regime Filter (v5 Optuna 優化)
       use_volatility_filter: true
       vol_atr_baseline_period: 200
-      vol_ratio_low: 0.5
+      vol_ratio_low: 0.7
       vol_ratio_high: 2.0
 
   # ===========================================================================
