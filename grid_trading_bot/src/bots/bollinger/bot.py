@@ -604,7 +604,7 @@ class BollingerBot(BaseBot):
                 if self._position:
                     current_price = self._klines[-1].close if self._klines and len(self._klines) > 0 else Decimal("0")
                     if current_price > 0:
-                        self.update_virtual_unrealized_pnl(self._config.symbol, current_price)
+                        self.update_virtual_unrealized_pnl(self._config.symbol, current_price, leverage=self._config.leverage)
                         self._position.update_extremes(current_price)
                         # Record price for CB validation
                         self.record_price_for_validation(current_price)
@@ -1239,6 +1239,7 @@ class BollingerBot(BaseBot):
                     order_id=order_id_str,
                     fee=fee,
                     is_reduce_only=False,
+                    leverage=self._config.leverage,
                 )
 
                 # Record cost basis entry (持倉歸屬 - FIFO tracking)
@@ -1400,8 +1401,8 @@ class BollingerBot(BaseBot):
                 fee = quantity * (entry_price + exit_price) * self._config.fee_rate
 
                 # Calculate PnL percentage with zero-division protection
-                denominator = entry_price * quantity
-                pnl_pct = (pnl / denominator * Decimal("100")) if denominator > 0 else Decimal("0")
+                margin = entry_price * quantity / Decimal(self._config.leverage)
+                pnl_pct = (pnl / margin * Decimal("100")) if margin > 0 else Decimal("0")
 
                 # Calculate MFE/MAE
                 mfe, mae = self.calculate_mfe_mae(
@@ -1440,6 +1441,7 @@ class BollingerBot(BaseBot):
                     close_price=exit_price,
                     close_order_id=order_id_str,
                     close_fee=close_fee,
+                    leverage=self._config.leverage,
                 )
                 logger.debug(
                     f"Cost basis closed: {len(cost_basis_result.get('matched_lots', []))} lots, "

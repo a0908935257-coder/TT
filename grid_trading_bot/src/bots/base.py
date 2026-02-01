@@ -6481,6 +6481,7 @@ class BaseBot(ABC):
         order_id: str,
         fee: Decimal = Decimal("0"),
         is_reduce_only: bool = False,
+        leverage: int = 1,
     ) -> Dict[str, Any]:
         """
         Record a fill in the virtual position ledger.
@@ -6544,7 +6545,7 @@ class BaseBot(ABC):
                 pos["side"] = "LONG"
             else:
                 # Reducing short position (BUY to close SHORT)
-                realized = (pos["avg_entry_price"] - price) * min(quantity, current_qty)
+                realized = (pos["avg_entry_price"] - price) * min(quantity, current_qty) * Decimal(leverage)
                 pos["realized_pnl"] += realized - fee
                 pos["quantity"] = current_qty - quantity
                 if pos["quantity"] <= 0:
@@ -6567,7 +6568,7 @@ class BaseBot(ABC):
                 pos["side"] = "SHORT"
             else:
                 # Reducing long position (SELL to close LONG)
-                realized = (price - pos["avg_entry_price"]) * min(quantity, current_qty)
+                realized = (price - pos["avg_entry_price"]) * min(quantity, current_qty) * Decimal(leverage)
                 pos["realized_pnl"] += realized - fee
                 pos["quantity"] = current_qty - quantity
                 if pos["quantity"] <= 0:
@@ -6597,6 +6598,7 @@ class BaseBot(ABC):
         self,
         symbol: str,
         current_price: Decimal,
+        leverage: int = 1,
     ) -> Decimal:
         """
         Update unrealized P&L for a virtual position.
@@ -6619,9 +6621,9 @@ class BaseBot(ABC):
             return Decimal("0")
 
         if pos["side"] == "LONG":
-            pos["unrealized_pnl"] = (current_price - pos["avg_entry_price"]) * pos["quantity"]
+            pos["unrealized_pnl"] = (current_price - pos["avg_entry_price"]) * pos["quantity"] * Decimal(leverage)
         elif pos["side"] == "SHORT":
-            pos["unrealized_pnl"] = (pos["avg_entry_price"] - current_price) * pos["quantity"]
+            pos["unrealized_pnl"] = (pos["avg_entry_price"] - current_price) * pos["quantity"] * Decimal(leverage)
 
         # Update strategy risk tracking
         self.update_strategy_capital(unrealized_pnl=pos["unrealized_pnl"])
@@ -6904,6 +6906,7 @@ class BaseBot(ABC):
         close_price: Decimal,
         close_order_id: str,
         close_fee: Decimal = Decimal("0"),
+        leverage: int = 1,
     ) -> Dict[str, Any]:
         """
         Close position using FIFO cost basis matching.
@@ -6964,7 +6967,7 @@ class BaseBot(ABC):
             # Proportional exit fee
             exit_fee_portion = close_fee * (match_qty / close_quantity) if close_quantity > 0 else Decimal("0")
 
-            lot_pnl = proceeds - cost_basis - entry_fee_portion - exit_fee_portion
+            lot_pnl = (proceeds - cost_basis) * Decimal(leverage) - entry_fee_portion - exit_fee_portion
 
             # Record match
             result["matched_lots"].append({
@@ -7006,6 +7009,7 @@ class BaseBot(ABC):
             order_id=close_order_id,
             fee=close_fee,
             is_reduce_only=True,
+            leverage=leverage,
         )
 
         logger.info(
