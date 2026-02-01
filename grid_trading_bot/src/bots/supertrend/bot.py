@@ -1790,14 +1790,17 @@ class SupertrendBot(BaseBot):
             )
 
             if order:
-                # Calculate PnL
+                # Use actual fill price if available, fallback to ticker price
+                fill_price = Decimal(str(order.avg_price)) if getattr(order, 'avg_price', None) else exit_price
+
+                # Calculate PnL using actual fill price
                 if self._position.side == PositionSide.LONG:
-                    pnl = (exit_price - self._position.entry_price) * self._position.quantity
+                    pnl = (fill_price - self._position.entry_price) * self._position.quantity
                 else:
-                    pnl = (self._position.entry_price - exit_price) * self._position.quantity
+                    pnl = (self._position.entry_price - fill_price) * self._position.quantity
 
                 # Deduct fees
-                fee = (self._position.entry_price + exit_price) * self._position.quantity * self.FEE_RATE
+                fee = (self._position.entry_price + fill_price) * self._position.quantity * self.FEE_RATE
                 net_pnl = pnl - fee
 
                 # Calculate MFE/MAE
@@ -1813,7 +1816,7 @@ class SupertrendBot(BaseBot):
                 trade = Trade(
                     side=self._position.side,
                     entry_price=self._position.entry_price,
-                    exit_price=exit_price,
+                    exit_price=fill_price,
                     quantity=self._position.quantity,
                     pnl=net_pnl,
                     fee=fee,
@@ -1829,11 +1832,11 @@ class SupertrendBot(BaseBot):
 
                 # Close cost basis with FIFO (持倉歸屬 - P&L attribution)
                 order_id_str = str(getattr(order, "order_id", ""))
-                close_fee = self._position.quantity * exit_price * self.FEE_RATE
+                close_fee = self._position.quantity * fill_price * self.FEE_RATE
                 cost_basis_result = self.close_cost_basis_fifo(
                     symbol=self._config.symbol,
                     close_quantity=self._position.quantity,
-                    close_price=exit_price,
+                    close_price=fill_price,
                     close_order_id=order_id_str,
                     close_fee=close_fee,
                     leverage=self._config.leverage,
