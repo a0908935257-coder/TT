@@ -1040,6 +1040,33 @@ class BaseBot(ABC):
                 f"[{self._bot_id}] Config validation error (non-fatal): {e}"
             )
 
+    async def _verify_leverage_on_start(self) -> None:
+        """
+        Ensure exchange leverage matches config on startup.
+
+        Calls set_leverage to enforce the configured value. This is idempotent
+        on Binance — if already correct, it's a no-op.
+        """
+        config_leverage = getattr(self._config, 'leverage', None)
+        if config_leverage is None:
+            return
+
+        symbol = getattr(self._config, 'symbol', None)
+        if not symbol:
+            return
+
+        try:
+            result = await self._exchange.futures.set_leverage(
+                symbol=symbol,
+                leverage=int(config_leverage),
+            )
+            actual = result.get('leverage', config_leverage)
+            logger.info(f"[{self._bot_id}] Leverage verified/set: {actual}x")
+        except Exception as e:
+            logger.warning(
+                f"[{self._bot_id}] Leverage verification failed (non-fatal): {e}"
+            )
+
     # =========================================================================
     # Liquidity and Order Book Validation
     # =========================================================================
@@ -5662,6 +5689,9 @@ class BaseBot(ABC):
             # Validate configuration before starting
             await self._validate_config_on_start()
 
+            # Verify exchange leverage matches config
+            await self._verify_leverage_on_start()
+
             # Call subclass implementation
             await self._do_start()
 
@@ -10263,6 +10293,23 @@ class BaseBot(ABC):
         size_mult = self.get_position_size_reduction()
         if size_mult <= 0:
             return False, "Position entries blocked due to repeated stop losses"
+
+        # Check daily loss limit (if config supports it)
+        daily_loss_limit = getattr(self._config, 'daily_loss_limit_pct', None)
+        if daily_loss_limit is not None:
+            daily_pnl = getattr(self, '_daily_pnl', Decimal("0"))
+            capital = getattr(self._config, 'max_capital', None) or getattr(self, '_capital', None) or Decimal("1000")
+            if daily_pnl < 0:
+                daily_loss_pct = abs(daily_pnl) / capital
+                if daily_loss_pct >= daily_loss_limit:
+                    return False, f"Daily loss limit reached: {daily_loss_pct:.1%} >= {daily_loss_limit:.1%}"
+
+        # Check consecutive losses limit (if config supports it)
+        max_consecutive = getattr(self._config, 'max_consecutive_losses', None)
+        if max_consecutive is not None:
+            consecutive = getattr(self, '_consecutive_losses', 0)
+            if consecutive >= max_consecutive:
+                return False, f"Max consecutive losses reached: {consecutive} >= {max_consecutive}"
 
         return True, "Entry allowed"
 

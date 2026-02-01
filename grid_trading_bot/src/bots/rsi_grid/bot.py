@@ -787,15 +787,15 @@ class RSIGridBot(BaseBot):
                     )
                     return False
 
-            # Check global risk limits (多策略風控協調 - 防止總體風險超標)
-            exposure = quantity * price
-            global_ok, global_msg, global_details = await self.check_global_risk_limits(
-                bot_id=self._bot_id,
+            # Pre-trade risk check (risk gate + global risk limits)
+            is_allowed, ptc_msg, ptc_details = await self.pre_trade_with_global_check(
                 symbol=self._config.symbol,
-                additional_exposure=exposure,
+                side=order_side,
+                quantity=quantity,
+                price=price,
             )
-            if not global_ok:
-                logger.warning(f"Global risk check failed: {global_msg}")
+            if not is_allowed:
+                logger.warning(f"[{self._bot_id}] Pre-trade check rejected: {ptc_msg}")
                 return False
 
             # Mark order as pending (for deduplication)
