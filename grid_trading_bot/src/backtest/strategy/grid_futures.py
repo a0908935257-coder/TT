@@ -33,8 +33,6 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from ...bots.grid_futures.models import GridFuturesConfig as LiveGridFuturesConfig
-from ...bots.grid_futures.models import GridDirection as LiveGridDirection
 from ...core.models import Kline
 from ..order import Signal
 from ..position import Position
@@ -49,16 +47,13 @@ class GridDirection(str, Enum):
     TREND_FOLLOW = "trend_follow"
 
 
-# 使用實戰配置的默認值作為回測默認值 (單一來源)
-_DEFAULT_LIVE_CONFIG = LiveGridFuturesConfig(symbol="BTCUSDT")
-
-
 @dataclass
 class GridFuturesStrategyConfig:
     """
     Configuration for Grid Futures backtest strategy.
 
-    所有默認值均來自實戰配置 (GridFuturesConfig)，確保回測與實戰一致。
+    默認值已固定於回測系統內部，與實戰系統解耦。
+    修改實戰參數不會影響回測結果。
 
     Attributes:
         grid_count: Number of grid levels
@@ -76,21 +71,21 @@ class GridFuturesStrategyConfig:
         cooldown_bars: Minimum bars between signals
     """
 
-    # 所有默認值來自實戰配置 (單一來源，確保一致性)
-    grid_count: int = _DEFAULT_LIVE_CONFIG.grid_count
-    direction: GridDirection = GridDirection.NEUTRAL  # 映射到本地 enum
-    leverage: int = _DEFAULT_LIVE_CONFIG.leverage
-    trend_period: int = _DEFAULT_LIVE_CONFIG.trend_period
-    atr_period: int = _DEFAULT_LIVE_CONFIG.atr_period
-    atr_multiplier: Decimal = _DEFAULT_LIVE_CONFIG.atr_multiplier
-    fallback_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.fallback_range_pct
-    stop_loss_pct: Decimal = _DEFAULT_LIVE_CONFIG.stop_loss_pct
-    take_profit_grids: int = 1  # 回測專用參數，實戰配置無此欄位
+    # Snapshot of live GridFuturesConfig defaults at time of decoupling (2026-02-01)
+    grid_count: int = 8
+    direction: GridDirection = GridDirection.NEUTRAL
+    leverage: int = 7
+    trend_period: int = 48
+    atr_period: int = 46
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.5"))
+    fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.005"))
+    take_profit_grids: int = 1
     # Protective features
-    use_hysteresis: bool = _DEFAULT_LIVE_CONFIG.use_hysteresis
-    hysteresis_pct: Decimal = _DEFAULT_LIVE_CONFIG.hysteresis_pct
-    use_signal_cooldown: bool = _DEFAULT_LIVE_CONFIG.use_signal_cooldown
-    cooldown_bars: int = _DEFAULT_LIVE_CONFIG.cooldown_bars
+    use_hysteresis: bool = True
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.001"))
+    use_signal_cooldown: bool = True
+    cooldown_bars: int = 0
 
     def __post_init__(self):
         if not isinstance(self.atr_multiplier, Decimal):

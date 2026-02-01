@@ -44,7 +44,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from ...bots.supertrend.indicators import SupertrendIndicator
+from ..indicators import SupertrendIndicator
 from ...core.models import Kline
 from ..order import Signal
 from ..position import Position

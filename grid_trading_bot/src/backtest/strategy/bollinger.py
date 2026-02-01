@@ -38,8 +38,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
-from ...bots.bollinger.indicators import BollingerCalculator
-from ...bots.bollinger.models import BollingerConfig as LiveBollingerConfig
+from ..indicators import BollingerCalculator
 from ...core.models import Kline
 from ..order import Signal
 from ..position import Position
@@ -54,16 +53,13 @@ class BollingerMode(str, Enum):
     BB_NEUTRAL_GRID = "bb_neutral_grid"  # Neutral bi-directional grid (like Grid Futures)
 
 
-# 使用實戰配置的默認值作為回測默認值 (單一來源)
-_DEFAULT_LIVE_CONFIG = LiveBollingerConfig(symbol="BTCUSDT")
-
-
 @dataclass
 class BollingerStrategyConfig:
     """
     Configuration for Bollinger backtest strategy.
 
-    所有默認值均來自實戰配置 (BollingerConfig)，確保回測與實戰一致。
+    默認值已固定於回測系統內部，與實戰系統解耦。
+    修改實戰參數不會影響回測結果。
 
     Attributes:
         mode: Strategy mode (BB_TREND_GRID, BB_NEUTRAL_GRID, BB_RSI_MOMENTUM)
@@ -74,7 +70,7 @@ class BollingerStrategyConfig:
         take_profit_grids: Grids for take profit
         stop_loss_pct: Stop loss percentage
         use_hysteresis: Enable hysteresis buffer zone (like live bot)
-        hysteresis_pct: Hysteresis percentage (0.2% = 0.002)
+        hysteresis_pct: Hysteresis percentage (0.3% = 0.003)
         use_signal_cooldown: Enable signal cooldown (like live bot)
         cooldown_bars: Minimum bars between signals
         use_atr_range: Use ATR for dynamic grid range (BB_NEUTRAL_GRID)
@@ -83,24 +79,24 @@ class BollingerStrategyConfig:
         fallback_range_pct: Fallback range when ATR unavailable
     """
 
-    # 所有默認值來自實戰配置 (單一來源，確保一致性)
+    # Snapshot of live BollingerConfig defaults at time of decoupling (2026-02-01)
     mode: BollingerMode = BollingerMode.BB_TREND_GRID
-    bb_period: int = _DEFAULT_LIVE_CONFIG.bb_period
-    bb_std: Decimal = _DEFAULT_LIVE_CONFIG.bb_std
-    grid_count: int = _DEFAULT_LIVE_CONFIG.grid_count
-    grid_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.grid_range_pct
-    take_profit_grids: int = _DEFAULT_LIVE_CONFIG.take_profit_grids
-    stop_loss_pct: Decimal = _DEFAULT_LIVE_CONFIG.stop_loss_pct
+    bb_period: int = 21
+    bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
+    grid_count: int = 10
+    grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
+    take_profit_grids: int = 1
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
     # Protective features
-    use_hysteresis: bool = _DEFAULT_LIVE_CONFIG.use_hysteresis
-    hysteresis_pct: Decimal = _DEFAULT_LIVE_CONFIG.hysteresis_pct
-    use_signal_cooldown: bool = _DEFAULT_LIVE_CONFIG.use_signal_cooldown
-    cooldown_bars: int = _DEFAULT_LIVE_CONFIG.cooldown_bars
+    use_hysteresis: bool = True
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.003"))
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 1
     # ATR dynamic range (for BB_NEUTRAL_GRID mode)
-    use_atr_range: bool = _DEFAULT_LIVE_CONFIG.use_atr_range
-    atr_period: int = _DEFAULT_LIVE_CONFIG.atr_period
-    atr_multiplier: Decimal = _DEFAULT_LIVE_CONFIG.atr_multiplier
-    fallback_range_pct: Decimal = _DEFAULT_LIVE_CONFIG.fallback_range_pct
+    use_atr_range: bool = True
+    atr_period: int = 13
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.5"))
+    fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
 
 
 @dataclass
