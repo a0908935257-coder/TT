@@ -173,8 +173,8 @@ class FundPool:
         available_balance = Decimal("0")
 
         for balance in account.balances:
-            # Sum USDT-like stablecoin balances
-            if balance.asset in ("USDT", "BUSD", "USDC"):
+            # Only count USDT — USDC/BUSD cannot be used as futures margin
+            if balance.asset == "USDT":
                 total_balance += balance.total
                 available_balance += balance.free
 
