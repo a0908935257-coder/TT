@@ -772,5 +772,301 @@ class TestDispatchResult:
         assert len(result.errors) == 1
 
 
+class TestShouldRebalance:
+    """Test _should_rebalance logic."""
+
+    def setup_method(self):
+        FundManager.reset_instance()
+
+    def teardown_method(self):
+        FundManager.reset_instance()
+
+    def _make_manager(self, frequency="weekly", day=0, hour=0):
+        config = FundManagerConfig(
+            rebalance_frequency=frequency,
+            rebalance_day=day,
+            rebalance_hour=hour,
+        )
+        manager = FundManager(config=config)
+        manager._last_rebalance_time = None
+        return manager
+
+    def test_never_frequency_returns_false(self):
+        """rebalance_frequency='never' should always return False."""
+        manager = self._make_manager(frequency="never")
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_weekly_correct_day_and_hour(self, mock_dt):
+        """Weekly rebalance triggers on correct weekday + hour."""
+        # Monday (weekday=0), hour=3
+        fake_now = datetime(2026, 2, 2, 3, 15, 0, tzinfo=timezone.utc)  # Monday
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="weekly", day=0, hour=3)
+        assert manager._should_rebalance() is True
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_weekly_wrong_day(self, mock_dt):
+        """Weekly rebalance does NOT trigger on wrong weekday."""
+        # Tuesday (weekday=1), hour=3
+        fake_now = datetime(2026, 2, 3, 3, 15, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="weekly", day=0, hour=3)
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_weekly_wrong_hour(self, mock_dt):
+        """Weekly rebalance does NOT trigger on wrong hour."""
+        fake_now = datetime(2026, 2, 2, 10, 0, 0, tzinfo=timezone.utc)  # Monday hour=10
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="weekly", day=0, hour=3)
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_daily_correct_hour(self, mock_dt):
+        """Daily rebalance triggers at correct hour regardless of weekday."""
+        fake_now = datetime(2026, 2, 5, 8, 30, 0, tzinfo=timezone.utc)  # Thursday
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="daily", day=0, hour=8)
+        assert manager._should_rebalance() is True
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_daily_wrong_hour(self, mock_dt):
+        """Daily rebalance does NOT trigger at wrong hour."""
+        fake_now = datetime(2026, 2, 5, 14, 0, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="daily", day=0, hour=8)
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_monthly_correct_day(self, mock_dt):
+        """Monthly rebalance triggers on correct day of month."""
+        # rebalance_day=0 -> day of month 1
+        fake_now = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="monthly", day=0, hour=0)
+        assert manager._should_rebalance() is True
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_monthly_wrong_day(self, mock_dt):
+        """Monthly rebalance does NOT trigger on wrong day of month."""
+        fake_now = datetime(2026, 3, 15, 0, 0, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="monthly", day=0, hour=0)
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_duplicate_trigger_prevention(self, mock_dt):
+        """Should not trigger again within the same hour."""
+        fake_now = datetime(2026, 2, 2, 3, 15, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="weekly", day=0, hour=3)
+
+        # First call triggers
+        assert manager._should_rebalance() is True
+
+        # Simulate last rebalance was 30 minutes ago
+        manager._last_rebalance_time = datetime(
+            2026, 2, 2, 2, 45, 0, tzinfo=timezone.utc
+        )
+        assert manager._should_rebalance() is False
+
+    @patch("src.fund_manager.manager.datetime")
+    def test_trigger_after_cooldown(self, mock_dt):
+        """Should trigger again after 1 hour cooldown."""
+        fake_now = datetime(2026, 2, 9, 3, 15, 0, tzinfo=timezone.utc)  # Next Monday
+        mock_dt.now.return_value = fake_now
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+
+        manager = self._make_manager(frequency="weekly", day=0, hour=3)
+        # Last rebalance was over 1 hour ago
+        manager._last_rebalance_time = datetime(
+            2026, 2, 2, 3, 0, 0, tzinfo=timezone.utc
+        )
+        assert manager._should_rebalance() is True
+
+
+class TestExposureBlocking:
+    """Test that dispatch_funds blocks when exposure limit is exceeded."""
+
+    def setup_method(self):
+        FundManager.reset_instance()
+
+    def teardown_method(self):
+        FundManager.reset_instance()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_blocked_when_exposure_exceeded(self):
+        """dispatch_funds should fail when exposure exceeds 3x limit."""
+        config = FundManagerConfig(
+            allocations=[
+                BotAllocation(bot_pattern="grid_*", ratio=Decimal("0.5")),
+            ]
+        )
+        manager = FundManager(config=config)
+
+        # Set up balance and high-leverage allocation to exceed 3x
+        pool = manager.fund_pool
+        pool.update_from_values(
+            total_balance=Decimal("1000"),
+            available_balance=Decimal("800"),
+        )
+        pool.set_allocation("grid_btc", Decimal("500"))
+        pool.set_leverage("grid_btc", 10)  # 500 * 10 = 5000 notional, 5x > 3x
+
+        result = await manager.dispatch_funds(trigger="manual")
+
+        assert result.success is False
+        assert any("exposure" in e.lower() for e in result.errors)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_allowed_when_exposure_within_limit(self):
+        """dispatch_funds should proceed when exposure is within 3x limit."""
+        config = FundManagerConfig(
+            allocations=[
+                BotAllocation(bot_pattern="grid_*", ratio=Decimal("0.5")),
+            ]
+        )
+        manager = FundManager(config=config)
+
+        pool = manager.fund_pool
+        pool.update_from_values(
+            total_balance=Decimal("1000"),
+            available_balance=Decimal("800"),
+        )
+        pool.set_allocation("grid_btc", Decimal("200"))
+        pool.set_leverage("grid_btc", 2)  # 200 * 2 = 400 notional, 0.4x < 3x
+
+        # No bots registered so it will return "no active bots" — but NOT exposure error
+        result = await manager.dispatch_funds(trigger="manual")
+
+        # Should not contain exposure error
+        assert not any("exposure" in e.lower() for e in result.errors)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_ok_with_zero_balance(self):
+        """dispatch_funds should not block on zero balance (no exposure issue)."""
+        manager = FundManager(config=FundManagerConfig())
+
+        # No balance set → total_balance=0, check_exposure_limit returns False
+        result = await manager.dispatch_funds(trigger="manual")
+
+        assert not any("exposure" in e.lower() for e in result.errors)
+
+
+class TestRebalanceConfig:
+    """Test rebalance config fields parsing."""
+
+    def test_config_defaults_rebalance(self):
+        """Default rebalance config should be 'never'."""
+        config = FundManagerConfig()
+        assert config.rebalance_frequency == "never"
+        assert config.rebalance_day == 0
+        assert config.rebalance_hour == 0
+
+    def test_from_dict_with_rebalance(self):
+        """from_dict should parse rebalance fields."""
+        data = {
+            "rebalance_frequency": "weekly",
+            "rebalance_day": 2,
+            "rebalance_hour": 14,
+        }
+        config = FundManagerConfig.from_dict(data)
+        assert config.rebalance_frequency == "weekly"
+        assert config.rebalance_day == 2
+        assert config.rebalance_hour == 14
+
+    def test_from_yaml_with_rebalance(self):
+        """from_yaml should parse rebalance from system section."""
+        yaml_dict = {
+            "system": {
+                "poll_interval": 60,
+                "rebalance_frequency": "monthly",
+                "rebalance_day": 14,
+                "rebalance_hour": 8,
+            },
+            "strategy": {"type": "fixed_ratio"},
+            "bots": [],
+        }
+        config = FundManagerConfig.from_yaml(yaml_dict)
+        assert config.rebalance_frequency == "monthly"
+        assert config.rebalance_day == 14
+        assert config.rebalance_hour == 8
+
+
+class TestFundPoolPersistence:
+    """Test SQLite persistence for allocations."""
+
+    def test_persist_and_restore(self, tmp_path):
+        """Allocations should be restored from DB on new FundPool init."""
+        db_file = str(tmp_path / "test_fund.db")
+
+        # First pool: set allocations
+        pool1 = FundPool(db_path=db_file)
+        pool1.set_allocation("bot_a", Decimal("1000"))
+        pool1.set_allocation("bot_b", Decimal("500"))
+
+        # Second pool: should restore
+        pool2 = FundPool(db_path=db_file)
+        assert pool2.get_allocation("bot_a") == Decimal("1000")
+        assert pool2.get_allocation("bot_b") == Decimal("500")
+
+    def test_remove_allocation_persisted(self, tmp_path):
+        """Removed allocations should not appear after restore."""
+        db_file = str(tmp_path / "test_fund.db")
+
+        pool1 = FundPool(db_path=db_file)
+        pool1.set_allocation("bot_a", Decimal("1000"))
+        pool1.remove_allocation("bot_a")
+
+        pool2 = FundPool(db_path=db_file)
+        assert pool2.get_allocation("bot_a") == Decimal("0")
+
+    def test_clear_allocations_persisted(self, tmp_path):
+        """clear_allocations should wipe DB entries."""
+        db_file = str(tmp_path / "test_fund.db")
+
+        pool1 = FundPool(db_path=db_file)
+        pool1.set_allocation("bot_a", Decimal("1000"))
+        pool1.set_allocation("bot_b", Decimal("500"))
+        pool1.clear_allocations()
+
+        pool2 = FundPool(db_path=db_file)
+        assert pool2.allocated_balance == Decimal("0")
+
+    def test_no_db_path_no_error(self):
+        """FundPool without db_path should work without persistence."""
+        pool = FundPool()
+        pool.set_allocation("bot_a", Decimal("100"))
+        assert pool.get_allocation("bot_a") == Decimal("100")
+
+    def test_add_allocation_persisted(self, tmp_path):
+        """add_allocation increments should persist correctly."""
+        db_file = str(tmp_path / "test_fund.db")
+
+        pool1 = FundPool(db_path=db_file)
+        pool1.set_allocation("bot_a", Decimal("100"))
+        pool1.add_allocation("bot_a", Decimal("50"))
+
+        pool2 = FundPool(db_path=db_file)
+        assert pool2.get_allocation("bot_a") == Decimal("150")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
