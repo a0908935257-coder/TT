@@ -698,7 +698,10 @@ class ExchangeClient:
                 # Process the request with the order lock
                 async with self._order_lock:
                     try:
-                        result = await self._execute_order_request(request)
+                        result = await asyncio.wait_for(
+                            self._execute_order_request(request),
+                            timeout=30.0,
+                        )
                         if not request.future.done():
                             request.future.set_result(result)
 

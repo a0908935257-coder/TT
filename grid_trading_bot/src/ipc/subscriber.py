@@ -173,9 +173,11 @@ class IPCSubscriber:
         Main message listening loop.
 
         Continuously polls for messages and dispatches them to
-        appropriate handlers.
+        appropriate handlers. Uses exponential backoff on errors.
         """
         pubsub = await self._ensure_pubsub()
+        backoff_delay = 0.5
+        max_backoff = 30.0
 
         while self._running:
             try:
@@ -189,12 +191,14 @@ class IPCSubscriber:
                     continue
 
                 await self._handle_message(message)
+                backoff_delay = 0.5  # Reset on success
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error in listen loop: {e}")
-                await asyncio.sleep(0.1)
+                logger.error(f"Error in listen loop: {e}, retrying in {backoff_delay:.1f}s")
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, max_backoff)
 
     async def _handle_message(self, message: dict) -> None:
         """

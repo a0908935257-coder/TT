@@ -385,11 +385,16 @@ class NotificationManager:
         """
         now = time.time()
 
-        # Clean expired entries
+        # Clean expired entries and enforce max size
         self._dedup_cache = {
             k: v for k, v in self._dedup_cache.items()
             if now - v < self._dedup_window
         }
+        # Hard cap to prevent memory leak in long-running processes
+        if len(self._dedup_cache) > 10000:
+            # Keep only the newest 5000 entries
+            sorted_items = sorted(self._dedup_cache.items(), key=lambda x: x[1], reverse=True)
+            self._dedup_cache = dict(sorted_items[:5000])
 
         # Only check, don't mark - marking happens after successful send
         return content_hash in self._dedup_cache

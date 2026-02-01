@@ -663,10 +663,12 @@ class RedisManager:
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
-                # Give up after too many consecutive errors
-                if consecutive_errors >= 10:
-                    logger.error("Pubsub listener giving up after 10 consecutive errors")
-                    break
+                # Alert after many consecutive errors but keep retrying
+                if consecutive_errors >= 10 and consecutive_errors % 10 == 0:
+                    logger.critical(
+                        f"Pubsub listener: {consecutive_errors} consecutive errors, "
+                        f"still retrying (backoff: {reconnect_delay:.1f}s)"
+                    )
 
             except Exception as e:
                 logger.error(f"Pubsub listener unexpected error: {e}")
