@@ -94,14 +94,14 @@ class Position:
         return pnl
 
     def unrealized_pnl_pct(self, current_price: Decimal, leverage: int = 1) -> Decimal:
-        """Calculate unrealized P&L percentage."""
+        """Calculate unrealized P&L percentage (margin-based ROI)."""
         if self.entry_price == 0:
             return Decimal("0")
         if self.side == "LONG":
             pct = (current_price - self.entry_price) / self.entry_price
         else:
             pct = (self.entry_price - current_price) / self.entry_price
-        return pct * Decimal("100")
+        return pct * Decimal(leverage) * Decimal("100")
 
 
 class PositionManager:
@@ -197,8 +197,7 @@ class PositionManager:
         Returns:
             Completed Trade record
         """
-        # Calculate P&L with leverage
-        # In futures trading, leverage multiplies the position's effective exposure
+        # Calculate P&L (quantity already includes leverage)
         if position.side == "LONG":
             gross_pnl = (exit_price - position.entry_price) * position.quantity
         else:
@@ -210,9 +209,11 @@ class PositionManager:
         total_fees = position.entry_fee + exit_fee
         net_pnl = gross_pnl - total_fees
 
-        # Calculate ROI percentage based on notional
-        if position.notional > 0:
-            pnl_pct = (net_pnl / position.notional) * Decimal("100")
+        # Calculate ROI percentage based on margin (notional / leverage)
+        lev = Decimal(leverage) if leverage > 1 else Decimal("1")
+        margin_value = position.notional / lev
+        if margin_value > 0:
+            pnl_pct = (net_pnl / margin_value) * Decimal("100")
         else:
             pnl_pct = Decimal("0")
 

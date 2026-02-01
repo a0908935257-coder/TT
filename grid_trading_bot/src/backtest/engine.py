@@ -356,7 +356,7 @@ class BacktestEngine:
                 # Apply max_notional cap
                 if self._config.max_notional > 0 and notional > self._config.max_notional:
                     notional = self._config.max_notional
-                # Check margin required (notional / leverage) vs available
+                # Check margin vs available (notional IS the margin amount)
                 margin_needed = notional
                 if margin_needed > available:
                     return
@@ -510,7 +510,7 @@ class BacktestEngine:
         if hours_elapsed >= self._config.funding_interval_hours:
             funding_periods = int(hours_elapsed // self._config.funding_interval_hours)
             for position in self._position_manager.positions:
-                # Funding = notional × leverage × rate × periods
+                # Funding = notional × rate × periods (notional already includes leverage)
                 # Positive rate: longs pay, shorts receive
                 # Negative rate: longs receive, shorts pay
                 base_funding = (
