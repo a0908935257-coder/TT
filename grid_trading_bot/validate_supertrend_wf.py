@@ -12,8 +12,8 @@ Supertrend v2 策略 Walk-Forward 驗證腳本 (HYBRID_GRID + vol filter + timeo
 - 參數穩健性 >= 80%
 
 用法:
-    python validate_supertrend_wf.py --leverage 18
-    python validate_supertrend_wf.py --leverage 18 --full
+    python validate_supertrend_wf.py --leverage 7
+    python validate_supertrend_wf.py --leverage 7 --full
 """
 
 import argparse
@@ -92,7 +92,7 @@ def load_klines(filepath: str) -> list[Kline]:
     return klines
 
 
-def run_backtest(klines: list[Kline], leverage: int = 18, params: dict | None = None) -> dict:
+def run_backtest(klines: list[Kline], leverage: int = 7, params: dict | None = None) -> dict:
     """執行回測並返回結果."""
     p = params or OPTIMIZED_PARAMS
 
@@ -152,7 +152,7 @@ def run_backtest(klines: list[Kline], leverage: int = 18, params: dict | None = 
     }
 
 
-def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 18):
+def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: int = 7):
     """Walk-Forward 驗證."""
     print(f"\n{'=' * 60}")
     print(f"  Walk-Forward 驗證 (Supertrend TREND_GRID)")
@@ -213,7 +213,7 @@ def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: in
     }
 
 
-def sliding_window_robustness_test(klines: list[Kline], n_tests: int = 15, leverage: int = 18):
+def sliding_window_robustness_test(klines: list[Kline], n_tests: int = 15, leverage: int = 7):
     """滑動窗口穩健性測試."""
     print(f"\n{'=' * 60}")
     print(f"  滑動窗口穩健性測試")
@@ -264,7 +264,7 @@ def sliding_window_robustness_test(klines: list[Kline], n_tests: int = 15, lever
     }
 
 
-def out_of_sample_test(klines: list[Kline], leverage: int = 18):
+def out_of_sample_test(klines: list[Kline], leverage: int = 7):
     """樣本外測試 (Out-of-Sample Test)."""
     print(f"\n{'=' * 60}")
     print(f"  樣本外測試 (Out-of-Sample Test)")
@@ -334,7 +334,7 @@ def out_of_sample_test(klines: list[Kline], leverage: int = 18):
     }
 
 
-def parameter_sensitivity_test(klines: list[Kline], leverage: int = 18):
+def parameter_sensitivity_test(klines: list[Kline], leverage: int = 7):
     """參數敏感度測試 (Parameter Sensitivity Analysis)."""
     print(f"\n{'=' * 60}")
     print(f"  參數敏感度測試 (Overfitting Detection)")
@@ -419,7 +419,7 @@ def parameter_sensitivity_test(klines: list[Kline], leverage: int = 18):
     }
 
 
-def white_noise_benchmark(klines: list[Kline], leverage: int = 18, n_tests: int = 10):
+def white_noise_benchmark(klines: list[Kline], leverage: int = 7, n_tests: int = 10):
     """白噪音基準測試 (Random Benchmark)."""
     print(f"\n{'=' * 60}")
     print(f"  白噪音基準測試 (Random Benchmark)")
