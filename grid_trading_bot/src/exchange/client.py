@@ -163,6 +163,9 @@ class ExchangeClient:
         # Minimum delay between orders (ms) - helps with rate limiting
         self._min_order_interval_ms = 100
 
+        # Time sync health flag — set to False when sync fails repeatedly
+        self._time_sync_healthy = True
+
         # =======================================================================
         # Time Synchronization
         # =======================================================================
@@ -552,13 +555,18 @@ class ExchangeClient:
                     # Sync both spot and futures
                     await self._sync_time_with_warning()
                     consecutive_failures = 0  # Reset on success
+                    if not self._time_sync_healthy:
+                        self._time_sync_healthy = True
+                        logger.info("Time sync recovered — order submission re-enabled")
                 except Exception as e:
                     consecutive_failures += 1
                     if consecutive_failures >= max_failures_before_critical:
-                        logger.critical(
-                            f"Time sync failed {consecutive_failures} consecutive times - "
-                            "API requests may be rejected due to timestamp issues!"
-                        )
+                        if self._time_sync_healthy:
+                            self._time_sync_healthy = False
+                            logger.critical(
+                                f"Time sync failed {consecutive_failures} consecutive times — "
+                                "pausing order submission to prevent -1021 rejections"
+                            )
                     else:
                         logger.error(f"Time sync failed ({consecutive_failures}/{max_failures_before_critical}): {e}")
 
@@ -736,6 +744,11 @@ class ExchangeClient:
 
     async def _execute_order_request(self, request: OrderRequest) -> Any:
         """Execute a single order request."""
+        if not self._time_sync_healthy:
+            raise RuntimeError(
+                "Order rejected: time sync unhealthy — Binance would reject with -1021"
+            )
+
         params = request.params
         operation = request.operation
         bot_id = request.bot_id

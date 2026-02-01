@@ -130,13 +130,15 @@ class ProcessManager:
             logger.info(f"Spawning bot process: {bot_id}")
             logger.debug(f"Command: {' '.join(cmd)}")
 
-            # Spawn process
-            # Use DEVNULL to prevent buffer overflow hang
-            # Bot logs are handled by the bot's own logging system
+            # Spawn process — redirect to log files for crash debugging
+            log_dir = Path("logs")
+            log_dir.mkdir(exist_ok=True)
+            stdout_log = open(log_dir / f"{bot_id}_stdout.log", "a")
+            stderr_log = open(log_dir / f"{bot_id}_stderr.log", "a")
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout_log,
+                stderr=stderr_log,
                 # Don't inherit signal handlers
                 start_new_session=True,
             )

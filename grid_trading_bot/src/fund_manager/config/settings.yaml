@@ -98,7 +98,7 @@ bots:
       timeframe: 1h
       leverage: 18                        # 18x
       margin_type: ISOLATED
-      position_size_pct: 0.1
+      position_size_pct: 0.05             # 5% (18x×5%×25%=22.5% < 30% pre-trade limit)
       max_position_pct: 0.5
 
       # Strategy Mode
