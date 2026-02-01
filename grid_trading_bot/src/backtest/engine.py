@@ -335,7 +335,9 @@ class BacktestEngine:
                     kline.close, self._config.initial_capital, self._config.leverage
                 )
                 notional = current_equity * self._config.position_size_pct
-                if notional > available:
+                # Check margin required (notional / leverage) vs available
+                margin_needed = notional / Decimal(self._config.leverage)
+                if margin_needed > available:
                     return
                 # Temporarily override notional for this trade
                 self._order_simulator.override_notional(notional)
@@ -427,7 +429,7 @@ class BacktestEngine:
 
         # Track margin utilization
         if self._config.use_margin and equity > 0:
-            used = self._position_manager.used_margin()
+            used = self._position_manager.used_margin(self._config.leverage)
             utilization = (used / equity) * Decimal("100")
             if utilization > self._max_margin_utilization_pct:
                 self._max_margin_utilization_pct = utilization

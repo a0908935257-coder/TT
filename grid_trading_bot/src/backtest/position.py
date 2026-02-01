@@ -285,14 +285,15 @@ class PositionManager:
         """Record a funding rate payment."""
         self._total_funding_paid += amount
 
-    def used_margin(self) -> Decimal:
-        """Calculate total margin used by open positions."""
-        return sum((pos.notional for pos in self._positions), Decimal("0"))
+    def used_margin(self, leverage: int = 1) -> Decimal:
+        """Calculate total margin used by open positions (notional / leverage)."""
+        lev = Decimal(leverage) if leverage > 1 else Decimal("1")
+        return sum((pos.notional / lev for pos in self._positions), Decimal("0"))
 
     def available_margin(self, current_price: Decimal, initial_capital: Decimal, leverage: int = 1) -> Decimal:
         """Calculate available margin for new positions."""
         equity = self.total_equity(current_price, initial_capital, leverage)
-        return equity - self.used_margin()
+        return equity - self.used_margin(leverage)
 
     def unrealized_pnl(self, current_price: Decimal, leverage: int = 1) -> Decimal:
         """Calculate total unrealized P&L across all positions."""
