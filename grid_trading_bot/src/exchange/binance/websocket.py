@@ -249,33 +249,37 @@ class BinanceWebSocket:
         """
         Attempt to reconnect with exponential backoff.
 
+        Uses iterative retry loop (not recursive) to avoid stack overflow.
+
         Returns:
             True if reconnection successful
         """
-        # Don't reconnect if intentionally closed
-        if self._intentional_close:
-            logger.debug("Skipping reconnection - intentional close")
-            return False
+        while True:
+            # Don't reconnect if intentionally closed
+            if self._intentional_close:
+                logger.debug("Skipping reconnection - intentional close")
+                return False
 
-        if self._reconnect_attempts >= self.max_reconnect_attempts:
-            logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
-            if self._on_error:
-                self._on_error(Exception("Max reconnection attempts reached"))
-            return False
+            if self._reconnect_attempts >= self.max_reconnect_attempts:
+                logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+                if self._on_error:
+                    self._on_error(Exception("Max reconnection attempts reached"))
+                return False
 
-        self._reconnect_attempts += 1
-        logger.info(
-            f"Reconnection attempt {self._reconnect_attempts}/{self.max_reconnect_attempts} "
-            f"in {self._current_delay}s"
-        )
+            self._reconnect_attempts += 1
+            logger.info(
+                f"Reconnection attempt {self._reconnect_attempts}/{self.max_reconnect_attempts} "
+                f"in {self._current_delay}s"
+            )
 
-        await asyncio.sleep(self._current_delay)
+            await asyncio.sleep(self._current_delay)
 
-        # Exponential backoff
-        self._current_delay = min(self._current_delay * 2, self.max_reconnect_delay)
+            # Exponential backoff
+            self._current_delay = min(self._current_delay * 2, self.max_reconnect_delay)
 
-        # Attempt connection
-        if await self.connect():
+            # Attempt connection
+            if not await self.connect():
+                continue  # Retry with next attempt
             # Resubscribe to all streams with lock protection for entire operation
             # This prevents race conditions where subscriptions are modified during resubscription
             if self._subscriptions_lock:
@@ -326,8 +330,6 @@ class BinanceWebSocket:
                     logger.error(f"on_reconnect callback error: {e}")
 
             return True
-
-        return await self.reconnect()
 
     # =========================================================================
     # Subscription Management

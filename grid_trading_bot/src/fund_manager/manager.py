@@ -400,16 +400,35 @@ class FundManager:
 
                         # Execute allocations (still inside lock)
                         # allocations contains absolute targets; compute delta vs current
+                        deltas: Dict[str, Decimal] = {}
                         for bot_id, target_amount in allocations.items():
                             current = self._fund_pool.get_allocation(bot_id)
                             delta = target_amount - current
                             if delta > 0:
-                                record = await self._allocate_to_bot(bot_id, delta, trigger)
-                                result.add_allocation(record)
+                                deltas[bot_id] = delta
                             elif delta < 0:
                                 logger.info(
                                     f"Bot {bot_id} over-allocated by {-delta}, skipping"
                                 )
+
+                        # Validate total deltas don't exceed available
+                        total_delta = sum(deltas.values())
+                        unallocated = self._fund_pool.get_unallocated()
+                        if total_delta > unallocated:
+                            logger.warning(
+                                f"Total allocation delta {total_delta} exceeds "
+                                f"unallocated {unallocated}, capping proportionally"
+                            )
+                            if total_delta > 0:
+                                scale = unallocated / total_delta
+                                deltas = {
+                                    bot_id: delta * scale
+                                    for bot_id, delta in deltas.items()
+                                }
+
+                        for bot_id, delta in deltas.items():
+                            record = await self._allocate_to_bot(bot_id, delta, trigger)
+                            result.add_allocation(record)
 
                         # Update overall success status
                         result.success = result.failed_count == 0

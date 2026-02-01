@@ -1062,6 +1062,7 @@ class GridOrderManager:
         # Remove from active mappings (use pop to avoid KeyError in concurrent scenarios)
         self._level_order_map.pop(level_index, None)
         self._order_level_map.pop(order.order_id, None)
+        self._order_created_times.pop(order.order_id, None)
 
         # Update order cache
         self._orders[order.order_id] = order
@@ -1320,6 +1321,10 @@ class GridOrderManager:
         # Remove from mappings (use pop to avoid KeyError in concurrent scenarios)
         self._level_order_map.pop(level_index, None)
         self._order_level_map.pop(order.order_id, None)
+        self._order_created_times.pop(order.order_id, None)
+
+        # Reset sync failure counter
+        self._sync_failure_counts.pop(order.order_id, None)
 
         # Update in database
         await self._data_manager.update_order(order, bot_id=self._bot_id)
@@ -1359,6 +1364,8 @@ class GridOrderManager:
                     logger.warning(
                         f"Buy record at level {buy_level_index} already paired, skipping"
                     )
+                    # Put it back to avoid losing the record
+                    self._pending_buy_fills.setdefault(buy_level_index, []).insert(0, buy_record)
                 else:
                     # Atomically pair both records (under lock protection)
                     buy_record.paired_record = sell_record
@@ -1378,6 +1385,8 @@ class GridOrderManager:
                         logger.warning(
                             f"Buy record at level {nearby_level} already paired, skipping"
                         )
+                        # Put it back to avoid losing the record
+                        self._pending_buy_fills.setdefault(nearby_level, []).insert(0, buy_record)
                         continue
                     buy_record.paired_record = sell_record
                     sell_record.paired_record = buy_record

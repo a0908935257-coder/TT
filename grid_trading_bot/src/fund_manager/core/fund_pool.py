@@ -375,6 +375,7 @@ class FundPool:
                 self._allocations.pop(bot_id, None)
             else:
                 self._allocations[bot_id] = amount
+            self._persist_allocation(bot_id, amount)
             logger.debug(f"Allocation set for {bot_id}: {amount}")
 
     def add_allocation(self, bot_id: str, amount: Decimal) -> Decimal:
@@ -611,7 +612,7 @@ class FundPool:
             True if exposure exceeds limit (warning condition)
         """
         if self.total_balance <= 0:
-            return False
+            return True  # No balance = exceeds limit (safety: block allocation)
         ratio = self.total_notional_exposure / self.total_balance
         if ratio > max_ratio:
             logger.warning(
