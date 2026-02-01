@@ -69,6 +69,7 @@ def run_backtest(klines: list[Kline], config: RSIGridStrategyConfig, leverage: i
         initial_capital=Decimal("10000"),
         fee_rate=Decimal("0.0006"),
         slippage_pct=Decimal("0.0005"),
+        position_size_pct=Decimal("0.05"),
     ).with_leverage(leverage)
     engine = BacktestEngine(bt_config)
     return engine.run(klines, strategy)

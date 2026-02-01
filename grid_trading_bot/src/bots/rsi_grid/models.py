@@ -8,19 +8,18 @@ Strategy: RSI Zone + Grid Entry (無趨勢過濾)
 - Grid provides entry points at ATR-based price levels
 - 優化後關閉趨勢過濾，效果更好
 
-✅ v3 Optuna 優化 + Walk-Forward 驗證 (2026-02-01):
-- 年化報酬: 16.69%, Sharpe: 2.47, 回撤: 4.65%
-- 勝率: 61.5%, 交易數: 2602/2年
-- W-F 一致性: 66.7% (2/3), Monte Carlo: ROBUST
-- OOS Sharpe: 2.39, OOS/IS: 0.99
+✅ v4 Optuna 優化 (2026-02-01):
+- 年化報酬: 55.78%, Sharpe: 3.08, 回撤: 7.48%
+- 勝率: 46.9%, 交易數: 2754/2年
+- OOS/IS: 1.30, Train Sharpe: 2.47, Test Sharpe: 3.20
 
-v3 優化後參數:
-- Timeframe: 1h, Leverage: 7x
-- RSI: period=5, block_threshold=0.9
-- Grid: count=10, ATR period=7, multiplier=4.0
-- Stop Loss: ATR * 2.0, Take Profit: 2 grids, Max Hold: 16 bars
-- Volatility Filter: ON (baseline=300, low=0.3, high=2.0)
-- Trailing Stop: ON (activate=1%, distance=0.8%)
+v4 優化後參數:
+- Timeframe: 1h, Leverage: 10x, Position Size: 5%
+- RSI: period=7, block_threshold=0.9
+- Grid: count=8, ATR period=7, multiplier=3.0
+- Stop Loss: ATR * 1.5, Take Profit: 2 grids, Max Hold: 6 bars
+- Volatility Filter: ON (baseline=200, low=0.5, high=2.0)
+- Trailing Stop: OFF
 """
 
 from dataclasses import dataclass, field
@@ -121,20 +120,20 @@ class RSIGridConfig:
     """
 
     symbol: str
-    timeframe: str = "1h"  # v3 優化後: 1h
-    leverage: int = 7  # v3: 7x (leveraged-fee 回測驗證)
+    timeframe: str = "1h"  # v4 優化後: 1h
+    leverage: int = 10  # v4: 10x
     margin_type: str = "ISOLATED"
 
-    # RSI Parameters (v3 優化)
-    rsi_period: int = 5  # v3: 5 (原 14)
+    # RSI Parameters (v4 優化)
+    rsi_period: int = 7  # v4: 7
     oversold_level: int = 33  # 優化後: 33 (原 30)
     overbought_level: int = 66  # 優化後: 66 (原 70)
     rsi_block_threshold: float = 0.9  # v3: 0.9
 
-    # Grid Parameters (v3 優化)
-    grid_count: int = 10  # v3: 10
-    atr_period: int = 7  # v3: 7
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))  # v3: 4.0
+    # Grid Parameters (v4 優化)
+    grid_count: int = 8  # v4: 8
+    atr_period: int = 7  # v4: 7
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # v4: 3.0
 
     # Trend Filter (v2: 關閉)
     trend_sma_period: int = 39  # 優化後: 39 (原 20)
@@ -142,18 +141,18 @@ class RSIGridConfig:
 
     # Capital allocation
     max_capital: Optional[Decimal] = None
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # v4: 5%
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
 
-    # Risk Management (v3 優化)
-    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))  # v3: 2.0
+    # Risk Management (v4 優化)
+    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("1.5"))  # v4: 1.5
     max_stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
     take_profit_grids: int = 2  # v3: 2
     max_positions: int = 5
-    max_hold_bars: int = 16  # v3: 16 bars
+    max_hold_bars: int = 6  # v4: 6 bars
 
-    # Trailing Stop (v3: 啟用)
-    use_trailing_stop: bool = True  # v3: 啟用
+    # Trailing Stop (v4: 關閉)
+    use_trailing_stop: bool = False  # v4: 關閉
     trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # v3: 1%
 
     # Exchange-based stop loss
@@ -166,11 +165,11 @@ class RSIGridConfig:
     # Fee rate
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
-    # Volatility Regime Filter (v3 優化)
-    use_volatility_filter: bool = True  # v3: 啟用
-    vol_atr_baseline_period: int = 300  # v3: 300
-    vol_ratio_low: float = 0.3  # v3: 0.3
-    vol_ratio_high: float = 2.0  # v3: 2.0
+    # Volatility Regime Filter (v4 優化)
+    use_volatility_filter: bool = True  # v4: 啟用
+    vol_atr_baseline_period: int = 200  # v4: 200
+    vol_ratio_low: float = 0.5  # v4: 0.5
+    vol_ratio_high: float = 2.0  # v4: 2.0
 
     # Protective features (v2: 關閉)
     use_hysteresis: bool = False  # 回測顯示對 RSI Grid 有負面影響
