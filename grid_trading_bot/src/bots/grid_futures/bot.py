@@ -211,7 +211,7 @@ class GridFuturesBot(BaseBot):
         def on_kline_sync(kline: Kline) -> None:
             task = asyncio.create_task(self._on_kline(kline))
             self._kline_tasks.add(task)
-            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
+            task.add_done_callback(self._on_kline_task_done)
 
         self._kline_callback = on_kline_sync
         await self._data_manager.klines.subscribe_kline(
@@ -222,7 +222,7 @@ class GridFuturesBot(BaseBot):
         )
 
         # Start background monitoring (capital update, drawdown tracking)
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
 
         # Start periodic state saving
         self._start_save_task()
@@ -319,7 +319,7 @@ class GridFuturesBot(BaseBot):
         def on_kline_sync(kline: Kline) -> None:
             task = asyncio.create_task(self._on_kline(kline))
             self._kline_tasks.add(task)
-            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
+            task.add_done_callback(self._on_kline_task_done)
 
         self._kline_callback = on_kline_sync
         await self._data_manager.klines.subscribe_kline(
@@ -330,7 +330,7 @@ class GridFuturesBot(BaseBot):
         )
 
         # Restart background monitor
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
         logger.info("Grid Futures Bot resumed")
 
     async def _do_health_check(self) -> bool:
@@ -1570,6 +1570,26 @@ class GridFuturesBot(BaseBot):
     # =========================================================================
     # Background Monitor (資金更新、回撤追蹤)
     # =========================================================================
+
+    def _on_kline_task_done(self, task: asyncio.Task) -> None:
+        """Handle kline task completion with exception logging."""
+        self._kline_tasks.discard(task)
+        if not task.cancelled() and task.exception():
+            logger.error(
+                f"Kline task failed: {task.exception()}",
+                exc_info=task.exception(),
+            )
+
+    async def _background_monitor_safe(self) -> None:
+        """Auto-restart wrapper for background monitor."""
+        while self._state == BotState.RUNNING:
+            try:
+                await self._background_monitor()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Background monitor crashed, restarting in 5s: {e}")
+                await asyncio.sleep(5)
 
     async def _background_monitor(self) -> None:
         """

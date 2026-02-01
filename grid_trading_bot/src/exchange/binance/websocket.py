@@ -107,8 +107,8 @@ class BinanceWebSocket:
         self._intentional_close = False  # Flag to prevent reconnection on intentional close
 
         # Heartbeat settings
-        self._heartbeat_interval = 20  # seconds (ping every 20s)
-        self._heartbeat_timeout = 30  # seconds (detect dead connection faster)
+        self._heartbeat_interval = 8  # seconds (ping every 8s)
+        self._heartbeat_timeout = 10  # seconds (detect dead connection faster)
         # NOTE: asyncio single-thread safe, no lock needed for timing counters
         self._last_pong_time: Optional[datetime] = None
 

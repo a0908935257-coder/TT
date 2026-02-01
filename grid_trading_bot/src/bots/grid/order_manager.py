@@ -151,8 +151,8 @@ class GridOrderManager:
         self._trade_count: int = 0
 
         # Track pending buy fills waiting for sell (for profit calculation)
-        # Key: level_index, Value: FilledRecord
-        self._pending_buy_fills: dict[int, FilledRecord] = {}
+        # Key: level_index, Value: list of FilledRecord (FIFO)
+        self._pending_buy_fills: dict[int, list[FilledRecord]] = {}
 
         # Lock for atomic buy-sell matching (prevents race conditions)
         # Initialized early to avoid race condition in lazy initialization
@@ -164,6 +164,10 @@ class GridOrderManager:
 
         # Max order age for timeout (can be configured)
         self._max_order_age: int = self.DEFAULT_MAX_ORDER_AGE
+
+        # Track consecutive sync failures per order for stale mapping detection
+        self._sync_failure_counts: dict[str, int] = {}
+        self._max_sync_failures: int = 3
 
     # =========================================================================
     # Properties
@@ -781,17 +785,34 @@ class GridOrderManager:
                         await self._data_manager.update_order(order, bot_id=self._bot_id)
 
                 except Exception as e:
+                    # Track consecutive failures per order
+                    fail_count = self._sync_failure_counts.get(order_id, 0) + 1
+                    self._sync_failure_counts[order_id] = fail_count
+
                     logger.error(
-                        f"Failed to get order status for {order_id}: {e}. "
-                        "Order state may be inconsistent - manual check recommended."
+                        f"Failed to get order status for {order_id}: {e} "
+                        f"(failure {fail_count}/{self._max_sync_failures}). "
+                        "Order state may be inconsistent."
                     )
-                    # Don't change level state on error - order may still be active on exchange
-                    # Only log warning and keep mappings for manual investigation
-                    # Setting to EMPTY could cause duplicate orders if the original is still active
-                    logger.warning(
-                        f"Keeping level {level_index} in current state due to sync error. "
-                        f"Order {order_id} may need manual verification."
-                    )
+
+                    if fail_count >= self._max_sync_failures:
+                        logger.critical(
+                            f"CRITICAL: Order {order_id} at level {level_index} failed sync "
+                            f"{fail_count} consecutive times. Mapping may be stale. "
+                            f"Manual verification required."
+                        )
+                        # Notify via notifier if available
+                        try:
+                            await self._notifier.send_error(
+                                title="Order Sync Critical Failure",
+                                message=(
+                                    f"Order {order_id} at level {level_index} "
+                                    f"failed sync {fail_count} times. "
+                                    f"Please verify manually."
+                                ),
+                            )
+                        except Exception:
+                            pass
 
         # Warn about external orders
         if external_orders:
@@ -1052,7 +1073,7 @@ class GridOrderManager:
         if filled_side == OrderSide.BUY:
             # Store buy fill for later profit calculation (protected by lock)
             async with self._match_lock:
-                self._pending_buy_fills[level_index] = fill_record
+                self._pending_buy_fills.setdefault(level_index, []).append(fill_record)
         elif filled_side == OrderSide.SELL:
             # Check if we have a matching buy fill to calculate profit
             # Look for buy fills at lower levels
@@ -1116,24 +1137,24 @@ class GridOrderManager:
             target_level_index = level_index + 1
             reverse_side = OrderSide.SELL
 
-            # Check boundary
+            # Check boundary - place at same level if at edge
             if target_level_index >= len(self._setup.levels):
+                target_level_index = level_index
                 logger.info(
-                    f"Level {level_index} is highest level - no reverse order placed"
+                    f"Level {level_index} is highest level - placing SELL at same level"
                 )
-                return None
 
         else:  # SELL filled
             # SELL filled -> place BUY at lower level
             target_level_index = level_index - 1
             reverse_side = OrderSide.BUY
 
-            # Check boundary
+            # Check boundary - place at same level if at edge
             if target_level_index < 0:
+                target_level_index = level_index
                 logger.info(
-                    f"Level {level_index} is lowest level - no reverse order placed"
+                    f"Level {level_index} is lowest level - placing BUY at same level"
                 )
-                return None
 
         # Place the reverse order
         logger.info(
@@ -1329,8 +1350,10 @@ class GridOrderManager:
         async with self._match_lock:
             # Strategy 1: Look for pending buy fill at the level below (most common case)
             buy_level_index = sell_level_index - 1
-            if buy_level_index >= 0 and buy_level_index in self._pending_buy_fills:
-                buy_record = self._pending_buy_fills.pop(buy_level_index)
+            if buy_level_index >= 0 and self._pending_buy_fills.get(buy_level_index):
+                buy_record = self._pending_buy_fills[buy_level_index].pop(0)  # FIFO
+                if not self._pending_buy_fills[buy_level_index]:
+                    del self._pending_buy_fills[buy_level_index]
                 # Check if already paired (safety check)
                 if buy_record.paired_record is not None:
                     logger.warning(
@@ -1346,8 +1369,10 @@ class GridOrderManager:
             # Check levels within a range below the sell level
             for offset in range(2, min(5, sell_level_index + 1)):
                 nearby_level = sell_level_index - offset
-                if nearby_level >= 0 and nearby_level in self._pending_buy_fills:
-                    buy_record = self._pending_buy_fills.pop(nearby_level)
+                if nearby_level >= 0 and self._pending_buy_fills.get(nearby_level):
+                    buy_record = self._pending_buy_fills[nearby_level].pop(0)  # FIFO
+                    if not self._pending_buy_fills[nearby_level]:
+                        del self._pending_buy_fills[nearby_level]
                     # Check if already paired (safety check)
                     if buy_record.paired_record is not None:
                         logger.warning(
@@ -1361,8 +1386,8 @@ class GridOrderManager:
                     )
                     return buy_record
 
-            # Fallback: find any unpaired buy fill at a lower price
-            for record in reversed(self._filled_history):
+            # Fallback: find oldest unpaired buy fill at a lower price (FIFO)
+            for record in self._filled_history:
                 if (
                     record.side == OrderSide.BUY
                     and record.paired_record is None
@@ -1372,7 +1397,12 @@ class GridOrderManager:
                     record.paired_record = sell_record
                     sell_record.paired_record = record
                     # Also remove from _pending_buy_fills if present to prevent double pairing
-                    self._pending_buy_fills.pop(record.level_index, None)
+                    if record.level_index in self._pending_buy_fills:
+                        fills = self._pending_buy_fills[record.level_index]
+                        if record in fills:
+                            fills.remove(record)
+                        if not fills:
+                            del self._pending_buy_fills[record.level_index]
                     return record
 
             return None

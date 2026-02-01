@@ -323,7 +323,7 @@ class FundManager:
             return False
 
         # Check day match for monthly (rebalance_day = day of month, 1-based)
-        if freq == "monthly" and now.day != (self._config.rebalance_day + 1):
+        if freq == "monthly" and now.day != self._config.rebalance_day:
             return False
 
         # Prevent multiple triggers within the same hour
@@ -399,9 +399,17 @@ class FundManager:
                             return result
 
                         # Execute allocations (still inside lock)
-                        for bot_id, amount in allocations.items():
-                            record = await self._allocate_to_bot(bot_id, amount, trigger)
-                            result.add_allocation(record)
+                        # allocations contains absolute targets; compute delta vs current
+                        for bot_id, target_amount in allocations.items():
+                            current = self._fund_pool.get_allocation(bot_id)
+                            delta = target_amount - current
+                            if delta > 0:
+                                record = await self._allocate_to_bot(bot_id, delta, trigger)
+                                result.add_allocation(record)
+                            elif delta < 0:
+                                logger.info(
+                                    f"Bot {bot_id} over-allocated by {-delta}, skipping"
+                                )
 
                         # Update overall success status
                         result.success = result.failed_count == 0
@@ -488,9 +496,27 @@ class FundManager:
                         tx.mark_committed()
                         return tx
 
+                    # Convert absolute targets to deltas (prevent doubling)
+                    delta_allocations: Dict[str, Decimal] = {}
+                    for bot_id, target_amount in allocations.items():
+                        current = self._fund_pool.get_allocation(bot_id)
+                        delta = target_amount - current
+                        if delta > 0:
+                            delta_allocations[bot_id] = delta
+                        elif delta < 0:
+                            logger.info(
+                                f"Bot {bot_id} over-allocated by {-delta}, skipping"
+                            )
+
+                    if not delta_allocations:
+                        logger.info("No delta allocations needed")
+                        tx = AllocationTransaction(trigger=trigger)
+                        tx.mark_committed()
+                        return tx
+
                     # Execute atomically with potential rollback
                     tx = await self._atomic_allocator.execute_atomic(
-                        planned_allocations=allocations,
+                        planned_allocations=delta_allocations,
                         trigger=trigger,
                         auto_rollback=auto_rollback,
                     )

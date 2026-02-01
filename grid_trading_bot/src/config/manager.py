@@ -386,14 +386,15 @@ class ConfigManager:
                 value = corrected[field]
                 try:
                     decimal_val = Decimal(str(value))
-                    # If value > 1, it's likely in whole percentage format
+                    # If value > 1, it's likely in whole percentage format — reject
                     if decimal_val > Decimal("1"):
-                        corrected_val = decimal_val / Decimal("100")
-                        logger.warning(
-                            f"Auto-correcting {field}: {value} -> {corrected_val} "
-                            f"(expected decimal format, e.g., 0.05 for 5%)"
+                        raise ValueError(
+                            f"Config error: {field}={value} appears to be a whole number "
+                            f"percentage. Use decimal format instead (e.g., 0.05 for 5%). "
+                            f"Got {value}, expected a value between 0 and 1."
                         )
-                        corrected[field] = corrected_val
+                except ValueError:
+                    raise
                 except Exception:
                     pass
 
