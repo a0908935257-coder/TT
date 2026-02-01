@@ -48,6 +48,7 @@ class KlineManager:
         redis: RedisManager,
         database: DatabaseManager,
         exchange: ExchangeClient,
+        market_type: MarketType = MarketType.SPOT,
     ):
         """
         Initialize KlineManager.
@@ -56,11 +57,20 @@ class KlineManager:
             redis: RedisManager instance for caching
             database: DatabaseManager instance for persistence
             exchange: ExchangeClient instance for API access
+            market_type: Market type (SPOT or FUTURES)
         """
         self._redis = redis
         self._db = database
         self._exchange = exchange
+        self._market_type = market_type
         self._market_cache = MarketCache(redis)
+
+        # Exchange API client based on market type
+        self._api = (
+            self._exchange.futures
+            if self._market_type == MarketType.FUTURES
+            else self._exchange.spot
+        )
 
         # Subscription callbacks
         self._subscriptions: dict[str, list[Callable]] = {}
@@ -411,7 +421,7 @@ class KlineManager:
     ) -> list[Kline]:
         """Get K-lines from exchange API."""
         try:
-            klines = await self._exchange.spot.get_klines(
+            klines = await self._api.get_klines(
                 symbol, KlineInterval(interval), limit
             )
             return klines
@@ -437,7 +447,7 @@ class KlineManager:
 
             # Fetch in batches (max 1000 per request)
             while current_start < end_ms:
-                klines = await self._exchange.spot.get_klines(
+                klines = await self._api.get_klines(
                     symbol,
                     KlineInterval(interval),
                     limit=1000,

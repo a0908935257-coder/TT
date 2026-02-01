@@ -209,7 +209,10 @@ async def create_exchange_client() -> ExchangeClient:
     return client
 
 
-async def create_data_manager(exchange: ExchangeClient) -> MarketDataManager:
+async def create_data_manager(
+    exchange: ExchangeClient,
+    market_type: MarketType = MarketType.FUTURES,
+) -> MarketDataManager:
     """Create and connect data manager."""
     db_config = {
         'host': os.getenv('DB_HOST', 'localhost'),
@@ -231,6 +234,7 @@ async def create_data_manager(exchange: ExchangeClient) -> MarketDataManager:
         db_config=db_config,
         redis_config=redis_config,
         exchange=exchange,
+        market_type=market_type,
     )
     await manager.connect()
     return manager

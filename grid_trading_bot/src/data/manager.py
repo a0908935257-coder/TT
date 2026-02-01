@@ -58,6 +58,7 @@ class MarketDataManager:
         db_config: dict,
         redis_config: dict,
         exchange: Optional[ExchangeClient] = None,
+        market_type: MarketType = MarketType.SPOT,
     ):
         """
         Initialize MarketDataManager.
@@ -68,10 +69,12 @@ class MarketDataManager:
             redis_config: Redis configuration dict with keys:
                 - host, port, db, password, key_prefix, etc.
             exchange: ExchangeClient instance (optional, for live data)
+            market_type: Market type (SPOT or FUTURES)
         """
         self._db_config = db_config
         self._redis_config = redis_config
         self._exchange = exchange
+        self._market_type = market_type
         self._connected = False
 
         # Data sources (initialized on connect)
@@ -219,6 +222,7 @@ class MarketDataManager:
                     self._redis,
                     self._db,
                     self._exchange,
+                    market_type=self._market_type,
                 )
             elif self._exchange and not self._redis:
                 logger.warning("KlineManager not initialized - requires Redis")
@@ -413,7 +417,12 @@ class MarketDataManager:
                 if isinstance(interval, str)
                 else interval
             )
-            return await self._exchange.spot.get_klines(
+            api = (
+                self._exchange.futures
+                if self._market_type == MarketType.FUTURES
+                else self._exchange.spot
+            )
+            return await api.get_klines(
                 symbol, interval_enum, limit
             )
 

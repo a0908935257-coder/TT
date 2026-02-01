@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from dotenv import load_dotenv
 
 from src.core import get_logger
+from src.core.models import MarketType
 from src.config import load_strategy_config
 from src.data import MarketDataManager
 from src.exchange import ExchangeClient
@@ -72,6 +73,7 @@ async def create_data_manager(exchange: ExchangeClient) -> MarketDataManager:
         db_config=db_config,
         redis_config=redis_config,
         exchange=exchange,
+        market_type=MarketType.FUTURES,
     )
     await manager.connect()
     return manager
