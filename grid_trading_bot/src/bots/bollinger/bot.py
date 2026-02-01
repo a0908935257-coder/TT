@@ -350,6 +350,9 @@ class BollingerBot(BaseBot):
         # Restart periodic state save task
         self._start_save_task()
 
+        # Restart position reconciliation
+        self._start_position_reconciliation()
+
         logger.info("Bollinger BB_TREND_GRID Bot resumed")
 
     def _get_extra_status(self) -> Dict[str, Any]:
@@ -1579,7 +1582,7 @@ class BollingerBot(BaseBot):
 
     def _start_save_task(self) -> None:
         """Start periodic save task."""
-        if self._save_task is not None:
+        if self._save_task is not None and not self._save_task.done():
             return
 
         async def save_loop():

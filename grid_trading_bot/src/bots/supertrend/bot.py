@@ -406,6 +406,15 @@ class SupertrendBot(BaseBot):
             market_type=MarketType.FUTURES,
         )
 
+        # Restart background monitor (risk checks, stop loss, capital updates)
+        self._monitor_task = asyncio.create_task(self._background_monitor())
+
+        # Restart periodic state save
+        self._start_save_task()
+
+        # Restart position reconciliation
+        self._start_position_reconciliation()
+
         logger.info("Supertrend Bot resumed")
 
     # =========================================================================
@@ -702,6 +711,8 @@ class SupertrendBot(BaseBot):
                         quantity=abs(pos.quantity),
                         entry_time=datetime.now(timezone.utc),
                         unrealized_pnl=pos.unrealized_pnl,
+                        highest_price=pos.entry_price,
+                        lowest_price=pos.entry_price,
                     )
                     logger.info(f"Synced existing position: {side.value} {self._position.quantity}")
                     break
@@ -1527,6 +1538,10 @@ class SupertrendBot(BaseBot):
             # Clear pending order marker
             self._clear_pending_order(order_key)
 
+            if not order:
+                logger.warning("Order returned None/falsy - open position failed")
+                return False
+
             if order:
                 order_id = str(getattr(order, "order_id", ""))
 
@@ -2268,6 +2283,8 @@ class SupertrendBot(BaseBot):
                         quantity=abs(exchange_pos.quantity),
                         entry_time=datetime.now(timezone.utc),
                         unrealized_pnl=exchange_pos.unrealized_pnl,
+                        highest_price=exchange_pos.entry_price,
+                        lowest_price=exchange_pos.entry_price,
                     )
             except Exception as e:
                 logger.warning(f"Failed to verify position sync on restore: {e}")

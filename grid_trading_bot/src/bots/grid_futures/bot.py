@@ -200,9 +200,10 @@ class GridFuturesBot(BaseBot):
         # Load historical data for indicators
         await self._load_historical_data()
 
-        # Initialize grid
-        current_price = await self._get_current_price()
-        self._initialize_grid(current_price)
+        # Initialize grid (skip if restored from saved state)
+        if not self._grid:
+            current_price = await self._get_current_price()
+            self._initialize_grid(current_price)
 
         # Check existing position
         await self._sync_position()
@@ -947,7 +948,10 @@ class GridFuturesBot(BaseBot):
                 else:
                     # New position (or flip)
                     if self._position:
-                        await self._close_position(price, ExitReason.TREND_CHANGE)
+                        close_ok = await self._close_position(price, ExitReason.TREND_CHANGE)
+                        if not close_ok:
+                            logger.error("Failed to close position before flip - aborting open")
+                            return False
 
                     self._position = FuturesPosition(
                         symbol=self._config.symbol,

@@ -1550,6 +1550,8 @@ class BaseBot(ABC):
 
         # Verify checksum
         saved_checksum = snapshot.get("checksum")
+        if not saved_checksum:
+            return False, "Missing checksum in snapshot"
         if saved_checksum:
             # Recalculate checksum without the checksum field
             snapshot_copy = {k: v for k, v in snapshot.items() if k != "checksum"}
@@ -2315,17 +2317,18 @@ class BaseBot(ABC):
         required_margin = notional_value / Decimal(leverage)
         required_with_fees = required_margin * Decimal("1.001")
 
-        # Check and reserve atomically
-        ok, msg = await self._check_balance_for_order(
-            symbol, quantity, price, leverage
-        )
-        if not ok:
-            return False, msg, Decimal("0")
+        # Check and reserve under lock to prevent TOCTOU race
+        async with self._capital_lock:
+            ok, msg = await self._check_balance_for_order(
+                symbol, quantity, price, leverage
+            )
+            if not ok:
+                return False, msg, Decimal("0")
 
-        # Reserve capital
-        reserve_ok, reserve_msg = await self._reserve_capital_for_order(required_with_fees)
-        if not reserve_ok:
-            return False, reserve_msg, Decimal("0")
+            # Reserve capital
+            reserve_ok, reserve_msg = await self._reserve_capital_for_order(required_with_fees)
+            if not reserve_ok:
+                return False, reserve_msg, Decimal("0")
 
         return True, msg, required_with_fees
 

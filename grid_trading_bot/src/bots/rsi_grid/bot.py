@@ -661,6 +661,8 @@ class RSIGridBot(BaseBot):
                         quantity=pos.quantity,
                         leverage=self._config.leverage,
                         unrealized_pnl=pos.unrealized_pnl,
+                        highest_price=pos.entry_price,
+                        lowest_price=pos.entry_price,
                     )
                     logger.info(f"Synced existing position: {pos.side.value} {pos.quantity}")
                     return
@@ -1087,7 +1089,7 @@ class RSIGridBot(BaseBot):
                 self._update_risk_tracking(pnl)
 
                 # Update position
-                if quantity and quantity < self._position.quantity:
+                if close_qty < self._position.quantity:
                     self._position.quantity -= close_qty
                     if self._config.use_exchange_stop_loss and self._position.stop_loss_order_id:
                         await self._update_stop_loss_order()
@@ -1430,13 +1432,12 @@ class RSIGridBot(BaseBot):
                         )
 
                         if sl_check["action_type"] == "EMERGENCY_CLOSE":
-                            await self.execute_emergency_close(
-                                symbol=self._config.symbol,
-                                side=self._position.side.value.upper(),
-                                quantity=self._position.quantity,
-                                reason=sl_check["details"].get("emergency", {}).get("reason", "UNKNOWN"),
+                            # Use _close_position to properly record trade and update risk tracking
+                            emergency_reason = sl_check["details"].get("emergency", {}).get("reason", "UNKNOWN")
+                            await self._close_position(
+                                price=await self._get_current_price(),
+                                reason=ExitReason.STOP_LOSS,
                             )
-                            self._position = None
                             self.reset_stop_loss_protection()
 
                         elif sl_check["action_type"] == "REPLACE_SL":
