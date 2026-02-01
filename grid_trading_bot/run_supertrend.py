@@ -102,16 +102,31 @@ def get_config_from_env() -> SupertrendConfig:
 
         # 止損設定
         stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.05))),
+        use_exchange_stop_loss=bool(params.get('use_exchange_stop_loss', True)),
 
         # 追蹤止損
         use_trailing_stop=bool(params.get('use_trailing_stop', True)),
         trailing_stop_pct=Decimal(str(params.get('trailing_stop_pct', 0.01))),
+
+        # 倉位與風控
+        max_position_pct=Decimal(str(params.get('max_position_pct', 0.5))),
+        daily_loss_limit_pct=Decimal(str(params.get('daily_loss_limit_pct', 0.05))),
+        max_consecutive_losses=int(params.get('max_consecutive_losses', 5)),
 
         # Protective features
         use_hysteresis=bool(params.get('use_hysteresis', False)),
         hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0085))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
         cooldown_bars=int(params.get('cooldown_bars', 3)),
+
+        # 波動率過濾
+        use_volatility_filter=bool(params.get('use_volatility_filter', False)),
+        vol_atr_baseline_period=int(params.get('vol_atr_baseline_period', 200)),
+        vol_ratio_low=float(params.get('vol_ratio_low', 0.3)),
+        vol_ratio_high=float(params.get('vol_ratio_high', 3.0)),
+
+        # 超時退出
+        max_hold_bars=int(params.get('max_hold_bars', 8)),
 
         # HYBRID_GRID mode (v3)
         mode=params.get('mode', 'hybrid_grid'),
