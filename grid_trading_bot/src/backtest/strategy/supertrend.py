@@ -176,9 +176,11 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         self._current_trend: int = 0
         self._trend_bars: int = 0  # Bars in current trend direction
 
-        # RSI state (for filtering)
+        # RSI state (Wilder smoothing / RMA)
         self._closes: List[Decimal] = []
         self._current_rsi: Optional[Decimal] = None
+        self._prev_avg_gain: Optional[float] = None
+        self._prev_avg_loss: Optional[float] = None
 
         # Hysteresis state (like live bot)
         self._last_triggered_level: Optional[int] = None
@@ -225,25 +227,31 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         if len(self._closes) < self._config.rsi_period + 1:
             return None
 
-        # Calculate gains and losses
-        gains = []
-        losses = []
-        for i in range(-self._config.rsi_period, 0):
-            change = float(self._closes[i]) - float(self._closes[i - 1])
-            if change > 0:
-                gains.append(change)
-                losses.append(0)
-            else:
-                gains.append(0)
-                losses.append(abs(change))
+        # Wilder smoothing (RMA) for RSI
+        n = self._config.rsi_period
+        change = float(self._closes[-1]) - float(self._closes[-2])
+        current_gain = max(change, 0)
+        current_loss = abs(min(change, 0))
 
-        avg_gain = sum(gains) / self._config.rsi_period
-        avg_loss = sum(losses) / self._config.rsi_period
+        if self._prev_avg_gain is None:
+            # First calculation: use SMA over initial period
+            gains = []
+            losses = []
+            for i in range(-n, 0):
+                c = float(self._closes[i]) - float(self._closes[i - 1])
+                gains.append(max(c, 0))
+                losses.append(abs(min(c, 0)))
+            self._prev_avg_gain = sum(gains) / n
+            self._prev_avg_loss = sum(losses) / n
+        else:
+            # Wilder smoothing: prev * (n-1)/n + current/n
+            self._prev_avg_gain = (self._prev_avg_gain * (n - 1) + current_gain) / n
+            self._prev_avg_loss = (self._prev_avg_loss * (n - 1) + current_loss) / n
 
-        if avg_loss == 0:
+        if self._prev_avg_loss == 0:
             return Decimal("100")
 
-        rs = avg_gain / avg_loss
+        rs = self._prev_avg_gain / self._prev_avg_loss
         rsi = 100 - (100 / (1 + rs))
         return Decimal(str(round(rsi, 2)))
 
@@ -874,6 +882,8 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         self._trend_bars = 0
         self._closes = []
         self._current_rsi = None
+        self._prev_avg_gain = None
+        self._prev_avg_loss = None
         # Reset hysteresis state
         self._last_triggered_level = None
         self._last_triggered_side = None

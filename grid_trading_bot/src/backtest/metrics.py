@@ -20,7 +20,7 @@ class MetricsCalculator:
     """
 
     # Constants
-    TRADING_DAYS_PER_YEAR = Decimal("252")
+    TRADING_DAYS_PER_YEAR = Decimal("365")  # Crypto trades 24/7
     RISK_FREE_RATE = Decimal("0.02")  # 2% annual risk-free rate
 
     def __init__(self, initial_capital: Decimal = Decimal("10000")) -> None:
@@ -37,6 +37,7 @@ class MetricsCalculator:
         trades: list[Trade],
         equity_curve: list[Decimal],
         daily_returns: dict[str, Decimal],
+        total_funding_paid: Decimal = Decimal("0"),
     ) -> BacktestResult:
         """
         Calculate all metrics and return BacktestResult.
@@ -72,8 +73,8 @@ class MetricsCalculator:
         result.num_wins = len(wins)
         result.num_losses = len(losses)
 
-        # Profit metrics
-        result.total_profit = sum(t.pnl for t in trades)
+        # Profit metrics (deduct funding fees)
+        result.total_profit = sum(t.pnl for t in trades) - total_funding_paid
         result.total_profit_pct = (
             result.total_profit / self._initial_capital * Decimal("100")
         )
@@ -352,4 +353,7 @@ class MetricsCalculator:
         for r in results:
             combined_daily.update(r.daily_returns)
 
-        return self.calculate_all(all_trades, combined_equity, combined_daily)
+        # Combine funding paid
+        combined_funding = sum(r.total_funding_paid for r in results)
+
+        return self.calculate_all(all_trades, combined_equity, combined_daily, combined_funding)

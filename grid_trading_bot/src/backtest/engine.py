@@ -491,13 +491,17 @@ class BacktestEngine:
             funding_periods = int(hours_elapsed // self._config.funding_interval_hours)
             for position in self._position_manager.positions:
                 # Funding = notional × leverage × rate × periods
-                funding = (
+                # Positive rate: longs pay, shorts receive
+                # Negative rate: longs receive, shorts pay
+                base_funding = (
                     position.notional
                     * Decimal(self._config.leverage)
                     * self._config.funding_rate
                     * Decimal(funding_periods)
                 )
-                self._position_manager.add_funding_payment(funding)
+                if position.side == "SHORT":
+                    base_funding = -base_funding  # Shorts receive when rate is positive
+                self._position_manager.add_funding_payment(base_funding)
             self._last_funding_time = current_time
 
     def _calculate_result(self) -> BacktestResult:
@@ -517,6 +521,7 @@ class BacktestEngine:
             trades=self._position_manager.trades,
             equity_curve=self._equity_curve,
             daily_returns=mtm_daily_returns,
+            total_funding_paid=self._position_manager.total_funding_paid,
         )
         result.liquidation_count = self._liquidation_count
         result.total_funding_paid = self._position_manager.total_funding_paid

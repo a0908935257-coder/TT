@@ -213,10 +213,10 @@ def walk_forward_validation(klines: list[Kline], n_splits: int = 9, leverage: in
     }
 
 
-def monte_carlo_test(klines: list[Kline], n_tests: int = 15, leverage: int = 18):
-    """Monte Carlo 穩健性測試."""
+def sliding_window_robustness_test(klines: list[Kline], n_tests: int = 15, leverage: int = 18):
+    """滑動窗口穩健性測試."""
     print(f"\n{'=' * 60}")
-    print(f"  Monte Carlo 穩健性測試")
+    print(f"  滑動窗口穩健性測試")
     print(f"  測試數: {n_tests}")
     print(f"{'=' * 60}")
 
@@ -520,7 +520,7 @@ def main():
     wf_result = walk_forward_validation(klines, n_splits=9, leverage=leverage)
 
     # 3. Monte Carlo 測試
-    mc_result = monte_carlo_test(klines, n_tests=15, leverage=leverage)
+    mc_result = sliding_window_robustness_test(klines, n_tests=15, leverage=leverage)
 
     # 4. 完整驗證（OOS + 敏感度 + 白噪音）
     oos_result = None
