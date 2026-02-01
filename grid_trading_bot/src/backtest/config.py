@@ -167,6 +167,12 @@ class BacktestConfig:
             use_margin=True if leverage > 1 else self.use_margin,
         )
 
+    def with_max_positions(self, max_positions: int) -> "BacktestConfig":
+        """Return a new config with updated max_positions."""
+        from dataclasses import replace
+
+        return replace(self, max_positions=max_positions)
+
     def with_fee_rate(self, fee_rate: Decimal) -> "BacktestConfig":
         """Return a new config with updated fee rate."""
         from dataclasses import replace

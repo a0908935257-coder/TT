@@ -143,7 +143,7 @@ class GridBacktestStrategy(BacktestStrategy):
         """Check if price crossed a level upward."""
         return prev_price < level <= current_price
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
         Process kline and generate signal.
 
@@ -156,24 +156,24 @@ class GridBacktestStrategy(BacktestStrategy):
             context: Backtest context
 
         Returns:
-            Signal if entry conditions met, None otherwise
+            List of signals
         """
         current_price = kline.close
 
         # Initialize prev_price
         if self._prev_price is None:
             self._prev_price = current_price
-            return None
+            return []
 
         # Skip if already in position
         if context.has_position:
             self._prev_price = current_price
-            return None
+            return []
 
         # Check if price is within grid range
         if current_price < self._config.lower_price or current_price > self._config.upper_price:
             self._prev_price = current_price
-            return None
+            return []
 
         # Check for price crossing grid levels downward (buy signal)
         for i, level in enumerate(self._grid_levels):
@@ -193,15 +193,15 @@ class GridBacktestStrategy(BacktestStrategy):
                 take_profit = self._grid_levels[tp_idx]
 
                 self._prev_price = current_price
-                return Signal.long_entry(
+                return [Signal.long_entry(
                     price=level,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reason=f"grid_level_{i}_buy",
-                )
+                )]
 
         self._prev_price = current_price
-        return None
+        return []
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext
@@ -297,49 +297,46 @@ class MultiLevelGridStrategy(BacktestStrategy):
         """Return warmup period."""
         return 10
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
         Process kline for multi-level grid.
 
-        This is a simplified version - for full multi-position support,
-        the engine would need to be modified to handle multiple signals
-        per kline.
+        Returns multiple signals when price crosses multiple grid levels.
         """
         current_price = kline.close
 
         if self._prev_price is None:
             self._prev_price = current_price
-            return None
+            return []
 
         # Check if within range
         if current_price < self._config.lower_price or current_price > self._config.upper_price:
             self._prev_price = current_price
-            return None
+            return []
 
-        # Skip if already at max positions
-        if not context.has_position:
-            # Look for buy signals at grid levels
-            for i, level in enumerate(self._grid_levels[:-1]):
-                if (
-                    self._prev_price > level >= current_price
-                    and self._level_states[i] == "empty"
-                ):
-                    # Buy at this level
-                    self._level_states[i] = "filled"
-                    stop_loss = level * (Decimal("1") - self._config.stop_loss_pct)
-                    tp_idx = min(i + 1, len(self._grid_levels) - 1)
-                    take_profit = self._grid_levels[tp_idx]
+        signals: list[Signal] = []
 
-                    self._prev_price = current_price
-                    return Signal.long_entry(
-                        price=level,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        reason=f"multi_grid_level_{i}",
-                    )
+        # Look for buy signals at grid levels
+        for i, level in enumerate(self._grid_levels[:-1]):
+            if (
+                self._prev_price > level >= current_price
+                and self._level_states[i] == "empty"
+            ):
+                # Buy at this level
+                self._level_states[i] = "filled"
+                stop_loss = level * (Decimal("1") - self._config.stop_loss_pct)
+                tp_idx = min(i + 1, len(self._grid_levels) - 1)
+                take_profit = self._grid_levels[tp_idx]
+
+                signals.append(Signal.long_entry(
+                    price=level,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    reason=f"multi_grid_level_{i}",
+                ))
 
         self._prev_price = current_price
-        return None
+        return signals
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext

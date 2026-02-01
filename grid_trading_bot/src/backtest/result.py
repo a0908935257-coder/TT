@@ -55,6 +55,7 @@ class Trade:
     fees: Decimal
     bars_held: int
     exit_reason: ExitReason
+    metadata: dict = field(default_factory=dict)
 
     @property
     def is_win(self) -> bool:

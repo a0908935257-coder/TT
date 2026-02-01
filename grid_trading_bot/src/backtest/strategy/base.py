@@ -27,6 +27,8 @@ class BacktestContext:
         bar_index: Current bar index (0-based)
         klines: All klines up to and including current
         current_position: Current open position (if any)
+        positions: All open positions (for multi-position strategies)
+        open_position_count: Number of open positions
         realized_pnl: Cumulative realized P&L
         equity: Current account equity
         initial_capital: Starting capital
@@ -35,6 +37,8 @@ class BacktestContext:
     bar_index: int
     klines: list[Kline]
     current_position: Optional[Position] = None
+    positions: list[Position] = field(default_factory=list)
+    open_position_count: int = 0
     realized_pnl: Decimal = field(default_factory=lambda: Decimal("0"))
     equity: Decimal = field(default_factory=lambda: Decimal("10000"))
     initial_capital: Decimal = field(default_factory=lambda: Decimal("10000"))
@@ -123,11 +127,11 @@ class BacktestStrategy(ABC):
             def warmup_period(self) -> int:
                 return 20
 
-            def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+            def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
                 # Strategy logic here
                 if some_condition:
-                    return Signal.long_entry(stop_loss=..., take_profit=...)
-                return None
+                    return [Signal.long_entry(stop_loss=..., take_profit=...)]
+                return []
     """
 
     @abstractmethod
@@ -144,9 +148,9 @@ class BacktestStrategy(ABC):
         pass
 
     @abstractmethod
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
-        Process a kline and optionally return a trading signal.
+        Process a kline and return trading signals.
 
         This is the main strategy logic method. It's called once
         per bar after the warmup period.
@@ -156,7 +160,7 @@ class BacktestStrategy(ABC):
             context: Backtest context with state and history
 
         Returns:
-            Signal if a trade should be made, None otherwise
+            List of signals (empty list if no trades)
         """
         pass
 

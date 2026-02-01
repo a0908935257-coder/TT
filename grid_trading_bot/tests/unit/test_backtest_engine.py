@@ -134,30 +134,30 @@ class SimpleMovingAverageStrategy(BacktestStrategy):
     def warmup_period(self) -> int:
         return self._period + 10
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         if context.has_position:
-            return None
+            return []
 
         closes = context.get_closes(self._period)
         if len(closes) < self._period:
-            return None
+            return []
 
         sma = sum(closes) / Decimal(len(closes))
         current_price = kline.close
 
         # Simple long/short logic
         if current_price > sma * Decimal("1.01"):
-            return Signal.long_entry(
+            return [Signal.long_entry(
                 stop_loss=current_price * Decimal("0.98"),
                 take_profit=current_price * Decimal("1.02"),
-            )
+            )]
         elif current_price < sma * Decimal("0.99"):
-            return Signal.short_entry(
+            return [Signal.short_entry(
                 stop_loss=current_price * Decimal("1.02"),
                 take_profit=current_price * Decimal("0.98"),
-            )
+            )]
 
-        return None
+        return []
 
 
 class AlwaysLongStrategy(BacktestStrategy):
@@ -170,18 +170,18 @@ class AlwaysLongStrategy(BacktestStrategy):
     def warmup_period(self) -> int:
         return 10
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         if context.has_position:
-            return None
+            return []
 
         if self._trade_count >= self._max_trades:
-            return None
+            return []
 
         self._trade_count += 1
-        return Signal.long_entry(
+        return [Signal.long_entry(
             stop_loss=kline.close * Decimal("0.95"),
             take_profit=kline.close * Decimal("1.05"),
-        )
+        )]
 
     def reset(self) -> None:
         self._trade_count = 0

@@ -88,7 +88,7 @@ class DSLGeneratedStrategy(BacktestStrategy):
         """Return warmup period."""
         return self._warmup
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
         Process kline and generate signal.
 
@@ -97,16 +97,16 @@ class DSLGeneratedStrategy(BacktestStrategy):
             context: Backtest context
 
         Returns:
-            Signal if entry conditions met
+            List of signals
         """
         # Skip if in position
         if context.has_position:
-            return None
+            return []
 
         # Calculate all indicators
         indicator_values = self._calculate_indicators(context.klines)
         if not indicator_values:
-            return None
+            return []
 
         # Get price data for condition evaluation
         price_data = {
@@ -129,7 +129,7 @@ class DSLGeneratedStrategy(BacktestStrategy):
                     "LONG", self._definition.entry_long, kline, indicator_values
                 )
                 self._update_prev_values(indicator_values)
-                return signal
+                return [signal] if signal else []
 
         # Check short entry
         if self._definition.entry_short:
@@ -140,10 +140,10 @@ class DSLGeneratedStrategy(BacktestStrategy):
                     "SHORT", self._definition.entry_short, kline, indicator_values
                 )
                 self._update_prev_values(indicator_values)
-                return signal
+                return [signal] if signal else []
 
         self._update_prev_values(indicator_values)
-        return None
+        return []
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext

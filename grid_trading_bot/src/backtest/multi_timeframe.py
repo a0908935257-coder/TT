@@ -365,7 +365,7 @@ class MultiTimeframeStrategy(BacktestStrategy):
         self,
         kline: Kline,
         context: MultiTimeframeContext
-    ) -> Optional[Signal]:
+    ) -> list[Signal]:
         """
         Process a kline with multi-timeframe context.
 
@@ -374,7 +374,7 @@ class MultiTimeframeStrategy(BacktestStrategy):
             context: Multi-timeframe context with all timeframe data
 
         Returns:
-            Signal if a trade should be made, None otherwise
+            List of signals (empty list if no trades)
         """
         pass
 
@@ -491,15 +491,16 @@ class MultiTimeframeEngine:
                 bar_idx, klines, position_manager, base_tf
             )
 
-            # Get strategy signal
-            signal = strategy.on_kline(kline, context)
+            # Get strategy signals
+            signals = strategy.on_kline(kline, context)
 
-            # Process entry signal
-            if signal and not position_manager.has_position:
-                self._process_entry(
-                    signal, kline, bar_idx,
-                    position_manager, order_simulator
-                )
+            # Process entry signals
+            for signal in signals:
+                if not position_manager.has_position:
+                    self._process_entry(
+                        signal, kline, bar_idx,
+                        position_manager, order_simulator
+                    )
 
             # Update equity
             current_price = kline.close

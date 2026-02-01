@@ -345,20 +345,20 @@ class SimpleMeanReversionStrategy(BacktestStrategy):
     def warmup_period(self) -> int:
         return self._bb_period + 50
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         if context.has_position:
-            return None
+            return []
 
         klines = context.klines
 
         try:
             bands, bbw = self._calculator.get_all(klines)
         except Exception:
-            return None
+            return []
 
         # Skip squeeze
         if bbw.is_squeeze:
-            return None
+            return []
 
         current_price = kline.close
 
@@ -368,14 +368,14 @@ class SimpleMeanReversionStrategy(BacktestStrategy):
             take_profit = bands.middle
 
             self._entry_bar = context.bar_index
-            return Signal.long_entry(
+            return [Signal.long_entry(
                 price=bands.lower,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 reason="mean_reversion_lower_band",
-            )
+            )]
 
-        return None
+        return []
 
     def check_exit(
         self, position, kline: Kline, context: BacktestContext

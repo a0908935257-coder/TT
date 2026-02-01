@@ -109,11 +109,11 @@ class BacktestEngine:
             # 2. Update context after potential exits
             context = self._create_context(bar_idx, klines)
 
-            # 3. Get strategy signal
-            signal = strategy.on_kline(kline, context)
+            # 3. Get strategy signals
+            signals = strategy.on_kline(kline, context)
 
-            # 4. Process signal
-            if signal:
+            # 4. Process signals
+            for signal in signals:
                 self._process_signal(signal, kline, bar_idx, strategy)
 
             # 5. Update tracking prices
@@ -251,10 +251,13 @@ class BacktestEngine:
     def _create_context(self, bar_idx: int, klines: list[Kline]) -> BacktestContext:
         """Create backtest context for current bar."""
         current_price = klines[bar_idx].close
+        positions = self._position_manager.positions
         return BacktestContext(
             bar_index=bar_idx,
             klines=klines[: bar_idx + 1],
             current_position=self._position_manager.current_position,
+            positions=positions,
+            open_position_count=len(positions),
             realized_pnl=self._position_manager.realized_pnl,
             equity=self._position_manager.total_equity(
                 current_price, self._config.initial_capital, self._config.leverage
@@ -273,38 +276,36 @@ class BacktestEngine:
         if not self._position_manager.has_position:
             return
 
-        position = self._position_manager.current_position
-        if position is None:
-            return
+        # Iterate over a copy since positions may be removed during iteration
+        for position in self._position_manager.positions:
+            # Check stop loss
+            sl_triggered, sl_price = self._order_simulator.check_stop_loss(position, kline)
+            if sl_triggered and sl_price is not None:
+                self._close_position(position, sl_price, kline, bar_idx, ExitReason.STOP_LOSS, strategy)
+                continue
 
-        # Check stop loss
-        sl_triggered, sl_price = self._order_simulator.check_stop_loss(position, kline)
-        if sl_triggered and sl_price is not None:
-            self._close_position(position, sl_price, kline, bar_idx, ExitReason.STOP_LOSS, strategy)
-            return
+            # Check take profit
+            tp_triggered, tp_price = self._order_simulator.check_take_profit(position, kline)
+            if tp_triggered and tp_price is not None:
+                self._close_position(position, tp_price, kline, bar_idx, ExitReason.TAKE_PROFIT, strategy)
+                continue
 
-        # Check take profit
-        tp_triggered, tp_price = self._order_simulator.check_take_profit(position, kline)
-        if tp_triggered and tp_price is not None:
-            self._close_position(position, tp_price, kline, bar_idx, ExitReason.TAKE_PROFIT, strategy)
-            return
+            # Update trailing stop
+            new_sl = strategy.update_trailing_stop(position, kline, context)
+            if new_sl is not None:
+                position.stop_loss = new_sl
 
-        # Update trailing stop
-        new_sl = strategy.update_trailing_stop(position, kline, context)
-        if new_sl is not None:
-            position.stop_loss = new_sl
+            # Check strategy exit signal
+            exit_signal = strategy.check_exit(position, kline, context)
+            if exit_signal:
+                exit_reason = ExitReason.SIGNAL
+                if exit_signal.reason == "timeout":
+                    exit_reason = ExitReason.TIMEOUT
+                elif exit_signal.reason == "reversal":
+                    exit_reason = ExitReason.REVERSAL
 
-        # Check strategy exit signal
-        exit_signal = strategy.check_exit(position, kline, context)
-        if exit_signal:
-            exit_reason = ExitReason.SIGNAL
-            if exit_signal.reason == "timeout":
-                exit_reason = ExitReason.TIMEOUT
-            elif exit_signal.reason == "reversal":
-                exit_reason = ExitReason.REVERSAL
-
-            exit_price = exit_signal.price if exit_signal.price else kline.close
-            self._close_position(position, exit_price, kline, bar_idx, exit_reason, strategy)
+                exit_price = exit_signal.price if exit_signal.price else kline.close
+                self._close_position(position, exit_price, kline, bar_idx, exit_reason, strategy)
 
     def _process_signal(
         self,
@@ -358,6 +359,7 @@ class BacktestEngine:
                 target_price=signal.price,
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
+                metadata=signal.metadata,
             )
 
             if self._position_manager.open_position(position):

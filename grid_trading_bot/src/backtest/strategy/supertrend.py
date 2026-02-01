@@ -413,7 +413,7 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         ratio = float(self._current_atr / self._atr_baseline)
         return self._config.vol_ratio_low <= ratio <= self._config.vol_ratio_high
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
         Process kline and generate signal.
 
@@ -430,7 +430,7 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Update Supertrend
         st_data = self._supertrend.update(kline)
         if st_data is None:
-            return None
+            return []
 
         self._prev_trend = self._current_trend
         self._current_trend = st_data.trend
@@ -458,23 +458,25 @@ class SupertrendBacktestStrategy(BacktestStrategy):
 
         # Skip if already in position
         if context.has_position:
-            return None
+            return []
 
         # Check signal cooldown (like live bot)
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:
-            return None
+            return []
 
         # Volatility regime filter — block entry if outside range
         if not self._check_volatility_regime():
-            return None
+            return []
 
         # TREND_FLIP mode (legacy)
         if self._config.mode == SupertrendMode.TREND_FLIP:
-            return self._on_kline_trend_flip(kline, current_price)
+            result = self._on_kline_trend_flip(kline, current_price)
+            return [result] if result else []
 
         # HYBRID_GRID mode
         if self._config.mode == SupertrendMode.HYBRID_GRID:
-            return self._on_kline_hybrid_grid(kline, klines, current_price, context)
+            result = self._on_kline_hybrid_grid(kline, klines, current_price, context)
+            return [result] if result else []
 
         # TREND_GRID mode
         # Reset filled levels when no position (auto-reset like HYBRID_GRID)
@@ -483,20 +485,20 @@ class SupertrendBacktestStrategy(BacktestStrategy):
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             self._initialize_grid(klines, current_price)
-            return None
+            return []
 
         # Need trend to be established
         if self._current_trend == 0:
-            return None
+            return []
 
         # Require minimum bars in trend before entry (trend confirmation)
         if self._trend_bars < self._config.min_trend_bars:
-            return None
+            return []
 
         # Find current grid level
         level_idx = self._find_current_grid_level(current_price)
         if level_idx is None:
-            return None
+            return []
 
         # Bullish trend: LONG only (buy dips)
         if self._current_trend == 1 and level_idx > 0:
@@ -505,11 +507,11 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             if not entry_level.is_filled and kline.low <= entry_level.price:
                 # Check RSI filter before entry
                 if not self._check_rsi_filter("LONG"):
-                    return None
+                    return []
 
                 # Check hysteresis before entry (like live bot)
                 if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
-                    return None
+                    return []
 
                 entry_level.is_filled = True
 
@@ -526,12 +528,12 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                 tp_price = self._grid_levels[tp_level].price
                 sl_price = entry_level.price * (Decimal("1") - self._config.stop_loss_pct)
 
-                return Signal.long_entry(
+                return [Signal.long_entry(
                     price=entry_level.price,
                     stop_loss=sl_price,
                     take_profit=tp_price,
                     reason="trend_grid_long",
-                )
+                )]
 
         # Bearish trend: SHORT only (sell rallies)
         elif self._current_trend == -1 and level_idx < len(self._grid_levels) - 1:
@@ -540,11 +542,11 @@ class SupertrendBacktestStrategy(BacktestStrategy):
             if not entry_level.is_filled and kline.high >= entry_level.price:
                 # Check RSI filter before entry
                 if not self._check_rsi_filter("SHORT"):
-                    return None
+                    return []
 
                 # Check hysteresis before entry (like live bot)
                 if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
-                    return None
+                    return []
 
                 entry_level.is_filled = True
 
@@ -561,14 +563,14 @@ class SupertrendBacktestStrategy(BacktestStrategy):
                 tp_price = self._grid_levels[tp_level].price
                 sl_price = entry_level.price * (Decimal("1") + self._config.stop_loss_pct)
 
-                return Signal.short_entry(
+                return [Signal.short_entry(
                     price=entry_level.price,
                     stop_loss=sl_price,
                     take_profit=tp_price,
                     reason="trend_grid_short",
-                )
+                )]
 
-        return None
+        return []
 
     def _initialize_hybrid_grid(self, klines: List[Kline], current_price: Decimal) -> None:
         """

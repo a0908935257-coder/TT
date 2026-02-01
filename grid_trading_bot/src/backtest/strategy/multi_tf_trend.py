@@ -90,7 +90,7 @@ class MultiTFTrendStrategy(MultiTimeframeStrategy):
         self,
         kline: Kline,
         context: MultiTimeframeContext
-    ) -> Optional[Signal]:
+    ) -> list[Signal]:
         """
         Process kline with multi-timeframe context.
 
@@ -99,32 +99,32 @@ class MultiTFTrendStrategy(MultiTimeframeStrategy):
             context: Multi-timeframe context with 1h and 4h data
 
         Returns:
-            Trading signal or None
+            List of trading signals
         """
         # Already have position
         if context.has_position:
-            return None
+            return []
 
         # Get 4h data for trend
         tf_4h = context.get_timeframe("4h")
         if not tf_4h or tf_4h.bars_available < self._config.trend_sma_period:
-            return None
+            return []
 
         # Calculate 4h SMA for trend
         closes_4h = tf_4h.get_closes(self._config.trend_sma_period + 1)
         if len(closes_4h) < self._config.trend_sma_period + 1:
-            return None
+            return []
 
         sma_current = self._calculate_sma(closes_4h[-self._config.trend_sma_period:])
         sma_prev = self._calculate_sma(closes_4h[-self._config.trend_sma_period - 1:-1])
 
         if sma_current is None or sma_prev is None:
-            return None
+            return []
 
         # Determine trend: price above rising SMA = uptrend
         current_4h_close = tf_4h.current_price
         if current_4h_close is None:
-            return None
+            return []
 
         trend = 0
         if current_4h_close > sma_current and sma_current > sma_prev:
@@ -135,23 +135,23 @@ class MultiTFTrendStrategy(MultiTimeframeStrategy):
         # Get 1h data for entry
         tf_1h = context.get_timeframe("1h")
         if not tf_1h or tf_1h.bars_available < self._config.entry_ema_period:
-            return None
+            return []
 
         closes_1h = tf_1h.get_closes(self._config.entry_ema_period + 1)
         if len(closes_1h) < self._config.entry_ema_period:
-            return None
+            return []
 
         # Calculate 1h EMA
         ema = self._calculate_ema(closes_1h, self._config.entry_ema_period)
         if ema is None:
-            return None
+            return []
 
         current_price = kline.close
 
         # Calculate ATR for stops
         atr = self._calculate_atr(tf_1h.get_klines_window(self._config.atr_period + 1))
         if atr is None or atr <= 0:
-            return None
+            return []
 
         # Entry conditions
         pullback_pct = abs(current_price - ema) / ema
@@ -162,12 +162,12 @@ class MultiTFTrendStrategy(MultiTimeframeStrategy):
                 stop_loss = current_price - (atr * self._config.stop_loss_atr_mult)
                 take_profit = current_price + (atr * self._config.take_profit_atr_mult)
 
-                return Signal.long_entry(
+                return [Signal.long_entry(
                     price=current_price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reason="mtf_trend_long",
-                )
+                )]
 
         # Short entry: Downtrend + price pulls back to EMA
         if trend == -1 and pullback_pct <= self._config.pullback_threshold:
@@ -175,14 +175,14 @@ class MultiTFTrendStrategy(MultiTimeframeStrategy):
                 stop_loss = current_price + (atr * self._config.stop_loss_atr_mult)
                 take_profit = current_price - (atr * self._config.take_profit_atr_mult)
 
-                return Signal.short_entry(
+                return [Signal.short_entry(
                     price=current_price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reason="mtf_trend_short",
-                )
+                )]
 
-        return None
+        return []
 
     def _calculate_sma(self, prices: list[Decimal]) -> Optional[Decimal]:
         """Calculate Simple Moving Average."""

@@ -276,7 +276,7 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         ratio = float(self._current_atr / self._atr_baseline)
         return self._config.vol_ratio_low <= ratio <= self._config.vol_ratio_high
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
         Process kline and generate signal.
 
@@ -293,7 +293,7 @@ class RSIGridBacktestStrategy(BacktestStrategy):
         # Update RSI
         self._current_rsi = self._calculate_rsi(closes)
         if self._current_rsi is None:
-            return None
+            return []
 
         # B. Calculate RSI continuous score
         score = self._rsi_score(self._current_rsi)
@@ -305,7 +305,7 @@ class RSIGridBacktestStrategy(BacktestStrategy):
             # Update volatility baseline even when rebuilding
             if self._current_atr:
                 self._update_volatility_baseline(self._current_atr)
-            return None
+            return []
 
         # Update volatility baseline
         if self._current_atr:
@@ -313,16 +313,16 @@ class RSIGridBacktestStrategy(BacktestStrategy):
 
         # Volatility regime filter — block entry if outside range
         if not self._check_volatility_regime():
-            return None
+            return []
 
         # Already have position - don't generate new signals
         if context.has_position:
-            return None
+            return []
 
         # Find current grid level
         level_idx = self._find_current_grid_index(current_price)
         if level_idx is None:
-            return None
+            return []
 
         # Calculate SL/TP distances
         atr_sl = self._current_atr * self._config.stop_loss_atr_mult if self._current_atr else current_price * Decimal("0.015")
@@ -347,12 +347,12 @@ class RSIGridBacktestStrategy(BacktestStrategy):
                 stop_loss = entry_level.price - atr_sl
                 take_profit = entry_level.price + tp_distance
 
-                return Signal.long_entry(
+                return [Signal.long_entry(
                     price=entry_level.price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reason=f"rsi_grid_long_score={score:.2f}",
-                )
+                )]
 
         # Short entry
         if can_short and level_idx < len(self._grid_levels) - 1:
@@ -364,14 +364,14 @@ class RSIGridBacktestStrategy(BacktestStrategy):
                 stop_loss = entry_level.price + atr_sl
                 take_profit = entry_level.price - tp_distance
 
-                return Signal.short_entry(
+                return [Signal.short_entry(
                     price=entry_level.price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     reason=f"rsi_grid_short_score={score:.2f}",
-                )
+                )]
 
-        return None
+        return []
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext

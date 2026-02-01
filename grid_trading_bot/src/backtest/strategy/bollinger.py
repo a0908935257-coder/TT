@@ -321,18 +321,19 @@ class BollingerBacktestStrategy(BacktestStrategy):
         for level in self._grid_levels:
             level.is_filled = False
 
-    def on_kline(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def on_kline(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
-        Process kline and generate signal.
+        Process kline and generate signals.
 
         Dispatches to appropriate mode handler:
         - BB_TREND_GRID: Trend-following grid trading
-        - BB_NEUTRAL_GRID: Bi-directional grid trading (like Grid Futures)
+        - BB_NEUTRAL_GRID: Bi-directional grid trading (multi-signal)
         """
         if self._config.mode == BollingerMode.BB_NEUTRAL_GRID:
             return self._on_kline_neutral_grid(kline, context)
         else:
-            return self._on_kline_trend_grid(kline, context)
+            result = self._on_kline_trend_grid(kline, context)
+            return [result] if result else []
 
     def _on_kline_trend_grid(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
         """
@@ -451,18 +452,19 @@ class BollingerBacktestStrategy(BacktestStrategy):
 
         return None
 
-    def _on_kline_neutral_grid(self, kline: Kline, context: BacktestContext) -> Optional[Signal]:
+    def _on_kline_neutral_grid(self, kline: Kline, context: BacktestContext) -> list[Signal]:
         """
-        BB_NEUTRAL_GRID Logic (inspired by Grid Futures):
+        BB_NEUTRAL_GRID Logic (multi-position grid trading):
         - Bi-directional trading: Both LONG and SHORT allowed simultaneously
-        - No trend filter: Always allows both directions
+        - Multiple grid levels can trigger on the same kline
         - Uses ATR for dynamic grid range calculation
-        - Expected to generate 2-3x more trades than BB_TREND_GRID
+        - Each grid level tracks its own filled state independently
 
         Entry conditions:
         - LONG: kline.low touches grid level (buy the dip)
         - SHORT: kline.high touches grid level (sell the rally)
         """
+        signals: list[Signal] = []
         klines = context.klines
 
         # Decrement signal cooldown (like live bot)
@@ -478,91 +480,56 @@ class BollingerBacktestStrategy(BacktestStrategy):
 
         current_price = kline.close
 
-        # Skip if already in position
-        if context.has_position:
-            return None
-
-        # Reset filled levels when no position (allow reuse)
-        self._reset_filled_levels()
-
         # Check signal cooldown (like live bot)
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:
-            return None
+            return signals
 
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             klines_window = context.get_klines_window(self._config.atr_period + 5)
             self._initialize_grid(current_price, klines_window)
-            return None
+            return signals
 
-        # Find current grid level
-        level_idx = self._find_current_grid_level(current_price)
-        if level_idx is None:
-            return None
+        # Scan ALL grid levels for entry opportunities
+        for i, level in enumerate(self._grid_levels):
+            if level.is_filled:
+                continue
 
-        # NEUTRAL mode: Check both LONG and SHORT opportunities
+            # LONG: price dips to touch this grid level
+            if i > 0 and kline.low <= level.price:
+                tp_idx = i + self._config.take_profit_grids
+                tp_price = self._grid_levels[tp_idx].price if tp_idx < len(self._grid_levels) else None
+                sl_price = level.price * (Decimal("1") - self._config.stop_loss_pct)
 
-        # LONG entry: price dips to touch lower grid level
-        if level_idx > 0:
-            entry_level = self._grid_levels[level_idx]
-            if not entry_level.is_filled and kline.low <= entry_level.price:
-                # Check hysteresis before entry
-                if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
-                    pass  # Don't return, check SHORT too
-                else:
-                    entry_level.is_filled = True
+                signals.append(Signal.long_entry(
+                    price=level.price,
+                    stop_loss=sl_price,
+                    take_profit=tp_price,
+                    reason="bb_neutral_grid_long",
+                    metadata={"grid_level": i, "grid_price": str(level.price)},
+                ))
+                level.is_filled = True
 
-                    # Update hysteresis state
-                    self._last_triggered_level = level_idx
-                    self._last_triggered_side = "long"
+            # SHORT: price rallies to touch this grid level
+            elif i < len(self._grid_levels) - 1 and kline.high >= level.price:
+                tp_idx = i - self._config.take_profit_grids
+                tp_price = self._grid_levels[tp_idx].price if tp_idx >= 0 else None
+                sl_price = level.price * (Decimal("1") + self._config.stop_loss_pct)
 
-                    # Set signal cooldown
-                    if self._config.use_signal_cooldown:
-                        self._signal_cooldown = self._config.cooldown_bars
-
-                    # Take profit at next grid level up
-                    tp_level = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
-                    tp_price = self._grid_levels[tp_level].price
-                    sl_price = entry_level.price * (Decimal("1") - self._config.stop_loss_pct)
-
-                    return Signal.long_entry(
-                        price=entry_level.price,
-                        stop_loss=sl_price,
-                        take_profit=tp_price,
-                        reason="bb_neutral_grid_long",
-                    )
-
-        # SHORT entry: price rallies to touch upper grid level
-        if level_idx < len(self._grid_levels) - 1:
-            entry_level = self._grid_levels[level_idx + 1]
-            if not entry_level.is_filled and kline.high >= entry_level.price:
-                # Check hysteresis before entry
-                if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
-                    return None
-
-                entry_level.is_filled = True
-
-                # Update hysteresis state
-                self._last_triggered_level = level_idx + 1
-                self._last_triggered_side = "short"
-
-                # Set signal cooldown
-                if self._config.use_signal_cooldown:
-                    self._signal_cooldown = self._config.cooldown_bars
-
-                # Take profit at next grid level down
-                tp_level = max(level_idx + 1 - self._config.take_profit_grids, 0)
-                tp_price = self._grid_levels[tp_level].price
-                sl_price = entry_level.price * (Decimal("1") + self._config.stop_loss_pct)
-
-                return Signal.short_entry(
-                    price=entry_level.price,
+                signals.append(Signal.short_entry(
+                    price=level.price,
                     stop_loss=sl_price,
                     take_profit=tp_price,
                     reason="bb_neutral_grid_short",
-                )
+                    metadata={"grid_level": i, "grid_price": str(level.price)},
+                ))
+                level.is_filled = True
 
-        return None
+        # Set signal cooldown if any signals were generated
+        if signals and self._config.use_signal_cooldown:
+            self._signal_cooldown = self._config.cooldown_bars
+
+        return signals
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext
@@ -591,8 +558,11 @@ class BollingerBacktestStrategy(BacktestStrategy):
         pass
 
     def on_position_closed(self, trade: Trade) -> None:
-        """Reset tracking after trade."""
-        pass
+        """Reset grid level after trade closes (for multi-position neutral mode)."""
+        if self._config.mode == BollingerMode.BB_NEUTRAL_GRID:
+            grid_level_idx = trade.metadata.get("grid_level")
+            if grid_level_idx is not None and 0 <= grid_level_idx < len(self._grid_levels):
+                self._grid_levels[grid_level_idx].is_filled = False
 
     def reset(self) -> None:
         """Reset strategy state."""

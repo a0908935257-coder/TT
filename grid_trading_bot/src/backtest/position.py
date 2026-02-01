@@ -40,6 +40,7 @@ class Position:
     take_profit: Optional[Decimal] = None
     max_favorable_price: Optional[Decimal] = None
     max_adverse_price: Optional[Decimal] = None
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Initialize tracking prices."""
@@ -229,6 +230,7 @@ class PositionManager:
             fees=total_fees,
             bars_held=exit_bar - position.entry_bar,
             exit_reason=exit_reason,
+            metadata=position.metadata,
         )
 
         # Update state

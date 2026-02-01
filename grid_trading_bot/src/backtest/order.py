@@ -496,6 +496,7 @@ class Signal:
     stop_loss: Optional[Decimal] = None
     take_profit: Optional[Decimal] = None
     reason: Optional[str] = None
+    metadata: dict = field(default_factory=dict)
 
     @classmethod
     def long_entry(
@@ -504,6 +505,7 @@ class Signal:
         stop_loss: Optional[Decimal] = None,
         take_profit: Optional[Decimal] = None,
         reason: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> "Signal":
         """Create a long entry signal."""
         return cls(
@@ -512,6 +514,7 @@ class Signal:
             stop_loss=stop_loss,
             take_profit=take_profit,
             reason=reason,
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -521,6 +524,7 @@ class Signal:
         stop_loss: Optional[Decimal] = None,
         take_profit: Optional[Decimal] = None,
         reason: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> "Signal":
         """Create a short entry signal."""
         return cls(
@@ -529,6 +533,7 @@ class Signal:
             stop_loss=stop_loss,
             take_profit=take_profit,
             reason=reason,
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -691,6 +696,7 @@ class OrderSimulator:
         target_price: Optional[Decimal] = None,
         stop_loss: Optional[Decimal] = None,
         take_profit: Optional[Decimal] = None,
+        metadata: Optional[dict] = None,
     ) -> Position:
         """
         Create a new position from a fill.
@@ -733,6 +739,7 @@ class OrderSimulator:
             entry_fee=entry_fee,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            metadata=metadata or {},
         )
 
     def check_stop_loss(
