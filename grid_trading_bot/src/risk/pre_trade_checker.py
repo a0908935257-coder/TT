@@ -56,7 +56,7 @@ class PreTradeConfig:
     """Configuration for pre-trade risk checks."""
 
     # Position limits
-    max_position_pct_per_symbol: Decimal = Decimal("0.30")  # 30% max per symbol
+    max_position_pct_per_symbol: Decimal = Decimal("0.50")  # 50% max per symbol (isolated margin limits risk)
     max_total_position_pct: Decimal = Decimal("0.80")  # 80% max total exposure
     max_positions_count: int = 10  # Max number of open positions
 
