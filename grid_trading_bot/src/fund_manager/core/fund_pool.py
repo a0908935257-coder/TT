@@ -489,6 +489,7 @@ class FundPool:
             current = self._allocations.get(bot_id, Decimal("0"))
             new_amount = current + amount
             self._allocations[bot_id] = new_amount
+            self._persist_allocation(bot_id, new_amount)
 
             logger.info(
                 f"Atomic allocation: {bot_id} += {amount} "
@@ -533,6 +534,7 @@ class FundPool:
                 self._leverage_map.pop(bot_id, None)
             else:
                 self._allocations[bot_id] = new_amount
+            self._persist_allocation(bot_id, new_amount)
 
             logger.info(
                 f"Atomic deallocation: {bot_id} -= {dealloc_amount} "
@@ -567,13 +569,18 @@ class FundPool:
                 )
 
             # Perform transfer
-            self._allocations[from_bot_id] = from_current - amount
+            from_new = from_current - amount
+            self._allocations[from_bot_id] = from_new
             to_current = self._allocations.get(to_bot_id, Decimal("0"))
-            self._allocations[to_bot_id] = to_current + amount
+            to_new = to_current + amount
+            self._allocations[to_bot_id] = to_new
 
             # Clean up zero allocations
             if self._allocations[from_bot_id] <= 0:
                 self._allocations.pop(from_bot_id, None)
+
+            self._persist_allocation(from_bot_id, from_new)
+            self._persist_allocation(to_bot_id, to_new)
 
             logger.info(
                 f"Atomic transfer: {from_bot_id} -> {to_bot_id}: {amount}"
@@ -753,6 +760,9 @@ class FundPool:
             snapshot: Allocation snapshot to restore
         """
         self._allocations = snapshot.copy()
+        # Persist all restored allocations to database
+        for bot_id, amount in self._allocations.items():
+            self._persist_allocation(bot_id, amount)
         logger.info(f"Restored allocation snapshot with {len(snapshot)} bots")
 
     def get_allocation_diff(

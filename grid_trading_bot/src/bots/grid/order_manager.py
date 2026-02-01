@@ -569,9 +569,10 @@ class GridOrderManager:
             self._orders[order_id] = cancelled_order
 
             # Update level state
-            level = self._setup.levels[level_index]
-            level.state = LevelState.EMPTY
-            level.order_id = None
+            if 0 <= level_index < len(self._setup.levels):
+                level = self._setup.levels[level_index]
+                level.state = LevelState.EMPTY
+                level.order_id = None
 
             # Update in database
             await self._data_manager.update_order(cancelled_order, bot_id=self._bot_id)
@@ -1292,7 +1293,7 @@ class GridOrderManager:
         elif order.status == OrderStatus.PARTIALLY_FILLED:
             # Update order state for partial fills
             level_index = self.get_level_by_order_id(order.order_id)
-            if level_index is not None and self._setup:
+            if level_index is not None and self._setup and 0 <= level_index < len(self._setup.levels):
                 level = self._setup.levels[level_index]
                 level.filled_quantity = order.filled_qty
                 level.filled_price = order.avg_price if order.avg_price else order.price
@@ -1314,7 +1315,7 @@ class GridOrderManager:
             return
 
         # Update level state
-        if self._setup:
+        if self._setup and 0 <= level_index < len(self._setup.levels):
             level = self._setup.levels[level_index]
             level.state = LevelState.EMPTY
             level.order_id = None
