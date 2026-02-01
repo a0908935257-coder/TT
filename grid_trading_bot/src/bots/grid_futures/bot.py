@@ -956,6 +956,8 @@ class GridFuturesBot(BaseBot):
                         quantity=fill_qty,
                         leverage=self._config.leverage,
                         entry_time=datetime.now(timezone.utc),
+                        highest_price=fill_price,
+                        lowest_price=fill_price,
                     )
 
                     # Record entry bar for timeout tracking
@@ -1201,10 +1203,6 @@ class GridFuturesBot(BaseBot):
             # Increment bar counter for timeout tracking
             self._current_bar += 1
 
-            # Decrement signal cooldown
-            if self._signal_cooldown > 0:
-                self._signal_cooldown -= 1
-
             # Update closes for indicators
             self._closes.append(current_price)
             if len(self._closes) > 500:
@@ -1238,6 +1236,10 @@ class GridFuturesBot(BaseBot):
                 elif self._check_timeout_exit(current_price):
                     logger.warning(f"Timeout exit triggered: held {self._current_bar - self._entry_bar} bars")
                     await self._close_position(current_price, ExitReason.TIMEOUT)
+
+            # Decrement signal cooldown (after entry logic to avoid off-by-one)
+            if self._signal_cooldown > 0:
+                self._signal_cooldown -= 1
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")

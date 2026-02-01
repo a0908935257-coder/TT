@@ -1190,14 +1190,12 @@ class SupertrendBot(BaseBot):
                 if self._position.side == PositionSide.LONG:
                     self._position.unrealized_pnl = (
                         (current_price - self._position.entry_price) *
-                        self._position.quantity *
-                        Decimal(self._config.leverage)
+                        self._position.quantity
                     )
                 else:
                     self._position.unrealized_pnl = (
                         (self._position.entry_price - current_price) *
-                        self._position.quantity *
-                        Decimal(self._config.leverage)
+                        self._position.quantity
                     )
 
                 # Check trailing stop
@@ -1586,6 +1584,8 @@ class SupertrendBot(BaseBot):
                     quantity=fill_qty,
                     entry_time=datetime.now(timezone.utc),
                     stop_loss_price=stop_loss_price,
+                    highest_price=fill_price,
+                    lowest_price=fill_price,
                 )
                 self._entry_bar = self._current_bar
 

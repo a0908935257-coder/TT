@@ -805,10 +805,6 @@ class BollingerBot(BaseBot):
         if not self._grid or self._current_trend == 0:
             return
 
-        # Decrement signal cooldown
-        if self._signal_cooldown > 0:
-            self._signal_cooldown -= 1
-
         # Check existing position for exit
         if self._position:
             await self._check_position_exit(current_price, kline_high, kline_low)
@@ -857,6 +853,10 @@ class BollingerBot(BaseBot):
                         if self._config.use_hysteresis:
                             self._last_triggered_level = level.index
                     break
+
+        # Decrement signal cooldown (after entry logic to avoid off-by-one)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
 
     async def _check_position_exit(
         self,
@@ -1212,6 +1212,8 @@ class BollingerBot(BaseBot):
                     grid_level_index=grid_level_index,
                     take_profit_price=tp_price,
                     stop_loss_price=sl_price,
+                    highest_price=fill_price,
+                    lowest_price=fill_price,
                 )
 
                 # Record entry bar for timeout tracking

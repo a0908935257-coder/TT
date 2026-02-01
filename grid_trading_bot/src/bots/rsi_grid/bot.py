@@ -925,6 +925,8 @@ class RSIGridBot(BaseBot):
                         entry_zone=rsi_zone,
                         grid_level=grid_level,
                         entry_bar=self._current_bar,
+                        highest_price=fill_price,
+                        lowest_price=fill_price,
                     )
 
                     if self._config.use_exchange_stop_loss:
