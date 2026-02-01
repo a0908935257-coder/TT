@@ -156,13 +156,14 @@ bots:
     max_capital: 5000
     priority: 8
 
-    # --- 策略參數 (v2 Optuna 全參數優化 2026-01-31) ---
-    # Optuna 200 trials, equity-based margin, fee 0.06% + slippage 0.05%
-    # Train Sharpe: 2.89, Test Sharpe: 2.90, OOS/IS: 1.0025
-    # 完整回測: Sharpe 2.85, 報酬 1011%, 回撤 12.31%
+    # --- 策略參數 (v3 Optuna 優化 2026-02-01) ---
+    # Optuna 100 trials, fixed position sizing, fee 0.06% + slippage 0.05%
+    # Train Sharpe: 2.60, Test Sharpe: 2.57, OOS/IS: 0.99
+    # 完整回測: Sharpe 2.47, 報酬 36.17%, 年化 16.69%, 回撤 4.65%
+    # WF 驗證: 一致性 66.7%, OOS Sharpe 2.39, Monte Carlo ROBUST
     strategy_params:
       symbol: BTCUSDT
-      timeframe: 15m
+      timeframe: 1h
       leverage: 7
       margin_type: ISOLATED
       position_size_pct: 0.1
@@ -175,14 +176,14 @@ bots:
       overbought_level: 66
 
       # Grid Parameters (Optuna 優化)
-      grid_count: 8
-      atr_period: 10
+      grid_count: 10
+      atr_period: 7
       atr_multiplier: 4.0
 
       # Risk Management (Optuna 優化)
       stop_loss_atr_mult: 2.0
       take_profit_grids: 2
-      max_hold_bars: 8
+      max_hold_bars: 16
 
       # Trailing Stop (Optuna: 啟用)
       use_trailing_stop: true
@@ -190,9 +191,9 @@ bots:
 
       # Volatility Regime Filter (Optuna 優化)
       use_volatility_filter: true
-      vol_atr_baseline_period: 100
-      vol_ratio_low: 0.5
-      vol_ratio_high: 2.5
+      vol_atr_baseline_period: 300
+      vol_ratio_low: 0.3
+      vol_ratio_high: 2.0
 
   # ===========================================================================
   # Grid Futures Bot (雙向網格策略)

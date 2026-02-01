@@ -8,19 +8,19 @@ Strategy: RSI Zone + Grid Entry (無趨勢過濾)
 - Grid provides entry points at ATR-based price levels
 - 優化後關閉趨勢過濾，效果更好
 
-✅ v2 Vol Filter 優化 + Walk-Forward 驗證 (2026-01-30):
-- 年化報酬: 12.09%, Sharpe: 1.90, 回撤: 9.78%
-- 勝率: 84.8%, 交易數: 328/2年
-- W-F 一致性: 77.8% (7/9), Monte Carlo: ROBUST
-- OOS Sharpe: 2.89
+✅ v3 Optuna 優化 + Walk-Forward 驗證 (2026-02-01):
+- 年化報酬: 16.69%, Sharpe: 2.47, 回撤: 4.65%
+- 勝率: 61.5%, 交易數: 2602/2年
+- W-F 一致性: 66.7% (2/3), Monte Carlo: ROBUST
+- OOS Sharpe: 2.39, OOS/IS: 0.99
 
-v2 優化後參數:
-- Timeframe: 15m, Leverage: 7x
-- RSI: period=14, block_threshold=0.7
-- Grid: count=12, ATR period=10, multiplier=4.0
-- Stop Loss: ATR * 1.5, Max Hold: 16 bars
-- Volatility Filter: ON (baseline=100, low=0.4, high=2.0)
-- Trailing Stop: OFF, Trend Filter: OFF
+v3 優化後參數:
+- Timeframe: 1h, Leverage: 7x
+- RSI: period=5, block_threshold=0.9
+- Grid: count=10, ATR period=7, multiplier=4.0
+- Stop Loss: ATR * 2.0, Take Profit: 2 grids, Max Hold: 16 bars
+- Volatility Filter: ON (baseline=300, low=0.3, high=2.0)
+- Trailing Stop: ON (activate=1%, distance=0.8%)
 """
 
 from dataclasses import dataclass, field
@@ -87,15 +87,15 @@ class RSIGridConfig:
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # RSI Parameters
-        rsi_period: RSI calculation period (default 14)
+        rsi_period: RSI calculation period (default 5, v3)
         oversold_level: RSI oversold threshold (default 33)
         overbought_level: RSI overbought threshold (default 66)
-        rsi_block_threshold: tanh score threshold (default 0.7, v2)
+        rsi_block_threshold: tanh score threshold (default 0.9, v3)
 
         # Grid Parameters
-        grid_count: Number of grid levels (default 12, v2)
-        atr_period: ATR calculation period (default 10, v2)
-        atr_multiplier: ATR multiplier for grid range (default 4.0, v2)
+        grid_count: Number of grid levels (default 10, v3)
+        atr_period: ATR calculation period (default 7, v3)
+        atr_multiplier: ATR multiplier for grid range (default 4.0, v3)
 
         # Trend Filter
         trend_sma_period: SMA period for trend detection (default 39)
@@ -105,36 +105,36 @@ class RSIGridConfig:
         max_capital: Maximum capital to use
         position_size_pct: Size per trade as % of capital (default 10%)
         max_position_pct: Maximum total position as % (default 50%)
-        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.5, v2)
+        stop_loss_atr_mult: Stop loss as ATR multiple (default 2.0, v3)
         max_stop_loss_pct: Maximum stop loss percentage (default 3%)
         max_positions: Maximum concurrent positions (default 5)
-        max_hold_bars: Maximum holding duration in bars (default 16, v2)
+        max_hold_bars: Maximum holding duration in bars (default 16, v3)
 
-        # Volatility Filter (v2)
-        use_volatility_filter: Enable volatility regime filter (default True, v2)
-        vol_atr_baseline_period: Baseline ATR period (default 100)
-        vol_ratio_low: Low volatility threshold (default 0.4)
-        vol_ratio_high: High volatility threshold (default 2.0)
+        # Volatility Filter (v3)
+        use_volatility_filter: Enable volatility regime filter (default True, v3)
+        vol_atr_baseline_period: Baseline ATR period (default 300, v3)
+        vol_ratio_low: Low volatility threshold (default 0.3, v3)
+        vol_ratio_high: High volatility threshold (default 2.0, v3)
 
     Example:
         >>> config = RSIGridConfig(symbol="BTCUSDT")  # Use defaults
     """
 
     symbol: str
-    timeframe: str = "15m"  # v2 優化後: 15m (原 1h)
-    leverage: int = 7  # v2: 7x (leveraged-fee 回測驗證)
+    timeframe: str = "1h"  # v3 優化後: 1h
+    leverage: int = 7  # v3: 7x (leveraged-fee 回測驗證)
     margin_type: str = "ISOLATED"
 
-    # RSI Parameters (v2 優化)
-    rsi_period: int = 14
+    # RSI Parameters (v3 優化)
+    rsi_period: int = 5  # v3: 5 (原 14)
     oversold_level: int = 33  # 優化後: 33 (原 30)
     overbought_level: int = 66  # 優化後: 66 (原 70)
-    rsi_block_threshold: float = 0.7  # v2: tanh score 閾值
+    rsi_block_threshold: float = 0.9  # v3: 0.9
 
-    # Grid Parameters (v2 優化)
-    grid_count: int = 12  # v2: 12 (原 8)
-    atr_period: int = 10  # v2: 10 (原 22)
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))  # v2: 4.0 (原 3.5)
+    # Grid Parameters (v3 優化)
+    grid_count: int = 10  # v3: 10
+    atr_period: int = 7  # v3: 7
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))  # v3: 4.0
 
     # Trend Filter (v2: 關閉)
     trend_sma_period: int = 39  # 優化後: 39 (原 20)
@@ -145,16 +145,16 @@ class RSIGridConfig:
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
 
-    # Risk Management (v2 優化)
-    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("1.5"))  # v2: 1.5 (原 2.0)
+    # Risk Management (v3 優化)
+    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("2.0"))  # v3: 2.0
     max_stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
-    take_profit_grids: int = 1
+    take_profit_grids: int = 2  # v3: 2
     max_positions: int = 5
-    max_hold_bars: int = 16  # v2: timeout 16 bars
+    max_hold_bars: int = 16  # v3: 16 bars
 
-    # Trailing Stop (v2: 關閉)
-    use_trailing_stop: bool = False
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))  # v2: 3%
+    # Trailing Stop (v3: 啟用)
+    use_trailing_stop: bool = True  # v3: 啟用
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # v3: 1%
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True
@@ -166,11 +166,11 @@ class RSIGridConfig:
     # Fee rate
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
-    # Volatility Regime Filter (v2 核心改進)
-    use_volatility_filter: bool = True  # v2: 啟用
-    vol_atr_baseline_period: int = 100  # v2: baseline ATR 週期
-    vol_ratio_low: float = 0.4  # v2: 低波動閾值
-    vol_ratio_high: float = 2.0  # v2: 高波動閾值
+    # Volatility Regime Filter (v3 優化)
+    use_volatility_filter: bool = True  # v3: 啟用
+    vol_atr_baseline_period: int = 300  # v3: 300
+    vol_ratio_low: float = 0.3  # v3: 0.3
+    vol_ratio_high: float = 2.0  # v3: 2.0
 
     # Protective features (v2: 關閉)
     use_hysteresis: bool = False  # 回測顯示對 RSI Grid 有負面影響

@@ -218,19 +218,19 @@ def create_all_strategies() -> dict:
     rsi_config = RSIGridStrategyConfig(
         rsi_period=rsi.get("rsi_period", 5),
         rsi_block_threshold=rsi.get("rsi_block_threshold", 0.9),
-        atr_period=rsi.get("atr_period", 10),
-        grid_count=rsi.get("grid_count", 8),
+        atr_period=rsi.get("atr_period", 7),
+        grid_count=rsi.get("grid_count", 10),
         atr_multiplier=Decimal(str(rsi.get("atr_multiplier", "4.0"))),
         stop_loss_atr_mult=Decimal(str(rsi.get("stop_loss_atr_mult", "2.0"))),
         take_profit_grids=rsi.get("take_profit_grids", 2),
-        max_hold_bars=rsi.get("max_hold_bars", 8),
+        max_hold_bars=rsi.get("max_hold_bars", 16),
         use_trailing_stop=rsi.get("use_trailing_stop", True),
         trailing_activate_pct=rsi.get("trailing_activate_pct", 0.01),
-        trailing_distance_pct=rsi.get("trailing_distance_pct", 0.003),
+        trailing_distance_pct=rsi.get("trailing_distance_pct", 0.008),
         use_volatility_filter=rsi.get("use_volatility_filter", True),
-        vol_atr_baseline_period=rsi.get("vol_atr_baseline_period", 100),
-        vol_ratio_low=rsi.get("vol_ratio_low", 0.5),
-        vol_ratio_high=rsi.get("vol_ratio_high", 2.5),
+        vol_atr_baseline_period=rsi.get("vol_atr_baseline_period", 300),
+        vol_ratio_low=rsi.get("vol_ratio_low", 0.3),
+        vol_ratio_high=rsi.get("vol_ratio_high", 2.0),
     )
 
     return {
