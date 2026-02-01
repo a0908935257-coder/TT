@@ -296,10 +296,10 @@ class SupertrendIndicator:
         upper_band = hl2 + self._atr_multiplier * atr
         lower_band = hl2 - self._atr_multiplier * atr
 
-        if self._prev_upper_band is not None and self._prev_close is not None:
-            if self._prev_close > self._prev_upper_band:
+        if self._prev_lower_band is not None and self._prev_close is not None:
+            if self._prev_close >= self._prev_lower_band:
                 lower_band = max(lower_band, self._prev_lower_band)
-            if self._prev_close < self._prev_lower_band:
+            if self._prev_close <= self._prev_upper_band:
                 upper_band = min(upper_band, self._prev_upper_band)
 
         close = kline.close

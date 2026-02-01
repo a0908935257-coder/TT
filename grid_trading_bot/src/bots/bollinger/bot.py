@@ -989,8 +989,8 @@ class BollingerBot(BaseBot):
                 logger.warning(f"Invalid entry price: {price}")
                 return False
 
-            # Calculate position size
-            trade_value = self._capital * self._config.position_size_pct
+            # Calculate position size (notional = margin × leverage)
+            trade_value = self._capital * self._config.position_size_pct * Decimal(self._config.leverage)
             quantity = self._safe_divide(trade_value, price, context="position_size")
 
             # Validate and normalize price/quantity to exchange requirements
@@ -1393,9 +1393,6 @@ class BollingerBot(BaseBot):
                     pnl = (exit_price - entry_price) * quantity
                 else:
                     pnl = (entry_price - exit_price) * quantity
-
-                # Apply leverage to PnL
-                pnl *= Decimal(self._config.leverage)
 
                 # Calculate fee (entry + exit)
                 fee = quantity * (entry_price + exit_price) * self._config.fee_rate

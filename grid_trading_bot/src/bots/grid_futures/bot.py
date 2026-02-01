@@ -726,8 +726,8 @@ class GridFuturesBot(BaseBot):
                 logger.warning(f"Invalid entry price: {price}")
                 return False
 
-            # Calculate position size
-            trade_value = self._capital * self._config.position_size_pct
+            # Calculate position size (notional = margin × leverage)
+            trade_value = self._capital * self._config.position_size_pct * Decimal(self._config.leverage)
             quantity = self._safe_divide(trade_value, price, context="position_size")
 
             # Validate and normalize price/quantity to exchange requirements
@@ -1053,9 +1053,9 @@ class GridFuturesBot(BaseBot):
 
                 # Calculate PnL
                 if self._position.side == PositionSide.LONG:
-                    pnl = close_qty * (fill_price - self._position.entry_price) * Decimal(self._config.leverage)
+                    pnl = close_qty * (fill_price - self._position.entry_price)
                 else:
-                    pnl = close_qty * (self._position.entry_price - fill_price) * Decimal(self._config.leverage)
+                    pnl = close_qty * (self._position.entry_price - fill_price)
 
                 fee = close_qty * fill_price * self._config.fee_rate * 2  # Entry + exit fee
 

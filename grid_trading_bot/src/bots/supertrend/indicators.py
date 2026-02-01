@@ -76,11 +76,13 @@ class SupertrendIndicator:
         upper_band = hl2 + self._atr_multiplier * atr
         lower_band = hl2 - self._atr_multiplier * atr
 
-        # Adjust bands based on previous values
-        if self._prev_upper_band is not None and self._prev_close is not None:
-            if self._prev_close > self._prev_upper_band:
+        # Adjust bands based on previous values (standard Supertrend logic):
+        # - Lower band can only increase (not decrease) while price stays above it
+        # - Upper band can only decrease (not increase) while price stays below it
+        if self._prev_lower_band is not None and self._prev_close is not None:
+            if self._prev_close >= self._prev_lower_band:
                 lower_band = max(lower_band, self._prev_lower_band)
-            if self._prev_close < self._prev_lower_band:
+            if self._prev_close <= self._prev_upper_band:
                 upper_band = min(upper_band, self._prev_upper_band)
 
         # Determine trend

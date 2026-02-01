@@ -1443,9 +1443,9 @@ class SupertrendBot(BaseBot):
             else:
                 capital = available
 
-            # Apply position_size_pct but cap at max_position_pct
+            # Apply position_size_pct but cap at max_position_pct (notional = margin × leverage)
             position_pct = min(self._config.position_size_pct, self._config.max_position_pct)
-            notional = capital * position_pct
+            notional = capital * position_pct * Decimal(self._config.leverage)
             quantity = self._safe_divide(notional, price, context="position_size")
 
             # Validate and normalize price/quantity to exchange requirements
@@ -1793,8 +1793,6 @@ class SupertrendBot(BaseBot):
                     pnl = (exit_price - self._position.entry_price) * self._position.quantity
                 else:
                     pnl = (self._position.entry_price - exit_price) * self._position.quantity
-
-                pnl *= Decimal(self._config.leverage)
 
                 # Deduct fees
                 fee = (self._position.entry_price + exit_price) * self._position.quantity * self.FEE_RATE

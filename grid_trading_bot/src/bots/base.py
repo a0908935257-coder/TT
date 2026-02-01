@@ -6621,9 +6621,9 @@ class BaseBot(ABC):
             return Decimal("0")
 
         if pos["side"] == "LONG":
-            pos["unrealized_pnl"] = (current_price - pos["avg_entry_price"]) * pos["quantity"] * Decimal(leverage)
+            pos["unrealized_pnl"] = (current_price - pos["avg_entry_price"]) * pos["quantity"]
         elif pos["side"] == "SHORT":
-            pos["unrealized_pnl"] = (pos["avg_entry_price"] - current_price) * pos["quantity"] * Decimal(leverage)
+            pos["unrealized_pnl"] = (pos["avg_entry_price"] - current_price) * pos["quantity"]
 
         # Update strategy risk tracking
         self.update_strategy_capital(unrealized_pnl=pos["unrealized_pnl"])
@@ -6967,7 +6967,7 @@ class BaseBot(ABC):
             # Proportional exit fee
             exit_fee_portion = close_fee * (match_qty / close_quantity) if close_quantity > 0 else Decimal("0")
 
-            lot_pnl = (proceeds - cost_basis) * Decimal(leverage) - entry_fee_portion - exit_fee_portion
+            lot_pnl = (proceeds - cost_basis) - entry_fee_portion - exit_fee_portion
 
             # Record match
             result["matched_lots"].append({
@@ -8930,9 +8930,9 @@ class BaseBot(ABC):
 
         # Calculate P&L percentage (with leverage effect)
         if position_side.upper() == "LONG":
-            pnl_pct = (current_price - entry_price) / entry_price * Decimal(leverage)
+            pnl_pct = (current_price - entry_price) / entry_price
         else:
-            pnl_pct = (entry_price - current_price) / entry_price * Decimal(leverage)
+            pnl_pct = (entry_price - current_price) / entry_price
 
         result["loss_pct"] = pnl_pct
         result["estimated_loss"] = abs(pnl_pct) * quantity * entry_price
