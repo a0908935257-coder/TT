@@ -336,7 +336,6 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         # Initialize or rebuild grid if needed
         if self._should_rebuild_grid(current_price):
             self._initialize_grid(klines_window, current_price)
-            return []
 
         # Check signal cooldown (like live bot)
         if self._config.use_signal_cooldown and self._signal_cooldown > 0:
@@ -361,7 +360,7 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
 
         # NEUTRAL mode: multi-grid scanning
         if self._config.direction == GridDirection.NEUTRAL:
-            return self._scan_grid_entries_multi(kline, allowed_long, allowed_short)
+            return self._scan_grid_entries_multi(kline, context, allowed_long, allowed_short)
 
         # Non-NEUTRAL modes: single signal (backward compatible)
         # Already have position - don't generate new signals
@@ -434,56 +433,90 @@ class GridFuturesBacktestStrategy(BacktestStrategy):
         return []
 
     def _scan_grid_entries_multi(
-        self, kline: Kline, allowed_long: bool, allowed_short: bool
+        self, kline: Kline, context: BacktestContext,
+        allowed_long: bool, allowed_short: bool,
     ) -> list[Signal]:
-        """Scan all grid levels for entry signals (NEUTRAL multi-position mode)."""
-        signals: list[Signal] = []
+        """
+        Scan grid levels for entry signal (NEUTRAL single-position mode).
 
-        for i, level in enumerate(self._grid_levels):
-            if level.is_filled:
-                continue
+        Matches BB_NEUTRAL_GRID logic:
+        - Single position at a time (context.has_position check)
+        - Reset filled levels when no position held
+        - Hysteresis and cooldown checks
+        - 1-grid TP, stop_loss_pct SL
+        """
+        # Already have position - don't generate new signals
+        if context.has_position:
+            return []
 
-            # LONG: price dips to touch this grid level
-            if allowed_long and i > 0 and kline.low <= level.price:
-                tp_idx = i + self._config.take_profit_grids
-                tp_price = self._grid_levels[tp_idx].price if tp_idx < len(self._grid_levels) else None
-                sl_price = level.price * (Decimal("1") - self._config.stop_loss_pct)
+        # No position held - reset all filled levels so they can be reused
+        self._reset_filled_levels()
 
-                signals.append(Signal.long_entry(
-                    price=level.price,
+        # Check cooldown
+        if self._config.use_signal_cooldown and self._signal_cooldown > 0:
+            return []
+
+        current_price = kline.close
+        level_idx = self._find_current_grid_level(current_price)
+        if level_idx is None:
+            return []
+
+        curr_low = kline.low
+        curr_high = kline.high
+
+        # Long entry: price dips to touch lower adjacent level
+        if allowed_long and level_idx > 0:
+            entry_level = self._grid_levels[level_idx]
+            if curr_low <= entry_level.price:
+                if not self._check_hysteresis(level_idx, "long", entry_level.price, current_price):
+                    return []
+
+                entry_level.is_filled = True
+                tp_idx = min(level_idx + self._config.take_profit_grids, len(self._grid_levels) - 1)
+                tp_price = self._grid_levels[tp_idx].price
+                sl_price = entry_level.price * (Decimal("1") - self._config.stop_loss_pct)
+
+                self._last_triggered_level = level_idx
+                self._last_triggered_side = "long"
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
+
+                return [Signal.long_entry(
+                    price=entry_level.price,
                     stop_loss=sl_price,
                     take_profit=tp_price,
                     reason="grid_long_dip_buy",
-                    metadata={"grid_level": i, "grid_price": str(level.price)},
-                ))
-                level.is_filled = True
+                )]
 
-            # SHORT: price rallies to touch this grid level
-            elif allowed_short and i < len(self._grid_levels) - 1 and kline.high >= level.price:
-                tp_idx = i - self._config.take_profit_grids
-                tp_price = self._grid_levels[tp_idx].price if tp_idx >= 0 else None
-                sl_price = level.price * (Decimal("1") + self._config.stop_loss_pct)
+        # Short entry: price rallies to touch upper adjacent level
+        if allowed_short and level_idx < len(self._grid_levels) - 1:
+            entry_level = self._grid_levels[level_idx + 1]
+            if curr_high >= entry_level.price:
+                if not self._check_hysteresis(level_idx + 1, "short", entry_level.price, current_price):
+                    return []
 
-                signals.append(Signal.short_entry(
-                    price=level.price,
+                entry_level.is_filled = True
+                tp_idx = max(level_idx + 1 - self._config.take_profit_grids, 0)
+                tp_price = self._grid_levels[tp_idx].price
+                sl_price = entry_level.price * (Decimal("1") + self._config.stop_loss_pct)
+
+                self._last_triggered_level = level_idx + 1
+                self._last_triggered_side = "short"
+                if self._config.use_signal_cooldown:
+                    self._signal_cooldown = self._config.cooldown_bars
+
+                return [Signal.short_entry(
+                    price=entry_level.price,
                     stop_loss=sl_price,
                     take_profit=tp_price,
                     reason="grid_short_rally_sell",
-                    metadata={"grid_level": i, "grid_price": str(level.price)},
-                ))
-                level.is_filled = True
+                )]
 
-        if signals and self._config.use_signal_cooldown:
-            self._signal_cooldown = self._config.cooldown_bars
-
-        return signals
+        return []
 
     def on_position_closed(self, trade) -> None:
-        """Reset grid level after trade closes (for multi-position neutral mode)."""
-        if self._config.direction == GridDirection.NEUTRAL:
-            grid_level_idx = trade.metadata.get("grid_level") if hasattr(trade, 'metadata') else None
-            if grid_level_idx is not None and 0 <= grid_level_idx < len(self._grid_levels):
-                self._grid_levels[grid_level_idx].is_filled = False
+        """No-op: filled levels are reset in _scan_grid_entries_multi when no position held."""
+        pass
 
     def check_exit(
         self, position: Position, kline: Kline, context: BacktestContext
