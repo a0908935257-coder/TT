@@ -104,16 +104,17 @@ class BollingerConfig:
         - 勝率: 63.3%
         - 穩健性: ROBUST
 
-    ✅ BB_NEUTRAL_GRID WF v4 Optuna 300 trials (2026-02-01, use_margin fix):
-    - 9/9 折獲利, 平均 Sharpe: 4.73, 總交易: 6,749
-    - 平均報酬: +242.2%, 最差回撤: 19.57%
+    ✅ BB_NEUTRAL_GRID WF v5 Optuna 300 trials (2026-02-01):
+    - 9/9 折獲利, 平均 Sharpe: 10.37, 總交易: 5,000
+    - 兩年報酬: +289.59%, 年化: 97.38%, 最大回撤: 1.09%
+    - Monte Carlo 100%, 參數穩健性 100%
 
-    BB_NEUTRAL_GRID 默認參數 (WF v4 Optuna 300 trials 2026-02-01):
-    - bb_period: 24, bb_std: 2.0
-    - grid_count: 8, take_profit_grids: 1
-    - use_atr_range: true, atr_period: 21, atr_multiplier: 8.5
-    - stop_loss_pct: 0.3%, leverage: 18x
-    - use_hysteresis: false, cooldown_bars: 6
+    BB_NEUTRAL_GRID 默認參數 (WF v5 2026-02-01):
+    - bb_period: 21, bb_std: 2.0
+    - grid_count: 10, take_profit_grids: 1
+    - use_atr_range: true, atr_period: 13, atr_multiplier: 6.5
+    - stop_loss_pct: 0.2%, leverage: 18x
+    - use_hysteresis: true, hysteresis_pct: 0.3%, cooldown_bars: 1
     """
 
     symbol: str
@@ -123,34 +124,34 @@ class BollingerConfig:
     mode: StrategyMode = StrategyMode.BB_NEUTRAL_GRID
 
     # Bollinger Bands parameters (用於參考，不作為趨勢過濾)
-    bb_period: int = 24                                                        # WF v4 優化: 24 (use_margin fix)
+    bb_period: int = 21                                                        # WF v5 優化: 21
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
 
-    # Grid parameters (Optuna 300 trials 2026-01-31)
-    grid_count: int = 8                                                        # WF v4 優化: 8
+    # Grid parameters (WF v5 2026-02-01, 年化97%, Sharpe 8.34)
+    grid_count: int = 10                                                       # WF v5 優化: 10
     grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))   # 備用 (ATR 優先)
-    take_profit_grids: int = 1                                                 # 優化後: 1
+    take_profit_grids: int = 1                                                 # WF v5 優化: 1
 
-    # Position settings (18x leverage, Optuna 2026-01-31)
+    # Position settings (18x leverage)
     leverage: int = 18                                                         # 優化後: 18x
     margin_type: str = "ISOLATED"
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max 50% exposure
 
-    # Risk management (優化後)
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.003"))   # WF v4 優化: 0.3%
+    # Risk management (WF v5 2026-02-01)
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))   # WF v5 優化: 0.2%
     rebuild_threshold_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # Rebuild when price moves 2% from grid
 
     # BBW filter (for squeeze detection)
     bbw_lookback: int = 200
     bbw_threshold_pct: int = 20
 
-    # Protective features (Optuna 300 trials 2026-01-31)
-    use_hysteresis: bool = False                                               # WF v3 優化: 關閉
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0015")) # WF v3 優化: 0.15%
-    use_signal_cooldown: bool = False                                          # 優化後: 關閉
-    cooldown_bars: int = 6                                                     # WF v4 優化: 6
+    # Protective features (WF v5 2026-02-01)
+    use_hysteresis: bool = True                                                # WF v5 優化: 開啟
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.003"))  # WF v5 優化: 0.3%
+    use_signal_cooldown: bool = False                                          # WF v5 優化: 關閉
+    cooldown_bars: int = 1                                                     # WF v5 優化: 1
 
     # Max hold bars (0 = disabled, >0 = close losing position after N bars)
     max_hold_bars: int = 0
@@ -161,10 +162,10 @@ class BollingerConfig:
     # Exchange stop loss order (place STOP_MARKET on exchange instead of local-only monitoring)
     use_exchange_stop_loss: bool = True
 
-    # ATR dynamic range (BB_NEUTRAL_GRID 啟用, Optuna 2026-01-31)
-    use_atr_range: bool = True                                                 # 優化後: 啟用
-    atr_period: int = 21                                                       # WF v4 優化: 21
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("8.5"))    # WF v4 優化: 8.5
+    # ATR dynamic range (WF v5 2026-02-01)
+    use_atr_range: bool = True                                                 # WF v5 優化: 啟用
+    atr_period: int = 13                                                       # WF v5 優化: 13
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.5"))    # WF v5 優化: 6.5
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))  # ATR 不可用時的備用範圍
 
     @classmethod

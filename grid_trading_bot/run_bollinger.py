@@ -82,18 +82,18 @@ def get_config_from_env() -> BollingerConfig:
         # Strategy Mode
         mode=params.get('mode', 'bb_neutral_grid'),
 
-        # Bollinger Bands 參數
-        bb_period=int(params.get('bb_period', 24)),
+        # Bollinger Bands 參數 (WF v5 2026-02-01)
+        bb_period=int(params.get('bb_period', 21)),
         bb_std=Decimal(str(params.get('bb_std', 2.0))),
 
-        # Grid 參數
-        grid_count=int(params.get('grid_count', 8)),
+        # Grid 參數 (WF v5 2026-02-01)
+        grid_count=int(params.get('grid_count', 10)),
         take_profit_grids=int(params.get('take_profit_grids', 1)),
 
-        # ATR Dynamic Range
+        # ATR Dynamic Range (WF v5 2026-02-01)
         use_atr_range=bool(params.get('use_atr_range', True)),
-        atr_period=int(params.get('atr_period', 21)),
-        atr_multiplier=Decimal(str(params.get('atr_multiplier', 8.5))),
+        atr_period=int(params.get('atr_period', 13)),
+        atr_multiplier=Decimal(str(params.get('atr_multiplier', 6.5))),
         fallback_range_pct=Decimal(str(params.get('fallback_range_pct', 0.04))),
 
         # 倉位管理
@@ -101,19 +101,19 @@ def get_config_from_env() -> BollingerConfig:
         position_size_pct=Decimal(str(params.get('position_size_pct', 0.1))),
         max_position_pct=Decimal(str(params.get('max_position_pct', 0.5))),
 
-        # 風險管理
-        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.003))),
+        # 風險管理 (WF v5 2026-02-01)
+        stop_loss_pct=Decimal(str(params.get('stop_loss_pct', 0.002))),
         rebuild_threshold_pct=Decimal(str(params.get('rebuild_threshold_pct', 0.02))),
 
         # BBW 過濾
         bbw_lookback=int(params.get('bbw_lookback', 200)),
         bbw_threshold_pct=int(params.get('bbw_threshold_pct', 20)),
 
-        # Protective features
-        use_hysteresis=bool(params.get('use_hysteresis', False)),
-        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0015))),
+        # Protective features (WF v5 2026-02-01)
+        use_hysteresis=bool(params.get('use_hysteresis', True)),
+        hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.003))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
-        cooldown_bars=int(params.get('cooldown_bars', 6)),
+        cooldown_bars=int(params.get('cooldown_bars', 1)),
         use_exchange_stop_loss=bool(params.get('use_exchange_stop_loss', True)),
         max_hold_bars=int(params.get('max_hold_bars', 0)),
     )
