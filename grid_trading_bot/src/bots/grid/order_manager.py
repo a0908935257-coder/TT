@@ -1063,6 +1063,7 @@ class GridOrderManager:
         self._level_order_map.pop(level_index, None)
         self._order_level_map.pop(order.order_id, None)
         self._order_created_times.pop(order.order_id, None)
+        self._sync_failure_counts.pop(order.order_id, None)
 
         # Update order cache
         self._orders[order.order_id] = order

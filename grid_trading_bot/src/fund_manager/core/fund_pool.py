@@ -417,6 +417,7 @@ class FundPool:
                 self._allocations.pop(bot_id, None)
             else:
                 self._allocations[bot_id] = new_amount
+            self._persist_allocation(bot_id, new_amount)
             logger.debug(f"Allocation added for {bot_id}: {amount} (total: {new_amount})")
             return new_amount
 

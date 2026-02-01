@@ -533,6 +533,21 @@ class FundManager:
                         tx.mark_committed()
                         return tx
 
+                    # Cap deltas to available unallocated funds
+                    total_delta = sum(delta_allocations.values())
+                    unallocated = self._fund_pool.get_unallocated()
+                    if total_delta > unallocated:
+                        logger.warning(
+                            f"Atomic: total delta {total_delta} exceeds "
+                            f"unallocated {unallocated}, capping proportionally"
+                        )
+                        if total_delta > 0:
+                            scale = unallocated / total_delta
+                            delta_allocations = {
+                                bot_id: delta * scale
+                                for bot_id, delta in delta_allocations.items()
+                            }
+
                     # Execute atomically with potential rollback
                     tx = await self._atomic_allocator.execute_atomic(
                         planned_allocations=delta_allocations,
