@@ -976,6 +976,8 @@ class RSIGridBot(BaseBot):
                 quantity=quantity,
                 error=e,
             )
+        finally:
+            self.release_risk_gate()
 
         return False
 

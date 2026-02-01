@@ -1649,6 +1649,8 @@ class SupertrendBot(BaseBot):
                 error=e,
             )
             return False
+        finally:
+            self.release_risk_gate()
 
     def _check_trailing_stop(self, current_price: Decimal) -> bool:
         """
