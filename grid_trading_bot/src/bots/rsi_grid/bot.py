@@ -686,6 +686,7 @@ class RSIGridBot(BaseBot):
             logger.warning(f"Trading paused due to risk limits")
             return False
 
+        order_key = None
         try:
             # Validate price before calculation (indicator boundary check)
             if not self._validate_price(price, "entry_price"):
@@ -831,9 +832,6 @@ class RSIGridBot(BaseBot):
                 order_side=order_side,
                 order_quantity=quantity,
             )
-
-            # Clear pending order marker
-            self._clear_pending_order(order_key)
 
             if order:
                 order_id = str(getattr(order, "order_id", ""))
@@ -984,6 +982,8 @@ class RSIGridBot(BaseBot):
                 error=e,
             )
         finally:
+            if order_key:
+                self._clear_pending_order(order_key)
             self.release_risk_gate()
 
         return False
@@ -1399,8 +1399,14 @@ class RSIGridBot(BaseBot):
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
-                    exchange_qty = self._position.quantity
-                    exchange_side = self._position.side.value.upper() if self._position.side else None
+                    try:
+                        exchange_pos = await self._exchange.futures.get_position(self._config.symbol)
+                        exchange_qty = Decimal(str(abs(exchange_pos.quantity))) if exchange_pos and exchange_pos.quantity else Decimal("0")
+                        exchange_side = exchange_pos.side.upper() if exchange_pos and exchange_pos.side else None
+                    except Exception as pos_err:
+                        logger.warning(f"[{self._bot_id}] Failed to query exchange position for reconciliation: {pos_err}")
+                        exchange_qty = self._position.quantity
+                        exchange_side = self._position.side.value.upper() if self._position.side else None
                     recon_result = await self.reconcile_virtual_position(
                         symbol=self._config.symbol,
                         exchange_quantity=exchange_qty,
@@ -2104,6 +2110,13 @@ class RSIGridBot(BaseBot):
             bot._stats.total_trades = stats_data.get("total_trades", 0)
             bot._stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._stats.losing_trades = stats_data.get("losing_trades", 0)
+            bot._stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+            bot._stats.total_fees = Decimal(stats_data.get("total_fees", "0"))
+            bot._stats.long_trades = stats_data.get("long_trades", 0)
+            bot._stats.short_trades = stats_data.get("short_trades", 0)
+            bot._stats.grid_rebuilds = stats_data.get("grid_rebuilds", 0)
+            bot._stats.max_drawdown_pct = Decimal(stats_data.get("max_drawdown_pct", "0").rstrip("%"))
+            bot._stats._peak_equity = Decimal(stats_data.get("_peak_equity", str(bot._capital)))
 
             # Restore grid with level states
             grid_data = inner_state.get("grid")

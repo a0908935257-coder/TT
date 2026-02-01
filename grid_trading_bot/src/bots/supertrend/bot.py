@@ -1253,10 +1253,6 @@ class SupertrendBot(BaseBot):
 
             # === Entry Logic ===
 
-            # Decrement signal cooldown
-            if self._signal_cooldown > 0:
-                self._signal_cooldown -= 1
-
             # Volatility regime filter (v2: block entry if outside range)
             if not self._check_volatility_regime():
                 return
@@ -1356,6 +1352,10 @@ class SupertrendBot(BaseBot):
                     if success:
                         self._signal_cooldown = self._cooldown_bars
                         self._last_triggered_level = level_idx + 1
+
+            # Decrement signal cooldown (after entry logic to avoid off-by-one)
+            if self._signal_cooldown > 0:
+                self._signal_cooldown -= 1
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")
@@ -1902,6 +1902,13 @@ class SupertrendBot(BaseBot):
                 error=e,
             )
             await self._on_close_position_failure(self._config.symbol, e)
+            # Re-place stop loss to protect position after close failure
+            if self._position and self._config.use_exchange_stop_loss:
+                try:
+                    await self._place_stop_loss_order()
+                    logger.info("Re-placed stop loss after close position failure")
+                except Exception as sl_err:
+                    logger.error(f"Failed to re-place stop loss: {sl_err}")
 
     # =========================================================================
     # Risk Control (每日虧損限制 + 連續虧損保護)

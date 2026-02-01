@@ -1919,13 +1919,19 @@ class GridFuturesBot(BaseBot):
             "current_trend": self._current_trend,
             "signal_cooldown": self._signal_cooldown,
             "last_triggered_level": self._last_triggered_level,
+            "current_bar": self._current_bar,
+            "entry_bar": self._entry_bar,
             "stats": {
                 "total_trades": self._grid_stats.total_trades,
                 "winning_trades": self._grid_stats.winning_trades,
                 "losing_trades": self._grid_stats.losing_trades,
                 "total_pnl": str(self._grid_stats.total_pnl),
+                "total_fees": str(self._grid_stats.total_fees),
+                "long_trades": self._grid_stats.long_trades,
+                "short_trades": self._grid_stats.short_trades,
                 "max_drawdown_pct": str(self._grid_stats.max_drawdown_pct),
                 "grid_rebuilds": self._grid_stats.grid_rebuilds,
+                "_peak_equity": str(self._grid_stats._peak_equity),
             },
         }
 
@@ -2101,6 +2107,8 @@ class GridFuturesBot(BaseBot):
             bot._current_trend = inner_state.get("current_trend", 0)
             bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
             bot._last_triggered_level = inner_state.get("last_triggered_level")
+            bot._current_bar = inner_state.get("current_bar", 0)
+            bot._entry_bar = inner_state.get("entry_bar", 0)
 
             # Restore stats
             stats_data = inner_state.get("stats", {})
@@ -2108,8 +2116,12 @@ class GridFuturesBot(BaseBot):
             bot._grid_stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._grid_stats.losing_trades = stats_data.get("losing_trades", 0)
             bot._grid_stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+            bot._grid_stats.total_fees = Decimal(stats_data.get("total_fees", "0"))
+            bot._grid_stats.long_trades = stats_data.get("long_trades", 0)
+            bot._grid_stats.short_trades = stats_data.get("short_trades", 0)
             bot._grid_stats.max_drawdown_pct = Decimal(stats_data.get("max_drawdown_pct", "0"))
             bot._grid_stats.grid_rebuilds = stats_data.get("grid_rebuilds", 0)
+            bot._grid_stats._peak_equity = Decimal(stats_data.get("_peak_equity", str(bot._capital)))
 
             # Restore grid with level states
             grid_data = inner_state.get("grid")

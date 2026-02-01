@@ -546,4 +546,5 @@ class BollingerBotStats:
             "avg_loss": str(self.avg_loss),
             "grid_rebuilds": self.grid_rebuilds,
             "max_drawdown_pct": f"{self.max_drawdown_pct:.2f}%",
+            "_peak_equity": str(self._peak_equity),
         }

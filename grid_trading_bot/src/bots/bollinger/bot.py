@@ -853,6 +853,7 @@ class BollingerBot(BaseBot):
                             self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
                             self._last_triggered_level = level.index
+                        return  # Skip cooldown decrement on successful entry
                     break
 
             # Bearish trend: SHORT only (sell rallies)
@@ -869,6 +870,7 @@ class BollingerBot(BaseBot):
                             self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
                             self._last_triggered_level = level.index
+                        return  # Skip cooldown decrement on successful entry
                     break
 
         # Decrement signal cooldown (after entry logic to avoid off-by-one)
@@ -995,6 +997,8 @@ class BollingerBot(BaseBot):
         grid_level_index: int,
     ) -> bool:
         """Open a new position."""
+        order_side = "BUY" if side == PositionSide.LONG else "SELL"
+        quantity = Decimal("0")
         try:
             # Stage 6: Close old position if reversing direction
             if self._position and self._position.side != side:
@@ -1516,6 +1520,8 @@ class BollingerBot(BaseBot):
             "current_sma": str(self._current_sma) if self._current_sma else None,
             "signal_cooldown": self._signal_cooldown,
             "last_triggered_level": self._last_triggered_level,
+            "current_bar": self._current_bar,
+            "entry_bar": self._entry_bar,
             "stats": self._stats.to_dict(),
         }
 
@@ -1685,6 +1691,8 @@ class BollingerBot(BaseBot):
                 bot._current_sma = Decimal(inner_state["current_sma"])
             bot._signal_cooldown = inner_state.get("signal_cooldown", 0)
             bot._last_triggered_level = inner_state.get("last_triggered_level")
+            bot._current_bar = inner_state.get("current_bar", 0)
+            bot._entry_bar = inner_state.get("entry_bar", 0)
 
             # Restore stats
             stats_data = inner_state.get("stats", {})
@@ -1692,6 +1700,12 @@ class BollingerBot(BaseBot):
             bot._stats.winning_trades = stats_data.get("winning_trades", 0)
             bot._stats.losing_trades = stats_data.get("losing_trades", 0)
             bot._stats.total_pnl = Decimal(stats_data.get("total_pnl", "0"))
+            bot._stats.total_fees = Decimal(stats_data.get("total_fees", "0"))
+            bot._stats.long_trades = stats_data.get("long_trades", 0)
+            bot._stats.short_trades = stats_data.get("short_trades", 0)
+            bot._stats.grid_rebuilds = stats_data.get("grid_rebuilds", 0)
+            bot._stats.max_drawdown_pct = Decimal(stats_data.get("max_drawdown_pct", "0").rstrip("%"))
+            bot._stats._peak_equity = Decimal(stats_data.get("_peak_equity", str(bot._capital)))
 
             # Restore grid with level states
             grid_data = inner_state.get("grid")

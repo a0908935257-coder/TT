@@ -500,6 +500,7 @@ class RSIGridStats:
             "profit_factor": f"{self.profit_factor:.2f}",
             "grid_rebuilds": self.grid_rebuilds,
             "max_drawdown_pct": f"{self.max_drawdown_pct:.1f}%",
+            "_peak_equity": str(self._peak_equity),
             "zone_distribution": {
                 "oversold": self.oversold_entries,
                 "neutral": self.neutral_entries,

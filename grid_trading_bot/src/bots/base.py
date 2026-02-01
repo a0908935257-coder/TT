@@ -6559,8 +6559,10 @@ class BaseBot(ABC):
                 pos["side"] = "LONG"
             else:
                 # Reducing short position (BUY to close SHORT)
-                realized = (pos["avg_entry_price"] - price) * min(quantity, current_qty)
-                pos["realized_pnl"] += realized - fee
+                close_qty = min(quantity, current_qty)
+                close_fee = fee * close_qty / quantity if quantity > 0 else fee
+                realized = (pos["avg_entry_price"] - price) * close_qty
+                pos["realized_pnl"] += realized - close_fee
                 pos["quantity"] = current_qty - quantity
                 if pos["quantity"] <= 0:
                     if pos["quantity"] < 0:
@@ -6582,8 +6584,10 @@ class BaseBot(ABC):
                 pos["side"] = "SHORT"
             else:
                 # Reducing long position (SELL to close LONG)
-                realized = (price - pos["avg_entry_price"]) * min(quantity, current_qty)
-                pos["realized_pnl"] += realized - fee
+                close_qty = min(quantity, current_qty)
+                close_fee = fee * close_qty / quantity if quantity > 0 else fee
+                realized = (price - pos["avg_entry_price"]) * close_qty
+                pos["realized_pnl"] += realized - close_fee
                 pos["quantity"] = current_qty - quantity
                 if pos["quantity"] <= 0:
                     if pos["quantity"] < 0:
