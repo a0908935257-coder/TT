@@ -414,9 +414,8 @@ async def main():
             slippage_pct=Decimal("0.0005"),   # 0.05%
         ).with_leverage(args.leverage)
 
-        # NEUTRAL 網格策略需要多持倉支援
-        if args.strategy in ("bollinger_neutral", "grid_futures"):
-            # 從策略配置取得 grid_count 作為 max_positions
+        # 多持倉支援（僅 grid_futures 需要）
+        if args.strategy == "grid_futures":
             grid_count = getattr(strategy, '_config', None)
             if grid_count:
                 grid_count = getattr(grid_count, 'grid_count', 12)
