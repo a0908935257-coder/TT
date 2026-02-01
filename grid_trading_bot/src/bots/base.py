@@ -13,7 +13,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -1799,8 +1799,15 @@ class BaseBot(ABC):
         """
         try:
             # Create snapshot with metadata
+            import hashlib
+            import json
             snapshot = self._create_state_snapshot()
             snapshot["state"].update(state_data)
+
+            # Recompute checksum after mutation
+            snapshot_no_checksum = {k: v for k, v in snapshot.items() if k != "checksum"}
+            state_json = json.dumps(snapshot_no_checksum, sort_keys=True, default=str)
+            snapshot["checksum"] = hashlib.md5(state_json.encode()).hexdigest()
 
             # Perform save
             await save_func(snapshot)
@@ -1946,7 +1953,10 @@ class BaseBot(ABC):
             while self._state == BotState.RUNNING:
                 await asyncio.sleep(self.POSITION_RECONCILIATION_INTERVAL)
                 if self._state == BotState.RUNNING:
-                    await self._reconcile_position()
+                    try:
+                        await self._reconcile_position()
+                    except Exception as e:
+                        logger.warning(f"[{self._bot_id}] Position reconciliation error: {e}")
 
         self._reconciliation_task = asyncio.create_task(reconciliation_loop())
         logger.debug(f"[{self._bot_id}] Position reconciliation started")
@@ -6534,6 +6544,7 @@ class BaseBot(ABC):
         # Calculate position change
         current_qty = pos["quantity"]
         current_side = pos["side"]
+        realized = None  # Set when a closing trade calculates realized PnL
 
         if side == "BUY":
             if current_side is None or current_side == "LONG" or current_qty == 0:
@@ -6583,8 +6594,8 @@ class BaseBot(ABC):
 
         # Update strategy risk tracking
         if fill_record["is_reduce_only"] or (side == "SELL" and current_side == "LONG") or (side == "BUY" and current_side == "SHORT"):
-            # This was a closing trade
-            if "realized" in dir():
+            # This was a closing trade - realized is defined in the closing branches above
+            if realized is not None:
                 self.update_strategy_capital(realized_pnl=realized - fee)
 
         logger.debug(
@@ -9960,7 +9971,9 @@ class BaseBot(ABC):
                 new_stop_price = current_entry_price * (Decimal("1") + current_stop_loss_pct)
                 close_side = "BUY"
 
-            new_stop_price = new_stop_price.quantize(Decimal("0.1"))
+            # Use symbol tick size for price precision (fallback to 0.1 for BTCUSDT-like)
+            tick_size = getattr(self, '_tick_size', Decimal("0.1"))
+            new_stop_price = new_stop_price.quantize(tick_size)
 
             # Place new stop loss
             new_order = await self._exchange.futures_create_order(
@@ -10181,11 +10194,11 @@ class BaseBot(ABC):
                 positions = await self._exchange.futures.get_positions()
 
             for pos in positions:
-                if pos.quantity <= 0:
+                if pos.quantity == 0 or abs(pos.quantity) == Decimal("0"):
                     continue
 
                 try:
-                    # Determine close side
+                    # Determine close side (handle negative qty for shorts)
                     close_side = "SELL" if pos.side.value.upper() == "LONG" else "BUY"
                     pos_symbol = getattr(pos, "symbol", symbol)
 

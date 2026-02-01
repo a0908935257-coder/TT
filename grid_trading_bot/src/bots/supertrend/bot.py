@@ -140,11 +140,11 @@ class SupertrendBot(BaseBot):
 
         # Hysteresis: track last triggered level to prevent oscillation
         self._last_triggered_level: Optional[int] = None
-        self._hysteresis_pct: Decimal = Decimal("0.002")  # 0.2% buffer zone
+        self._hysteresis_pct: Decimal = self._config.hysteresis_pct
 
         # Signal cooldown to prevent signal stacking
         self._signal_cooldown: int = 0
-        self._cooldown_bars: int = 2
+        self._cooldown_bars: int = self._config.cooldown_bars
 
         # Volatility filter state (v2)
         self._atr_history: list[Decimal] = []
@@ -392,9 +392,11 @@ class SupertrendBot(BaseBot):
         """
         logger.info("Resuming Supertrend Bot...")
 
-        # Re-subscribe to kline updates (create new callback)
+        # Re-subscribe to kline updates (create new callback with task tracking)
         def on_kline_sync(kline: Kline) -> None:
-            asyncio.create_task(self._on_kline(kline))
+            task = asyncio.create_task(self._on_kline(kline))
+            self._kline_tasks.add(task)
+            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
 
         self._kline_callback = on_kline_sync
         await self._data_manager.klines.subscribe_kline(
@@ -1961,6 +1963,9 @@ class SupertrendBot(BaseBot):
         """
         previous = self._config.max_capital
 
+        # Update config with new capital
+        self._config.max_capital = new_max_capital
+
         logger.info(
             f"[FundManager] Capital updated for {self._bot_id}: "
             f"{previous} -> {new_max_capital}"
@@ -2215,9 +2220,9 @@ class SupertrendBot(BaseBot):
                 )
                 # Restore max/min price for trailing stop
                 if position_data.get("max_price"):
-                    bot._position.max_price = Decimal(position_data["max_price"])
+                    bot._position.highest_price = Decimal(position_data["max_price"])
                 if position_data.get("min_price"):
-                    bot._position.min_price = Decimal(position_data["min_price"])
+                    bot._position.lowest_price = Decimal(position_data["min_price"])
 
             # Verify position sync with exchange
             try:

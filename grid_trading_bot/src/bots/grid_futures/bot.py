@@ -1362,7 +1362,7 @@ class GridFuturesBot(BaseBot):
                         level.state = GridLevelState.EMPTY
 
                 # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
-                if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
+                elif level.state == GridLevelState.EMPTY and kline_high >= grid_price:
                     # Check signal cooldown to prevent signal stacking (if enabled)
                     if self._config.use_signal_cooldown and self._signal_cooldown > 0:
                         logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")
@@ -2055,7 +2055,7 @@ class GridFuturesBot(BaseBot):
                 symbol=config_data.get("symbol", ""),
                 grid_count=config_data.get("grid_count", 10),
                 leverage=config_data.get("leverage", 2),
-                direction=GridDirection(config_data.get("direction", "both")),
+                direction=GridDirection(config_data.get("direction", "neutral")),
                 trend_period=config_data.get("trend_period", 20),
                 atr_multiplier=Decimal(config_data.get("atr_multiplier", "3.0")),
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
@@ -2117,7 +2117,6 @@ class GridFuturesBot(BaseBot):
                     lower_price=lower,
                     grid_spacing=grid_spacing,
                     levels=levels,
-                    grid_count=grid_count,
                     version=grid_data.get("version", 1),
                 )
 

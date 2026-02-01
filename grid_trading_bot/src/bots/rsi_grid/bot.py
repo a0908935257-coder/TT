@@ -348,9 +348,11 @@ class RSIGridBot(BaseBot):
         """Resume the bot."""
         logger.info("Resuming RSI-Grid Bot")
 
-        # Re-subscribe to kline updates
+        # Re-subscribe to kline updates (with task tracking)
         def on_kline_sync(kline: Kline) -> None:
-            asyncio.create_task(self._on_kline(kline))
+            task = asyncio.create_task(self._on_kline(kline))
+            self._kline_tasks.add(task)
+            task.add_done_callback(lambda t: self._kline_tasks.discard(t))
 
         self._kline_callback = on_kline_sync
         await self._data_manager.klines.subscribe_kline(
@@ -1648,9 +1650,6 @@ class RSIGridBot(BaseBot):
                 if not self._check_hysteresis(entry_level.index, "long", entry_level.price, current_price):
                     pass
                 else:
-                    entry_level.state = GridLevelState.LONG_FILLED
-                    entry_level.filled_at = datetime.now(timezone.utc)
-
                     success = await self._open_position(
                         side=PositionSide.LONG,
                         price=entry_level.price,
@@ -1659,6 +1658,8 @@ class RSIGridBot(BaseBot):
                         grid_level=entry_level.index,
                     )
                     if success:
+                        entry_level.state = GridLevelState.LONG_FILLED
+                        entry_level.filled_at = datetime.now(timezone.utc)
                         if self._config.use_signal_cooldown:
                             self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
@@ -1673,9 +1674,6 @@ class RSIGridBot(BaseBot):
                 if not self._check_hysteresis(entry_level.index, "short", entry_level.price, current_price):
                     pass
                 else:
-                    entry_level.state = GridLevelState.SHORT_FILLED
-                    entry_level.filled_at = datetime.now(timezone.utc)
-
                     success = await self._open_position(
                         side=PositionSide.SHORT,
                         price=entry_level.price,
@@ -1684,6 +1682,8 @@ class RSIGridBot(BaseBot):
                         grid_level=entry_level.index,
                     )
                     if success:
+                        entry_level.state = GridLevelState.SHORT_FILLED
+                        entry_level.filled_at = datetime.now(timezone.utc)
                         if self._config.use_signal_cooldown:
                             self._signal_cooldown = self._cooldown_bars
                         if self._config.use_hysteresis:
