@@ -347,6 +347,9 @@ class BollingerBot(BaseBot):
         # Restart background monitor
         self._monitor_task = asyncio.create_task(self._background_monitor())
 
+        # Restart periodic state save task
+        self._start_save_task()
+
         logger.info("Bollinger BB_TREND_GRID Bot resumed")
 
     def _get_extra_status(self) -> Dict[str, Any]:

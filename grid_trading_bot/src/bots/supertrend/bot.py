@@ -465,7 +465,21 @@ class SupertrendBot(BaseBot):
                             partial=True,
                         )
                         if cb_result["triggered"]:
-                            self._position = None
+                            # Verify exchange position is actually closed before clearing local state
+                            try:
+                                positions = await self._exchange.futures.get_positions(self._config.symbol)
+                                has_position = any(
+                                    p.quantity != 0 for p in positions
+                                    if p.symbol == self._config.symbol
+                                )
+                                if not has_position:
+                                    self._position = None
+                                else:
+                                    logger.warning(
+                                        f"[{self._bot_id}] Circuit breaker triggered but position still on exchange - keeping local state"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"[{self._bot_id}] Failed to verify position after circuit breaker: {e}")
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
@@ -1358,7 +1372,7 @@ class SupertrendBot(BaseBot):
         entry_allowed, entry_reason = self.check_entry_allowed()
         if not entry_allowed:
             logger.warning(f"Entry blocked: {entry_reason}")
-            return
+            return False
 
         # Check risk limits before opening
         if self._check_risk_limits():

@@ -1479,7 +1479,7 @@ class GridFuturesBot(BaseBot):
         else:
             stop_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
         # Round to tick size
-        return stop_price.quantize(Decimal("0.1"))
+        return stop_price.quantize(getattr(self, '_tick_size', Decimal("0.1")))
 
     async def _place_stop_loss_order(self) -> None:
         """Place stop loss order on exchange using Algo Order API."""
@@ -1652,7 +1652,21 @@ class GridFuturesBot(BaseBot):
                             partial=True,  # Only affect this strategy
                         )
                         if cb_result["triggered"]:
-                            self._position = None  # Clear local position state
+                            # Verify exchange position is actually closed before clearing local state
+                            try:
+                                positions = await self._exchange.futures.get_positions(self._config.symbol)
+                                has_position = any(
+                                    p.quantity != 0 for p in positions
+                                    if p.symbol == self._config.symbol
+                                )
+                                if not has_position:
+                                    self._position = None
+                                else:
+                                    logger.warning(
+                                        f"[{self._bot_id}] Circuit breaker triggered but position still on exchange - keeping local state"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"[{self._bot_id}] Failed to verify position after circuit breaker: {e}")
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
