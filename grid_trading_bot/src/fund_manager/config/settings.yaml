@@ -171,6 +171,8 @@ bots:
       # RSI Parameters (Optuna 優化)
       rsi_period: 5
       rsi_block_threshold: 0.9
+      oversold_level: 33
+      overbought_level: 66
 
       # Grid Parameters (Optuna 優化)
       grid_count: 8
@@ -184,8 +186,7 @@ bots:
 
       # Trailing Stop (Optuna: 啟用)
       use_trailing_stop: true
-      trailing_activate_pct: 0.01
-      trailing_distance_pct: 0.003
+      trailing_stop_pct: 0.01
 
       # Volatility Regime Filter (Optuna 優化)
       use_volatility_filter: true

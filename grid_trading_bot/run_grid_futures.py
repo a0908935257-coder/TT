@@ -116,6 +116,8 @@ def get_config_from_env() -> GridFuturesConfig:
         hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.001))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', True)),
         cooldown_bars=int(params.get('cooldown_bars', 0)),
+        max_hold_bars=int(params.get('max_hold_bars', 0)),
+        use_exchange_stop_loss=bool(params.get('use_exchange_stop_loss', True)),
     )
 
 

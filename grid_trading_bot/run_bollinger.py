@@ -114,6 +114,8 @@ def get_config_from_env() -> BollingerConfig:
         hysteresis_pct=Decimal(str(params.get('hysteresis_pct', 0.0015))),
         use_signal_cooldown=bool(params.get('use_signal_cooldown', False)),
         cooldown_bars=int(params.get('cooldown_bars', 6)),
+        use_exchange_stop_loss=bool(params.get('use_exchange_stop_loss', True)),
+        max_hold_bars=int(params.get('max_hold_bars', 0)),
     )
 
 
