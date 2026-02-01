@@ -329,9 +329,9 @@ class RSIGridPosition:
             current_price = Decimal(str(current_price))
 
         if self.side == PositionSide.LONG:
-            return self.quantity * (current_price - self.entry_price) * Decimal(self.leverage)
+            return self.quantity * (current_price - self.entry_price)
         elif self.side == PositionSide.SHORT:
-            return self.quantity * (self.entry_price - current_price) * Decimal(self.leverage)
+            return self.quantity * (self.entry_price - current_price)
         return Decimal("0")
 
     def calculate_pnl_pct(self, current_price: Decimal) -> Decimal:
