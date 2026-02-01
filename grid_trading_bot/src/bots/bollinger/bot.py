@@ -626,7 +626,18 @@ class BollingerBot(BaseBot):
                             partial=True,
                         )
                         if cb_result["triggered"]:
-                            self._position = None
+                            # Verify position actually closed on exchange before clearing local state
+                            try:
+                                positions = await self._exchange.futures.get_positions(self._config.symbol)
+                                has_position = any(p.quantity != 0 for p in positions if p.symbol == self._config.symbol)
+                                if not has_position:
+                                    self._position = None
+                                else:
+                                    logger.warning("Circuit breaker triggered but position still on exchange - keeping local state")
+                            except Exception as e:
+                                logger.warning(f"Failed to verify position after circuit breaker: {e}")
+                                # Conservative: don't clear position if we can't verify
+                                pass
 
                 # Reconcile virtual position with exchange (drift detection)
                 if self._position:
