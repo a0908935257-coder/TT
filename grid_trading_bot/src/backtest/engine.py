@@ -357,7 +357,7 @@ class BacktestEngine:
                 if self._config.max_notional > 0 and notional > self._config.max_notional:
                     notional = self._config.max_notional
                 # Check margin required (notional / leverage) vs available
-                margin_needed = notional / Decimal(self._config.leverage)
+                margin_needed = notional
                 if margin_needed > available:
                     return
                 # Temporarily override notional for this trade
@@ -413,16 +413,12 @@ class BacktestEngine:
         self, kline: Kline, bar_idx: int, exit_reason: ExitReason
     ) -> None:
         """Close all open positions."""
-        # Calculate effective fee rate (leverage-adjusted for futures)
-        effective_fee_rate = self._config.fee_rate
-        if self._config.use_margin and self._config.leverage > 1:
-            effective_fee_rate = effective_fee_rate * Decimal(self._config.leverage)
-
+        # Fee rate on actual notional (quantity already includes leverage)
         trades = self._position_manager.close_all_positions(
             exit_price=kline.close,
             exit_time=kline.close_time,
             exit_bar=bar_idx,
-            fee_rate=effective_fee_rate,
+            fee_rate=self._config.fee_rate,
             exit_reason=exit_reason,
             leverage=self._config.leverage,
         )
@@ -477,9 +473,9 @@ class BacktestEngine:
                 triggered = True
 
             if triggered:
-                # Liquidation fee on notional × leverage
-                liq_fee = position.notional * Decimal(self._config.leverage) * self._config.liquidation_fee_pct
-                exit_fee = liq_fee + liq_price * position.quantity * self._config.fee_rate * Decimal(self._config.leverage)
+                # Liquidation fee on notional (already includes leverage via quantity)
+                liq_fee = position.notional * self._config.liquidation_fee_pct
+                exit_fee = liq_fee + liq_price * position.quantity * self._config.fee_rate
 
                 trade = self._position_manager.close_position(
                     position=position,
@@ -519,7 +515,6 @@ class BacktestEngine:
                 # Negative rate: longs receive, shorts pay
                 base_funding = (
                     position.notional
-                    * Decimal(self._config.leverage)
                     * self._config.funding_rate
                     * Decimal(funding_periods)
                 )

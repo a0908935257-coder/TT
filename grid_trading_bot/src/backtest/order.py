@@ -659,7 +659,8 @@ class OrderSimulator:
             return Decimal("0")
         notional = getattr(self, '_override_notional', None) or self._config.notional_per_trade
         self._override_notional = None  # Reset after use
-        return notional / price
+        leverage = self._config.leverage if self._config.use_margin else 1
+        return notional * Decimal(leverage) / price
 
     def calculate_fee(
         self,
@@ -683,9 +684,7 @@ class OrderSimulator:
             cumulative_volume=self._cumulative_volume,
         )
         fee = self._fee_calculator.calculate_fee(price, quantity, context)
-        # Binance charges fees on leveraged notional (qty × price × leverage)
-        if self._config.use_margin and self._config.leverage > 1:
-            fee = fee * Decimal(self._config.leverage)
+        # quantity already includes leverage, so fee on qty × price is correct
         return fee
 
     def create_position(

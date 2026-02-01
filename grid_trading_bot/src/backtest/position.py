@@ -91,7 +91,7 @@ class Position:
             pnl = (current_price - self.entry_price) * self.quantity
         else:
             pnl = (self.entry_price - current_price) * self.quantity
-        return pnl * Decimal(leverage)
+        return pnl
 
     def unrealized_pnl_pct(self, current_price: Decimal, leverage: int = 1) -> Decimal:
         """Calculate unrealized P&L percentage."""
@@ -101,7 +101,7 @@ class Position:
             pct = (current_price - self.entry_price) / self.entry_price
         else:
             pct = (self.entry_price - current_price) / self.entry_price
-        return pct * Decimal(leverage) * Decimal("100")
+        return pct * Decimal("100")
 
 
 class PositionManager:
@@ -204,10 +204,9 @@ class PositionManager:
         else:
             gross_pnl = (position.entry_price - exit_price) * position.quantity
 
-        # Apply leverage to gross PnL (consistent with unrealized_pnl)
-        gross_pnl = gross_pnl * Decimal(leverage)
+        # quantity already includes leverage, so gross_pnl is correct as-is
 
-        # Deduct fees (fees are paid on actual traded value, not leveraged)
+        # Deduct fees
         total_fees = position.entry_fee + exit_fee
         net_pnl = gross_pnl - total_fees
 
