@@ -323,7 +323,7 @@ class BacktestEngine:
             if not self._position_manager.can_open_position:
                 return
 
-            # Use current equity for position sizing (equity-based sizing)
+            # Use current equity for position sizing
             if self._config.use_margin:
                 current_equity = self._position_manager.total_equity(
                     kline.close, self._config.initial_capital, self._config.leverage
@@ -334,7 +334,15 @@ class BacktestEngine:
                 available = self._position_manager.available_margin(
                     kline.close, self._config.initial_capital, self._config.leverage
                 )
-                notional = current_equity * self._config.position_size_pct
+                # Position sizing: compound (equity-based) or fixed (initial capital)
+                if self._config.compound_sizing:
+                    base = current_equity
+                else:
+                    base = self._config.initial_capital
+                notional = base * self._config.position_size_pct
+                # Apply max_notional cap
+                if self._config.max_notional > 0 and notional > self._config.max_notional:
+                    notional = self._config.max_notional
                 # Check margin required (notional / leverage) vs available
                 margin_needed = notional / Decimal(self._config.leverage)
                 if margin_needed > available:

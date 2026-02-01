@@ -79,10 +79,14 @@ class BacktestConfig:
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))  # 0.04%
     slippage_pct: Decimal = field(default_factory=lambda: Decimal("0"))
     leverage: int = 1
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10%
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 2% of equity
     max_positions: int = 1
     allow_pyramiding: bool = False
     use_margin: bool = False
+
+    # Position sizing limits
+    max_notional: Decimal = field(default_factory=lambda: Decimal("0"))  # 0 = unlimited
+    compound_sizing: bool = False  # False = fixed sizing based on initial_capital
 
     # Margin / liquidation settings (futures)
     maintenance_margin_pct: Decimal = field(default_factory=lambda: Decimal("0.004"))  # 0.4%
@@ -125,6 +129,8 @@ class BacktestConfig:
             raise ValueError("leverage must be at least 1")
         if not (Decimal("0") < self.position_size_pct <= Decimal("1")):
             raise ValueError("position_size_pct must be between 0 and 1")
+        if self.max_notional < 0:
+            raise ValueError("max_notional cannot be negative")
         if self.max_positions < 1:
             raise ValueError("max_positions must be at least 1")
 
