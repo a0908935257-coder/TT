@@ -1934,6 +1934,8 @@ class GridFuturesBot(BaseBot):
                 "entry_time": self._position.entry_time.isoformat() if self._position.entry_time else None,
                 "stop_loss_order_id": self._position.stop_loss_order_id,
                 "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "highest_price": str(self._position.highest_price),
+                "lowest_price": str(self._position.lowest_price),
             }
 
         return state_data
@@ -2135,6 +2137,8 @@ class GridFuturesBot(BaseBot):
                     entry_time=datetime.fromisoformat(position_data["entry_time"]) if position_data.get("entry_time") else None,
                     stop_loss_order_id=position_data.get("stop_loss_order_id"),
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
+                    highest_price=Decimal(position_data.get("highest_price", position_data["entry_price"])),
+                    lowest_price=Decimal(position_data.get("lowest_price", position_data["entry_price"])),
                 )
 
             # Verify position sync with exchange before returning

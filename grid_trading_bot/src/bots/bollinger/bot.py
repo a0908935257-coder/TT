@@ -1537,6 +1537,8 @@ class BollingerBot(BaseBot):
                 "take_profit_price": str(self._position.take_profit_price) if self._position.take_profit_price else None,
                 "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
                 "stop_loss_order_id": self._position.stop_loss_order_id,
+                "highest_price": str(self._position.highest_price),
+                "lowest_price": str(self._position.lowest_price),
             }
 
         return state_data
@@ -1731,6 +1733,8 @@ class BollingerBot(BaseBot):
                     take_profit_price=Decimal(position_data["take_profit_price"]) if position_data.get("take_profit_price") else None,
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
                     stop_loss_order_id=position_data.get("stop_loss_order_id"),
+                    highest_price=Decimal(position_data.get("highest_price", position_data["entry_price"])),
+                    lowest_price=Decimal(position_data.get("lowest_price", position_data["entry_price"])),
                 )
 
             # Verify position sync with exchange

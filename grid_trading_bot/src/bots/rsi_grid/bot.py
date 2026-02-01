@@ -1936,6 +1936,8 @@ class RSIGridBot(BaseBot):
                 "entry_bar": self._position.entry_bar,
                 "stop_loss_order_id": self._position.stop_loss_order_id,
                 "stop_loss_price": str(self._position.stop_loss_price) if self._position.stop_loss_price else None,
+                "highest_price": str(self._position.highest_price),
+                "lowest_price": str(self._position.lowest_price),
             }
 
         return state_data
@@ -2134,6 +2136,8 @@ class RSIGridBot(BaseBot):
                     entry_bar=position_data.get("entry_bar", 0),
                     stop_loss_order_id=position_data.get("stop_loss_order_id"),
                     stop_loss_price=Decimal(position_data["stop_loss_price"]) if position_data.get("stop_loss_price") else None,
+                    highest_price=Decimal(position_data.get("highest_price", position_data["entry_price"])),
+                    lowest_price=Decimal(position_data.get("lowest_price", position_data["entry_price"])),
                 )
 
             # Verify position sync with exchange
