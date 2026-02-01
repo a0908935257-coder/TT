@@ -122,6 +122,9 @@ class FundManagerConfig:
     auto_dispatch: bool = True
     strategy: AllocationStrategy = AllocationStrategy.FIXED_RATIO
     allocations: List[BotAllocation] = field(default_factory=list)
+    rebalance_frequency: str = "never"
+    rebalance_day: int = 0
+    rebalance_hour: int = 0
 
     def __post_init__(self) -> None:
         """Convert values to proper types."""
@@ -177,6 +180,9 @@ class FundManagerConfig:
             auto_dispatch=data.get("auto_dispatch", True),
             strategy=AllocationStrategy(data.get("strategy", "fixed_ratio")),
             allocations=allocations,
+            rebalance_frequency=data.get("rebalance_frequency", "never"),
+            rebalance_day=data.get("rebalance_day", 0),
+            rebalance_hour=data.get("rebalance_hour", 0),
         )
 
     @classmethod
@@ -222,6 +228,9 @@ class FundManagerConfig:
             "auto_dispatch": strategy_section.get("auto_dispatch", True),
             "strategy": strategy_section.get("type", "fixed_ratio"),
             "allocations": allocations,
+            "rebalance_frequency": system.get("rebalance_frequency", "never"),
+            "rebalance_day": system.get("rebalance_day", 0),
+            "rebalance_hour": system.get("rebalance_hour", 0),
         }
 
         return cls.from_dict(flat_dict)

@@ -6,8 +6,10 @@ Thread-safe with asyncio.Lock for concurrent access protection.
 """
 
 import asyncio
+import sqlite3
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 
 from src.core import get_logger
@@ -46,6 +48,7 @@ class FundPool:
         exchange: Optional[ExchangeProtocol] = None,
         config: Optional[FundManagerConfig] = None,
         market_type: MarketType = MarketType.FUTURES,
+        db_path: Optional[str] = None,
     ):
         """
         Initialize FundPool.
@@ -54,10 +57,12 @@ class FundPool:
             exchange: Exchange client for fetching account data
             config: Fund manager configuration
             market_type: Market type to monitor (SPOT or FUTURES)
+            db_path: Path to SQLite database for allocation persistence
         """
         self._exchange = exchange
         self._config = config or FundManagerConfig()
         self._market_type = market_type
+        self._db_path = db_path
 
         # =======================================================================
         # Thread Safety: Allocation Lock
@@ -80,6 +85,11 @@ class FundPool:
         # Deposit detection
         self._last_deposit_amount: Decimal = Decimal("0")
         self._deposit_detected: bool = False
+
+        # Initialize persistence and restore state
+        if self._db_path:
+            self._init_db()
+            self._restore_allocations()
 
     # =========================================================================
     # Properties
@@ -341,6 +351,7 @@ class FundPool:
             self._allocations.pop(bot_id, None)
         else:
             self._allocations[bot_id] = amount
+        self._persist_allocation(bot_id, amount)
         logger.debug(f"Allocation set for {bot_id}: {amount}")
 
     async def set_allocation_async(self, bot_id: str, amount: Decimal) -> None:
@@ -361,6 +372,8 @@ class FundPool:
     def add_allocation(self, bot_id: str, amount: Decimal) -> Decimal:
         """
         Add to existing allocation for a bot (sync version).
+
+        Persists updated allocation to database if configured.
 
         Note: For thread-safe access, use add_allocation_async() or call
         within allocation_lock context.
@@ -408,11 +421,16 @@ class FundPool:
         Returns:
             Previous allocation amount
         """
-        return self._allocations.pop(bot_id, Decimal("0"))
+        amount = self._allocations.pop(bot_id, Decimal("0"))
+        self._persist_allocation(bot_id, Decimal("0"))
+        return amount
 
     def clear_allocations(self) -> None:
         """Clear all allocations."""
+        bot_ids = list(self._allocations.keys())
         self._allocations.clear()
+        for bot_id in bot_ids:
+            self._persist_allocation(bot_id, Decimal("0"))
         logger.info("All allocations cleared")
 
     # =========================================================================
@@ -593,6 +611,73 @@ class FundPool:
             )
             return True
         return False
+
+    # =========================================================================
+    # Persistence Methods
+    # =========================================================================
+
+    def _init_db(self) -> None:
+        """Initialize SQLite database for allocation persistence."""
+        if not self._db_path:
+            return
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS allocations ("
+                "  bot_id TEXT PRIMARY KEY,"
+                "  amount TEXT NOT NULL,"
+                "  updated_at TEXT NOT NULL"
+                ")"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _persist_allocation(self, bot_id: str, amount: Decimal) -> None:
+        """Persist a single allocation to SQLite."""
+        if not self._db_path:
+            return
+        try:
+            conn = sqlite3.connect(self._db_path)
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                if amount <= 0:
+                    conn.execute(
+                        "DELETE FROM allocations WHERE bot_id = ?", (bot_id,)
+                    )
+                else:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO allocations (bot_id, amount, updated_at) "
+                        "VALUES (?, ?, ?)",
+                        (bot_id, str(amount), now),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to persist allocation for {bot_id}: {e}")
+
+    def _restore_allocations(self) -> None:
+        """Restore allocations from SQLite on startup."""
+        if not self._db_path or not Path(self._db_path).exists():
+            return
+        try:
+            conn = sqlite3.connect(self._db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT bot_id, amount FROM allocations"
+                ).fetchall()
+                for bot_id, amount_str in rows:
+                    self._allocations[bot_id] = Decimal(amount_str)
+                if rows:
+                    logger.info(
+                        f"Restored {len(rows)} allocations from database"
+                    )
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Failed to restore allocations from DB: {e}")
 
     # =========================================================================
     # Status Methods

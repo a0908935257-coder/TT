@@ -258,8 +258,11 @@ class FundManager:
         """
         Background monitoring loop.
 
-        Periodically checks balance and dispatches funds on deposit.
+        Periodically checks balance, dispatches funds on deposit,
+        and triggers periodic rebalancing based on configuration.
         """
+        self._last_rebalance_time: Optional[datetime] = None
+
         while self._running:
             try:
                 await asyncio.sleep(self._config.poll_interval)
@@ -285,10 +288,51 @@ class FundManager:
                     if self._config.auto_dispatch:
                         await self.dispatch_funds(trigger="deposit")
 
+                # Check for periodic rebalance
+                if self._should_rebalance():
+                    logger.info("Periodic rebalance triggered")
+                    self._last_rebalance_time = datetime.now(timezone.utc)
+                    await self.dispatch_funds(trigger="rebalance")
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in monitor loop: {e}")
+
+    def _should_rebalance(self) -> bool:
+        """
+        Check if periodic rebalance should be triggered.
+
+        Reads rebalance_frequency, rebalance_day, rebalance_hour from config.
+
+        Returns:
+            True if rebalance should be triggered now
+        """
+        freq = self._config.rebalance_frequency
+        if freq == "never":
+            return False
+
+        now = datetime.now(timezone.utc)
+
+        # Check hour match
+        if now.hour != self._config.rebalance_hour:
+            return False
+
+        # Check day match for weekly
+        if freq == "weekly" and now.weekday() != self._config.rebalance_day:
+            return False
+
+        # Check day match for monthly (rebalance_day = day of month, 1-based)
+        if freq == "monthly" and now.day != (self._config.rebalance_day + 1):
+            return False
+
+        # Prevent multiple triggers within the same hour
+        if self._last_rebalance_time is not None:
+            elapsed = (now - self._last_rebalance_time).total_seconds()
+            if elapsed < 3600:
+                return False
+
+        return True
 
     # =========================================================================
     # Core Methods
@@ -317,6 +361,14 @@ class FundManager:
             async with asyncio.timeout(timeout_config.fund_allocation):
                 async with self._fund_pool.allocation_lock:
                     try:
+                        # Check exposure limit before dispatching
+                        if self._fund_pool.check_exposure_limit():
+                            msg = "Dispatch blocked: system exposure exceeds safety limit"
+                            logger.warning(msg)
+                            result.success = False
+                            result.errors.append(msg)
+                            return result
+
                         # Get active bots
                         bot_ids = self._get_active_bot_ids()
                         if not bot_ids:
