@@ -157,6 +157,9 @@ class ExchangeClient:
         # Request ID counter
         self._request_counter = 0
 
+        # Reconnect callbacks (called when WebSocket reconnects)
+        self._reconnect_callbacks: list[Callable] = []
+
         # Minimum delay between orders (ms) - helps with rate limiting
         self._min_order_interval_ms = 100
 
@@ -197,6 +200,21 @@ class ExchangeClient:
         """Check if client is connected."""
         return self._connected
 
+    def register_reconnect_callback(self, callback: Callable) -> None:
+        """Register a callback to be invoked when WebSocket reconnects."""
+        self._reconnect_callbacks.append(callback)
+
+    async def _on_ws_reconnect(self) -> None:
+        """Internal handler: fan-out reconnect event to all registered callbacks."""
+        logger.warning("WebSocket reconnected — triggering position resync for all registered callbacks")
+        for cb in self._reconnect_callbacks:
+            try:
+                result = cb()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                logger.error(f"Reconnect callback error: {e}")
+
     # =========================================================================
     # Lifecycle Management
     # =========================================================================
@@ -224,6 +242,7 @@ class ExchangeClient:
             self._futures_ws = BinanceWebSocket(
                 market_type=MarketType.FUTURES,
                 testnet=self._testnet,
+                on_reconnect=self._on_ws_reconnect,
             )
 
             # Connect WebSockets

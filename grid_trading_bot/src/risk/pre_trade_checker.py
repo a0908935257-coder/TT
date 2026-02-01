@@ -14,6 +14,7 @@ Checks performed:
 - Blacklist check
 """
 
+import asyncio
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -233,6 +234,9 @@ class PreTradeRiskChecker:
         self._market = market_provider
         self._circuit_breaker_check = circuit_breaker_check
 
+        # Lock for concurrent access from multiple bots
+        self._lock = asyncio.Lock()
+
         # Order frequency tracking
         self._order_timestamps: Deque[datetime] = deque(maxlen=1000)
         self._last_order_time: Optional[datetime] = None
@@ -328,6 +332,11 @@ class PreTradeRiskChecker:
             )
 
         return result
+
+    async def async_check(self, order: OrderRequest) -> PreTradeCheckResult:
+        """Thread-safe async version of check() with lock protection."""
+        async with self._lock:
+            return self.check(order)
 
     # =========================================================================
     # Individual Checks

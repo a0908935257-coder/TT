@@ -477,9 +477,11 @@ async def main():
         if hedge_ok:
             print("  ✓ 雙向持倉模式已啟用 (Hedge Mode)")
         else:
-            print("  ⚠️ 警告: 無法啟用雙向持倉模式")
-            print("     多機器人可能無法同時做多做空")
-            print("     請手動在 Binance Futures 設定中啟用「雙向持倉」")
+            raise RuntimeError(
+                "無法啟用雙向持倉模式 (Hedge Mode)。"
+                "多機器人同時做多做空需要雙向持倉，否則 Binance 會拒絕下單 (-4061)。"
+                "請手動在 Binance Futures 設定中啟用「雙向持倉」後重試。"
+            )
 
         # 2. Connect to data sources
         print("正在連接數據庫...")
@@ -532,6 +534,20 @@ async def main():
         # 7. Create and start bots
         print("\n正在創建機器人...")
         bot_ids = await create_and_start_bots(_master)
+
+        # 7.5. Register WebSocket reconnect callback to trigger position resync
+        async def _on_ws_reconnect():
+            """Trigger position reconciliation on all running bots after WS reconnect."""
+            for bot_info in _master.get_all_bots():
+                bot = bot_info.instance if hasattr(bot_info, 'instance') else None
+                if bot and hasattr(bot, '_reconcile_position'):
+                    try:
+                        await bot._reconcile_position()
+                    except Exception as e:
+                        logger.warning(f"Post-reconnect reconcile failed for {bot_info.bot_id}: {e}")
+
+        _exchange.register_reconnect_callback(_on_ws_reconnect)
+        print("  ✓ WebSocket 重連回調已註冊（自動同步持倉）")
 
         # 8. Dispatch initial funds to bots
         print("\n正在分配資金...")
