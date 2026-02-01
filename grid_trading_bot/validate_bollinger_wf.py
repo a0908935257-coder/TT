@@ -56,25 +56,25 @@ def load_klines(filepath: str) -> list[Kline]:
 def run_backtest(klines: list[Kline], leverage: int = 7, mode: str = "trend") -> dict:
     """執行回測並返回結果."""
     if mode == "neutral":
-        # BB_NEUTRAL_GRID 模式 - 優化後參數 (2026-02-01)
-        # WF v3: 9/9折獲利, 平均Sharpe 10.37, 平均報酬 +33.86%, 總交易 5000
+        # BB_NEUTRAL_GRID 模式 - WF v3 優化參數 (2026-01-31)
+        # bb_neutral_optimization_233751: 9/9折獲利, 平均Sharpe 13.10, 平均報酬 +370.8%
         config = BollingerStrategyConfig(
             mode=BollingerMode.BB_NEUTRAL_GRID,
-            bb_period=21,
+            bb_period=11,
             bb_std=Decimal("2.0"),
-            grid_count=10,
+            grid_count=12,
             take_profit_grids=1,
             stop_loss_pct=Decimal("0.002"),  # 0.2% tight SL
             # ATR dynamic range
             use_atr_range=True,
-            atr_period=13,
-            atr_multiplier=Decimal("6.5"),
+            atr_period=11,
+            atr_multiplier=Decimal("5.5"),
             fallback_range_pct=Decimal("0.04"),
             # Protective features
-            use_hysteresis=True,
+            use_hysteresis=False,
             hysteresis_pct=Decimal("0.003"),
             use_signal_cooldown=False,
-            cooldown_bars=1,
+            cooldown_bars=4,
         )
     else:
         # BB_TREND_GRID 模式 (驗證通過)

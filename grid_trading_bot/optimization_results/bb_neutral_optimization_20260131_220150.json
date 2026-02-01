@@ -1,0 +1,256 @@
+{
+  "optimization_date": "2026-01-31T22:01:50.482754",
+  "data_file": "data/historical/BTCUSDT_15m_730d.json",
+  "n_trials": 300,
+  "leverage": 18,
+  "best_score": 4262.673663061883,
+  "best_params": {
+    "bb_period": 18,
+    "grid_count": 6,
+    "atr_period": 25,
+    "atr_multiplier": 3.5,
+    "stop_loss_pct": 0.002,
+    "take_profit_grids": 1,
+    "hysteresis_pct": 0.001,
+    "use_hysteresis": true,
+    "use_signal_cooldown": false,
+    "cooldown_bars": 1
+  },
+  "metrics": {
+    "is_return": 3933.461439501674,
+    "oos_return": 1078.5937439769702,
+    "is_excess": 3791.385105239605,
+    "oos_excess": 1095.0583036625196,
+    "is_sharpe": 8.947295474200297,
+    "oos_sharpe": 14.204080160407548,
+    "is_trades": 13823,
+    "oos_trades": 5236,
+    "is_dd": 0.436962944112418,
+    "oos_dd": 0.5876616234470501,
+    "oos_is_ratio": 0.27420981762913027,
+    "train_market": 142.07633426206917,
+    "test_market": -16.464559685549418
+  },
+  "top_10_trials": [
+    {
+      "number": 239,
+      "value": 4262.673663061883,
+      "params": {
+        "bb_period": 18,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3933.461439501674,
+        "oos_return": 1078.5937439769702,
+        "oos_excess": 1095.0583036625196,
+        "oos_is_ratio": 0.27420981762913027
+      }
+    },
+    {
+      "number": 241,
+      "value": 4259.617474233463,
+      "params": {
+        "bb_period": 17,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3932.004381807551,
+        "oos_return": 1076.5031897468327,
+        "oos_excess": 1092.967749432382,
+        "oos_is_ratio": 0.2737797533307839
+      }
+    },
+    {
+      "number": 242,
+      "value": 4259.617474233463,
+      "params": {
+        "bb_period": 17,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3932.004381807551,
+        "oos_return": 1076.5031897468327,
+        "oos_excess": 1092.967749432382,
+        "oos_is_ratio": 0.2737797533307839
+      }
+    },
+    {
+      "number": 121,
+      "value": 4211.7757685316765,
+      "params": {
+        "bb_period": 18,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.0015,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 6
+      },
+      "metrics": {
+        "is_return": 3903.727030969252,
+        "oos_return": 1062.2447093162898,
+        "oos_excess": 1078.7092690018392,
+        "oos_is_ratio": 0.27211039626726824
+      }
+    },
+    {
+      "number": 122,
+      "value": 4211.7757685316765,
+      "params": {
+        "bb_period": 18,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.0015,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 6
+      },
+      "metrics": {
+        "is_return": 3903.727030969252,
+        "oos_return": 1062.2447093162898,
+        "oos_excess": 1078.7092690018392,
+        "oos_is_ratio": 0.27211039626726824
+      }
+    },
+    {
+      "number": 211,
+      "value": 4209.706147452883,
+      "params": {
+        "bb_period": 19,
+        "grid_count": 6,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.0015,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3902.641215351047,
+        "oos_return": 1060.9495545593134,
+        "oos_excess": 1077.4141142448627,
+        "oos_is_ratio": 0.27185423819798404
+      }
+    },
+    {
+      "number": 250,
+      "value": 4192.175217812189,
+      "params": {
+        "bb_period": 16,
+        "grid_count": 7,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3929.618789573325,
+        "oos_return": 1047.4836132208545,
+        "oos_excess": 1063.948172906404,
+        "oos_is_ratio": 0.2665611269979166
+      }
+    },
+    {
+      "number": 255,
+      "value": 4192.175217812189,
+      "params": {
+        "bb_period": 16,
+        "grid_count": 7,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3929.618789573325,
+        "oos_return": 1047.4836132208545,
+        "oos_excess": 1063.948172906404,
+        "oos_is_ratio": 0.2665611269979166
+      }
+    },
+    {
+      "number": 258,
+      "value": 4192.175217812189,
+      "params": {
+        "bb_period": 16,
+        "grid_count": 7,
+        "atr_period": 25,
+        "atr_multiplier": 3.5,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 1
+      },
+      "metrics": {
+        "is_return": 3929.618789573325,
+        "oos_return": 1047.4836132208545,
+        "oos_excess": 1063.948172906404,
+        "oos_is_ratio": 0.2665611269979166
+      }
+    },
+    {
+      "number": 102,
+      "value": 4188.000021053496,
+      "params": {
+        "bb_period": 21,
+        "grid_count": 6,
+        "atr_period": 26,
+        "atr_multiplier": 3.0,
+        "stop_loss_pct": 0.002,
+        "take_profit_grids": 1,
+        "hysteresis_pct": 0.001,
+        "use_hysteresis": true,
+        "use_signal_cooldown": false,
+        "cooldown_bars": 6
+      },
+      "metrics": {
+        "is_return": 3898.4644704944176,
+        "oos_return": 1048.1081762789936,
+        "oos_excess": 1064.572735964543,
+        "oos_is_ratio": 0.26885153993620176
+      }
+    }
+  ]
+}

@@ -1,0 +1,345 @@
+{
+  "optimization_date": "2026-02-01T15:46:03.750821",
+  "data_file": "data/historical/BTCUSDT_1h_730d.json",
+  "trials": 100,
+  "leverage": 10,
+  "train_test_split": 0.7,
+  "best_score": 5.680345823418373,
+  "best_params": {
+    "rsi_period": 7,
+    "rsi_block_threshold": 0.9,
+    "atr_period": 7,
+    "grid_count": 8,
+    "atr_multiplier": 3.0,
+    "stop_loss_atr_mult": 1.5,
+    "take_profit_grids": 2,
+    "max_hold_bars": 6,
+    "use_trailing_stop": false,
+    "trailing_activate_pct": 0.01,
+    "trailing_distance_pct": 0.003,
+    "vol_atr_baseline_period": 200,
+    "vol_ratio_low": 0.5,
+    "vol_ratio_high": 2.0
+  },
+  "best_trial_attrs": {
+    "train_trades": 1911,
+    "train_sharpe": 3.1594411385307164,
+    "train_return": 105.48323487957906,
+    "test_trades": 843,
+    "test_sharpe": 3.446941864682188,
+    "test_return": 36.100538232168525,
+    "test_dd": 5.712462690301819,
+    "oos_is_ratio": 1.0909973357772926
+  },
+  "full_result": {
+    "total_return_pct": 142.6659741656955,
+    "annual_return_pct": 55.7813384610312,
+    "sharpe_ratio": 3.0774751658394472,
+    "max_drawdown_pct": 7.47771804094946,
+    "win_rate": 46.949891067538125,
+    "total_trades": 2754,
+    "trades_per_day": 3.772818083223928
+  },
+  "top_10_trials": [
+    {
+      "number": 44,
+      "value": 5.680345823418373,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.9,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 200,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 2.0
+      },
+      "user_attrs": {
+        "train_trades": 1911,
+        "train_sharpe": 3.1594411385307164,
+        "train_return": 105.48323487957906,
+        "test_trades": 843,
+        "test_sharpe": 3.446941864682188,
+        "test_return": 36.100538232168525,
+        "test_dd": 5.712462690301819,
+        "oos_is_ratio": 1.0909973357772926
+      }
+    },
+    {
+      "number": 59,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 60,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 61,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 62,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 63,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 64,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 65,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.005,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 69,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.015,
+        "trailing_distance_pct": 0.003,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    },
+    {
+      "number": 71,
+      "value": 5.491168509439888,
+      "params": {
+        "rsi_period": 7,
+        "rsi_block_threshold": 0.7,
+        "atr_period": 7,
+        "grid_count": 8,
+        "atr_multiplier": 3.0,
+        "stop_loss_atr_mult": 1.5,
+        "take_profit_grids": 2,
+        "max_hold_bars": 6,
+        "use_trailing_stop": false,
+        "trailing_activate_pct": 0.01,
+        "trailing_distance_pct": 0.005,
+        "vol_atr_baseline_period": 100,
+        "vol_ratio_low": 0.5,
+        "vol_ratio_high": 1.5
+      },
+      "user_attrs": {
+        "train_trades": 1630,
+        "train_sharpe": 2.4676486324157736,
+        "train_return": 74.81347058562544,
+        "test_trades": 741,
+        "test_sharpe": 3.202917755935775,
+        "test_return": 32.87546673925666,
+        "test_dd": 5.943971504850705,
+        "oos_is_ratio": 1.2979634595708989
+      }
+    }
+  ]
+}

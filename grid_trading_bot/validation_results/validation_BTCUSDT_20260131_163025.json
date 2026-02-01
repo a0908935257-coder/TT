@@ -1,0 +1,68 @@
+{
+  "metadata": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "days": 42,
+    "periods": 9,
+    "data_bars": 1000,
+    "timestamp": "2026-01-31T16:30:25.965457"
+  },
+  "results": [
+    {
+      "strategy": "grid_futures",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "leverage": 7,
+      "walk_forward": {
+        "total_periods": 0,
+        "consistent_periods": 0,
+        "consistency_pct": 0.0,
+        "avg_oos_sharpe": 0.0,
+        "period_details": []
+      },
+      "overfitting_analysis": {
+        "avg_is_sharpe": 0,
+        "avg_oos_sharpe": 0,
+        "avg_is_return_pct": 0,
+        "avg_oos_return_pct": 0,
+        "oos_is_sharpe_ratio": 0,
+        "oos_is_return_ratio": 0,
+        "is_overfit": true,
+        "overfit_severity": "HIGH"
+      },
+      "monte_carlo": {
+        "strategy": "grid_futures",
+        "base_result": {
+          "sharpe_ratio": 6.294257749144784,
+          "total_return_pct": 19.152580144373157,
+          "max_drawdown_pct": 3.6290349901127485,
+          "win_rate": 56.52173913043478,
+          "total_trades": 184
+        },
+        "trade_shuffle": {
+          "probability_of_profit": 1.0,
+          "probability_of_ruin": 0.0,
+          "worst_case_metrics": {
+            "total_return": 19.152580144372976,
+            "sharpe_ratio": 3.095502229482922,
+            "max_drawdown": 5.706948457899384,
+            "profit_factor": 1.4578120539766446
+          }
+        },
+        "returns_bootstrap": {
+          "probability_of_profit": 0.998,
+          "probability_of_ruin": 0.0,
+          "worst_case_metrics": {
+            "total_return": 6.909041609525568,
+            "sharpe_ratio": 1.2152546773991229,
+            "max_drawdown": 5.685530539916745
+          }
+        },
+        "robustness": {
+          "is_robust": true,
+          "assessment": "ROBUST"
+        }
+      }
+    }
+  ]
+}
