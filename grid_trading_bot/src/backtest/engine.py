@@ -4,9 +4,12 @@ Backtest Engine Module.
 The main orchestrator for running backtests with unified framework.
 """
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from ..core.models import Kline
 from .config import BacktestConfig
@@ -89,6 +92,15 @@ class BacktestEngine:
         warmup = strategy.warmup_period()
         if len(klines) <= warmup:
             return BacktestResult()
+
+        # Timeframe validation: warn if kline interval doesn't match expected 1h
+        if len(klines) >= 2:
+            delta_minutes = (klines[1].open_time - klines[0].open_time).total_seconds() / 60
+            if delta_minutes not in (60,):
+                logger.warning(
+                    f"Kline interval is {delta_minutes:.0f}m, expected 60m (1h). "
+                    f"All live strategies use 1h timeframe. Results may not reflect live performance."
+                )
 
         # Process each bar after warmup
         for bar_idx in range(warmup, len(klines)):

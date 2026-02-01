@@ -16,14 +16,13 @@ Strategy Modes:
 
 VALIDATION STATUS: PASSED (2024-01-25 ~ 2026-01-24, 2-year data)
 
-Walk-Forward Validated Parameters (BTCUSDT 1h):
-- ATR Period: 25, ATR Multiplier: 3.0 (與實戰一致)
-- Grid Count: 10, Grid ATR Multiplier: 3.0
-- Take Profit: 1 grid, Stop Loss: 5%
-- RSI Filter: period=14, overbought=60, oversold=40
-- Hysteresis: 0.2% buffer (與實戰一致)
-- Signal Cooldown: 2 bars (與實戰一致)
-- Trailing Stop: 5% (與實戰一致)
+Defaults synced to settings.yaml (Optuna 300 trials, 10x, 2026-02-01):
+- Mode: HYBRID_GRID, ATR Period: 18, ATR Multiplier: 6.0
+- Grid Count: 10, Grid ATR Multiplier: 10.0
+- RSI Filter: period=17, overbought=74, oversold=25
+- Stop Loss: 2%, Trailing Stop: 1%
+- Hysteresis: off, Cooldown: off, Vol Filter: off
+- Max Hold Bars: 32
 
 Validation Results (2026-01-24):
 - Walk-Forward Consistency: 70% (7/10 periods)
@@ -83,42 +82,43 @@ class SupertrendStrategyConfig:
         cooldown_bars: Minimum bars between signals
     """
 
-    mode: SupertrendMode = SupertrendMode.TREND_GRID
-    atr_period: int = 25  # 與實戰一致 (was 14)
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
+    # Defaults synced to settings.yaml (Optuna 300 trials, 10x, 2026-02-01)
+    mode: SupertrendMode = SupertrendMode.HYBRID_GRID
+    atr_period: int = 18
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.0"))
     grid_count: int = 10
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("10.0"))
     take_profit_grids: int = 1
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
-    # RSI Filter (like live bot)
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
+    # RSI Filter
     use_rsi_filter: bool = True
-    rsi_period: int = 14
-    rsi_overbought: int = 60
-    rsi_oversold: int = 40
+    rsi_period: int = 17
+    rsi_overbought: int = 74
+    rsi_oversold: int = 25
     # Trend confirmation
-    min_trend_bars: int = 2
-    # Hysteresis (like live bot) - prevents oscillation at grid boundaries
-    use_hysteresis: bool = True  # 與實戰一致 (was False)
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
-    # Signal cooldown (like live bot) - prevents signal stacking
-    use_signal_cooldown: bool = True  # 與實戰一致 (was False)
-    cooldown_bars: int = 2
-    # Trailing stop (like live bot)
-    use_trailing_stop: bool = True  # 新增：與實戰一致
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))
-    # Volatility Regime Filter (from RSI-Grid v2)
-    use_volatility_filter: bool = True
-    vol_atr_baseline_period: int = 200    # 長期 ATR 基線
-    vol_ratio_low: float = 0.5           # ATR ratio 下限
-    vol_ratio_high: float = 2.0          # ATR ratio 上限
-    # Timeout Exit (from RSI-Grid v2)
-    max_hold_bars: int = 16              # 超時出場 bar 數
+    min_trend_bars: int = 1
+    # Hysteresis (settings.yaml: off)
+    use_hysteresis: bool = False
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0095"))
+    # Signal cooldown (settings.yaml: off)
+    use_signal_cooldown: bool = False
+    cooldown_bars: int = 0
+    # Trailing stop
+    use_trailing_stop: bool = True
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))
+    # Volatility Regime Filter (settings.yaml: off)
+    use_volatility_filter: bool = False
+    vol_atr_baseline_period: int = 200
+    vol_ratio_low: float = 0.7
+    vol_ratio_high: float = 3.0
+    # Timeout Exit
+    max_hold_bars: int = 32
     # HYBRID_GRID parameters
-    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.6"))  # 趨勢方向網格比例
-    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.0"))  # 順勢 TP 倍數
-    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 逆勢 TP 倍數
-    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.7"))  # 逆勢 SL 倍數
-    hybrid_rsi_asymmetric: bool = True  # RSI 非對稱過濾
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.55"))
+    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.0"))
+    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.75"))
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.8"))
+    hybrid_rsi_asymmetric: bool = False
 
 
 @dataclass

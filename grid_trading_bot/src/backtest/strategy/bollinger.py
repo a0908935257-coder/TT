@@ -79,23 +79,23 @@ class BollingerStrategyConfig:
         fallback_range_pct: Fallback range when ATR unavailable
     """
 
-    # Snapshot of live BollingerConfig defaults at time of decoupling (2026-02-01)
+    # Defaults synced to settings.yaml (WF v3 Optuna 300 trials, 2026-01-31)
     mode: BollingerMode = BollingerMode.BB_TREND_GRID
-    bb_period: int = 21
+    bb_period: int = 11
     bb_std: Decimal = field(default_factory=lambda: Decimal("2.0"))
-    grid_count: int = 10
+    grid_count: int = 12
     grid_range_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
     take_profit_grids: int = 1
     stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.002"))
-    # Protective features
-    use_hysteresis: bool = True
+    # Protective features (settings.yaml: both off)
+    use_hysteresis: bool = False
     hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.003"))
     use_signal_cooldown: bool = False
-    cooldown_bars: int = 1
+    cooldown_bars: int = 4
     # ATR dynamic range (for BB_NEUTRAL_GRID mode)
     use_atr_range: bool = True
-    atr_period: int = 13
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.5"))
+    atr_period: int = 11
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("5.5"))
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.04"))
 
 

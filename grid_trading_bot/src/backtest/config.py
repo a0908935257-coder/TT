@@ -77,7 +77,7 @@ class BacktestConfig:
     # Core settings
     initial_capital: Decimal = field(default_factory=lambda: Decimal("10000"))
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))  # 0.04%
-    slippage_pct: Decimal = field(default_factory=lambda: Decimal("0"))
+    slippage_pct: Decimal = field(default_factory=lambda: Decimal("0.0003"))  # 0.03% realistic slippage
     leverage: int = 1
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 2% of equity
     max_positions: int = 1
@@ -93,11 +93,11 @@ class BacktestConfig:
     liquidation_fee_pct: Decimal = field(default_factory=lambda: Decimal("0.006"))  # 0.6%
 
     # Funding rate settings (futures)
-    funding_rate: Decimal = field(default_factory=lambda: Decimal("0.0001"))  # 0.01% per 8h
+    funding_rate: Decimal = field(default_factory=lambda: Decimal("0.0003"))  # 0.03% per 8h (bull market avg)
     funding_interval_hours: int = 8
 
     # Fee model settings
-    fee_model_type: FeeModelType = FeeModelType.FIXED
+    fee_model_type: FeeModelType = FeeModelType.MAKER_TAKER
     maker_fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0002"))  # 0.02%
     taker_fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))  # 0.04%
 
