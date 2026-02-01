@@ -101,7 +101,7 @@ class TestRSIGridConfig:
 
     def test_trailing_stop_pct_default(self):
         config = RSIGridConfig(symbol="BTCUSDT")
-        assert config.trailing_stop_pct == Decimal("0.03")
+        assert config.trailing_stop_pct == Decimal("0.01")
 
     def test_trailing_stop_pct_decimal_conversion(self):
         config = RSIGridConfig(symbol="BTCUSDT", trailing_stop_pct=0.05)
@@ -111,13 +111,13 @@ class TestRSIGridConfig:
     def test_volatility_filter_defaults(self):
         config = RSIGridConfig(symbol="BTCUSDT")
         assert config.use_volatility_filter is True
-        assert config.vol_atr_baseline_period == 100
-        assert config.vol_ratio_low == 0.4
+        assert config.vol_atr_baseline_period == 200
+        assert config.vol_ratio_low == 0.5
         assert config.vol_ratio_high == 2.0
 
     def test_max_hold_bars_default(self):
         config = RSIGridConfig(symbol="BTCUSDT")
-        assert config.max_hold_bars == 16
+        assert config.max_hold_bars == 6
 
 
 # =============================================================================
@@ -160,15 +160,15 @@ class TestUpdateVolatilityBaseline:
 
     def test_calculates_baseline_at_threshold(self):
         bot = _make_bot()
-        for i in range(100):
+        for i in range(200):
             bot._update_volatility_baseline(Decimal("200"))
         assert bot._atr_baseline == Decimal("200")
 
     def test_trims_history(self):
         bot = _make_bot()
-        for i in range(150):
+        for i in range(250):
             bot._update_volatility_baseline(Decimal("100"))
-        assert len(bot._atr_history) == 100
+        assert len(bot._atr_history) == 200
 
 
 class TestCheckVolatilityRegime:
@@ -205,7 +205,7 @@ class TestCheckVolatilityRegime:
     def test_boundary_low(self):
         bot = _make_bot()
         bot._atr_baseline = Decimal("1000")
-        bot._atr_calc.atr = Decimal("400")  # ratio = 0.4 exactly
+        bot._atr_calc.atr = Decimal("500")  # ratio = 0.5 exactly
         assert bot._check_volatility_regime() is True
 
     def test_boundary_high(self):
@@ -303,9 +303,9 @@ class TestCheckTrailingStop:
             leverage=7,
         )
         bot._position.update_extremes(Decimal("52000"))
-        # stop_price = 52000 * 0.97 = 50440
-        # current 51000 > 50440 → no trigger
-        assert bot._check_trailing_stop(Decimal("51000")) is False
+        # stop_price = 52000 * 0.99 = 51480
+        # current 51500 > 51480 → no trigger
+        assert bot._check_trailing_stop(Decimal("51500")) is False
 
     def test_long_triggers(self):
         bot = _make_bot()
@@ -327,9 +327,9 @@ class TestCheckTrailingStop:
             leverage=7,
         )
         bot._position.update_extremes(Decimal("48000"))
-        # stop_price = 48000 * 1.03 = 49440
-        # current 49000 < 49440 → no trigger
-        assert bot._check_trailing_stop(Decimal("49000")) is False
+        # stop_price = 48000 * 1.01 = 48480
+        # current 48400 < 48480 → no trigger
+        assert bot._check_trailing_stop(Decimal("48400")) is False
 
     def test_short_triggers(self):
         bot = _make_bot()
@@ -514,11 +514,11 @@ class TestInitializeGrid:
         bot._grid = None
         bot._stats = RSIGridStats()
         bot._atr_calc.atr = Decimal("1000")
-        # atr_multiplier default is 4.0 → range_size = 4000
+        # atr_multiplier default is 3.0 → range_size = 3000
         bot._initialize_grid(Decimal("50000"))
         assert bot._grid is not None
-        assert bot._grid.upper_price == Decimal("54000")  # 50000 + 4000
-        assert bot._grid.lower_price == Decimal("46000")  # 50000 - 4000
+        assert bot._grid.upper_price == Decimal("53000")  # 50000 + 3000
+        assert bot._grid.lower_price == Decimal("47000")  # 50000 - 3000
 
     def test_fallback_no_atr(self):
         from src.bots.rsi_grid.models import RSIGridStats
