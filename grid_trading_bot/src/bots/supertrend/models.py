@@ -82,24 +82,24 @@ class SupertrendConfig:
         timeframe: Kline timeframe (default "1h")
         atr_period: ATR calculation period (default 25, optimized)
         atr_multiplier: ATR multiplier for bands (default 3.5, optimized)
-        leverage: Futures leverage (default 7)
-        position_size_pct: Position size as percentage of balance (default 10%)
+        leverage: Futures leverage (default 10)
+        position_size_pct: Position size as percentage of balance (default 2%)
     """
     symbol: str
     timeframe: str = "1h"
-    atr_period: int = 11  # 同步 settings.yaml
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("1.5"))  # 同步 settings.yaml
-    leverage: int = 7  # 優化後: 7x (多槓桿回測最佳: Sharpe 1.85, 零爆倉)
+    atr_period: int = 18  # 同步 settings.yaml
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("6.0"))  # 同步 settings.yaml
+    leverage: int = 10  # 同步 settings.yaml
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
-    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
+    position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
 
     # Grid Settings (網格設定) - 優化後
-    grid_count: int = 8  # 同步 settings.yaml
-    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("7.5"))  # 同步 settings.yaml
+    grid_count: int = 10  # 同步 settings.yaml
+    grid_atr_multiplier: Decimal = field(default_factory=lambda: Decimal("10.0"))  # 同步 settings.yaml
     take_profit_grids: int = 1  # 止盈網格數
 
     # Trailing stop (優化後啟用)
@@ -108,7 +108,7 @@ class SupertrendConfig:
 
     # Exchange-based stop loss (recommended for safety)
     use_exchange_stop_loss: bool = True  # Place STOP_MARKET order on exchange
-    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 同步 settings.yaml
+    stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))  # 同步 settings.yaml
 
     # Risk control (風險控制)
     daily_loss_limit_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # 每日虧損限制 5%
@@ -116,34 +116,34 @@ class SupertrendConfig:
 
     # RSI Filter (RSI 過濾器) - 優化後
     use_rsi_filter: bool = True
-    rsi_period: int = 21  # 優化後: 21
-    rsi_overbought: int = 75  # 同步 settings.yaml
-    rsi_oversold: int = 37  # 同步 settings.yaml
+    rsi_period: int = 17  # 同步 settings.yaml
+    rsi_overbought: int = 74  # 同步 settings.yaml
+    rsi_oversold: int = 25  # 同步 settings.yaml
 
     # Trend confirmation (優化後)
     min_trend_bars: int = 1  # 優化後: 1
 
     # Protective Features (優化後)
     use_hysteresis: bool = False  # 優化後: 關閉
-    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0085"))  # 同步 settings.yaml
+    hysteresis_pct: Decimal = field(default_factory=lambda: Decimal("0.0095"))  # 同步 settings.yaml
     use_signal_cooldown: bool = False  # 同步 settings.yaml
-    cooldown_bars: int = 3  # 同步 settings.yaml
+    cooldown_bars: int = 0  # 同步 settings.yaml
 
     # Volatility Regime Filter (v2)
     use_volatility_filter: bool = False  # 優化後: 關閉
     vol_atr_baseline_period: int = 200
-    vol_ratio_low: float = 0.3  # 同步 settings.yaml
+    vol_ratio_low: float = 0.7  # 同步 settings.yaml
     vol_ratio_high: float = 3.0
 
     # Timeout Exit (v2)
-    max_hold_bars: int = 8  # 同步 settings.yaml
+    max_hold_bars: int = 32  # 同步 settings.yaml
 
     # HYBRID_GRID mode (v3)
     mode: str = "hybrid_grid"  # "trend_grid" or "hybrid_grid"
-    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.65"))  # 同步 settings.yaml
-    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.75"))  # 優化後: 1.75
-    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 優化後: 0.5
-    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.9"))  # 同步 settings.yaml
+    hybrid_grid_bias_pct: Decimal = field(default_factory=lambda: Decimal("0.55"))  # 同步 settings.yaml
+    hybrid_tp_multiplier_trend: Decimal = field(default_factory=lambda: Decimal("1.0"))  # 同步 settings.yaml
+    hybrid_tp_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.75"))  # 同步 settings.yaml
+    hybrid_sl_multiplier_counter: Decimal = field(default_factory=lambda: Decimal("0.8"))  # 同步 settings.yaml
     hybrid_rsi_asymmetric: bool = False  # 優化後: 關閉
 
     @classmethod
