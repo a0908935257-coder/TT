@@ -86,15 +86,15 @@ class RSIGridConfig:
         margin_type: ISOLATED or CROSSED (default ISOLATED)
 
         # RSI Parameters
-        rsi_period: RSI calculation period (default 7, v4)
+        rsi_period: RSI calculation period (default 5, v5)
         oversold_level: RSI oversold threshold (default 33)
         overbought_level: RSI overbought threshold (default 66)
-        rsi_block_threshold: tanh score threshold (default 0.9, v4)
+        rsi_block_threshold: tanh score threshold (default 0.9, v5)
 
         # Grid Parameters
-        grid_count: Number of grid levels (default 8, v4)
-        atr_period: ATR calculation period (default 7, v4)
-        atr_multiplier: ATR multiplier for grid range (default 3.0, v4)
+        grid_count: Number of grid levels (default 6, v5)
+        atr_period: ATR calculation period (default 21, v5)
+        atr_multiplier: ATR multiplier for grid range (default 4.0, v5)
 
         # Trend Filter
         trend_sma_period: SMA period for trend detection (default 39)
@@ -102,18 +102,18 @@ class RSIGridConfig:
 
         # Risk Management
         max_capital: Maximum capital to use
-        position_size_pct: Size per trade as % of capital (default 5%, v4)
+        position_size_pct: Size per trade as % of capital (default 5%, v5)
         max_position_pct: Maximum total position as % (default 50%)
-        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.5, v4)
+        stop_loss_atr_mult: Stop loss as ATR multiple (default 1.0, v5)
         max_stop_loss_pct: Maximum stop loss percentage (default 3%)
         max_positions: Maximum concurrent positions (default 5)
-        max_hold_bars: Maximum holding duration in bars (default 6, v4)
+        max_hold_bars: Maximum holding duration in bars (default 8, v5)
 
-        # Volatility Filter (v4)
-        use_volatility_filter: Enable volatility regime filter (default True, v4)
-        vol_atr_baseline_period: Baseline ATR period (default 200, v4)
-        vol_ratio_low: Low volatility threshold (default 0.5, v4)
-        vol_ratio_high: High volatility threshold (default 2.0, v4)
+        # Volatility Filter (v5)
+        use_volatility_filter: Enable volatility regime filter (default True, v5)
+        vol_atr_baseline_period: Baseline ATR period (default 200, v5)
+        vol_ratio_low: Low volatility threshold (default 0.7, v5)
+        vol_ratio_high: High volatility threshold (default 2.0, v5)
 
     Example:
         >>> config = RSIGridConfig(symbol="BTCUSDT")  # Use defaults
@@ -124,16 +124,16 @@ class RSIGridConfig:
     leverage: int = 10  # v4: 10x
     margin_type: str = "ISOLATED"
 
-    # RSI Parameters (v4 優化)
-    rsi_period: int = 7  # v4: 7
+    # RSI Parameters (v5 優化)
+    rsi_period: int = 5  # v5: 5
     oversold_level: int = 33  # 優化後: 33 (原 30)
     overbought_level: int = 66  # 優化後: 66 (原 70)
-    rsi_block_threshold: float = 0.9  # v3: 0.9
+    rsi_block_threshold: float = 0.9  # v5: 0.9
 
-    # Grid Parameters (v4 優化)
-    grid_count: int = 8  # v4: 8
-    atr_period: int = 7  # v4: 7
-    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("3.0"))  # v4: 3.0
+    # Grid Parameters (v5 優化)
+    grid_count: int = 6  # v5: 6
+    atr_period: int = 21  # v5: 21
+    atr_multiplier: Decimal = field(default_factory=lambda: Decimal("4.0"))  # v5: 4.0
 
     # Trend Filter (v2: 關閉)
     trend_sma_period: int = 39  # 優化後: 39 (原 20)
@@ -144,16 +144,18 @@ class RSIGridConfig:
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # v4: 5%
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
 
-    # Risk Management (v4 優化)
-    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("1.5"))  # v4: 1.5
+    # Risk Management (v5 優化)
+    stop_loss_atr_mult: Decimal = field(default_factory=lambda: Decimal("1.0"))  # v5: 1.0
     max_stop_loss_pct: Decimal = field(default_factory=lambda: Decimal("0.03"))
-    take_profit_grids: int = 2  # v3: 2
+    take_profit_grids: int = 3  # v5: 3
     max_positions: int = 5
-    max_hold_bars: int = 6  # v4: 6 bars
+    max_hold_bars: int = 8  # v5: 8 bars
 
-    # Trailing Stop (v4: 關閉)
-    use_trailing_stop: bool = False  # v4: 關閉
-    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # v3: 1%
+    # Trailing Stop (v5: 啟用)
+    use_trailing_stop: bool = True  # v5: 啟用
+    trailing_activate_pct: float = 0.005  # v5: 0.5%
+    trailing_distance_pct: float = 0.005  # v5: 0.5%
+    trailing_stop_pct: Decimal = field(default_factory=lambda: Decimal("0.01"))  # v5: 1%
 
     # Exchange-based stop loss
     use_exchange_stop_loss: bool = True
@@ -165,11 +167,11 @@ class RSIGridConfig:
     # Fee rate
     fee_rate: Decimal = field(default_factory=lambda: Decimal("0.0004"))
 
-    # Volatility Regime Filter (v4 優化)
-    use_volatility_filter: bool = True  # v4: 啟用
-    vol_atr_baseline_period: int = 200  # v4: 200
-    vol_ratio_low: float = 0.5  # v4: 0.5
-    vol_ratio_high: float = 2.0  # v4: 2.0
+    # Volatility Regime Filter (v5 優化)
+    use_volatility_filter: bool = True  # v5: 啟用
+    vol_atr_baseline_period: int = 200  # v5: 200
+    vol_ratio_low: float = 0.7  # v5: 0.7
+    vol_ratio_high: float = 2.0  # v5: 2.0
 
     # Protective features (v2: 關閉)
     use_hysteresis: bool = False  # 回測顯示對 RSI Grid 有負面影響
