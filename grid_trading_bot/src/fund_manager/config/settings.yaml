@@ -77,9 +77,9 @@ bots:
   # ===========================================================================
   # Bollinger Bot (BB_NEUTRAL_GRID 策略: 雙向中性網格交易)
   # ===========================================================================
-  # WF v4 Optuna 300 trials (2026-02-01, use_margin fix):
-  # - 一致性 100% (9/9 折獲利), 平均 Sharpe: 4.73
-  # - 平均報酬: +242.2%, 總交易: 6,749
+  # WF v3 Optuna 300 trials (2026-01-31, bb_neutral_optimization_233751):
+  # - 一致性 100% (9/9 折獲利), 平均 Sharpe: 13.10
+  # - 平均報酬: +370.8%
   # - 18x 槓桿
   # ===========================================================================
   - bot_id: bollinger_*
@@ -92,7 +92,7 @@ bots:
     max_capital: 8000
     priority: 9
 
-    # --- 策略參數 (WF v4 Optuna 300 trials, use_margin fix, 2026-02-01) ---
+    # --- 策略參數 (WF v3 Optuna 300 trials, 2026-01-31) ---
     strategy_params:
       symbol: BTCUSDT
       timeframe: 1h
@@ -105,32 +105,32 @@ bots:
       mode: bb_neutral_grid               # 雙向中性網格
 
       # Bollinger Bands (用於參考，不作為趨勢過濾)
-      bb_period: 21                       # WF v5 優化: 21
+      bb_period: 11                       # WF v3 優化: 11
       bb_std: 2.0
 
-      # Grid Parameters (WF v5 2026-02-01)
-      grid_count: 10                      # WF v5 優化: 10
-      take_profit_grids: 1                # WF v5 優化: 1
+      # Grid Parameters (WF v3 2026-01-31)
+      grid_count: 12                      # WF v3 優化: 12
+      take_profit_grids: 1                # WF v3 優化: 1
 
-      # ATR Dynamic Range (WF v5 2026-02-01)
+      # ATR Dynamic Range (WF v3 2026-01-31)
       use_atr_range: true                 # 啟用 ATR 動態範圍
-      atr_period: 13                      # WF v5 優化: 13
-      atr_multiplier: 6.5                 # WF v5 優化: 6.5
+      atr_period: 11                      # WF v3 優化: 11
+      atr_multiplier: 5.5                 # WF v3 優化: 5.5
       fallback_range_pct: 0.04            # ATR 不可用時的備用範圍
 
-      # Risk Management (WF v5 2026-02-01)
-      stop_loss_pct: 0.002                # WF v5 優化: 0.2%
+      # Risk Management (WF v3 2026-01-31)
+      stop_loss_pct: 0.002                # WF v3 優化: 0.2%
       rebuild_threshold_pct: 0.02
 
       # BBW Filter (壓縮偵測)
       bbw_lookback: 200
       bbw_threshold_pct: 20
 
-      # Protective Features (WF v5 2026-02-01)
-      use_hysteresis: true                # WF v5 優化: 開啟
-      hysteresis_pct: 0.003               # WF v5 優化: 0.3%
-      use_signal_cooldown: false          # WF v5 優化: 關閉
-      cooldown_bars: 1                    # WF v5 優化: 1
+      # Protective Features (WF v3 2026-01-31)
+      use_hysteresis: false               # WF v3 優化: 關閉
+      hysteresis_pct: 0.003               # WF v3: 0.3%
+      use_signal_cooldown: false          # WF v3 優化: 關閉
+      cooldown_bars: 4                    # WF v3 優化: 4
 
       # Exchange Stop Loss (STOP_MARKET on exchange)
       use_exchange_stop_loss: true
@@ -332,7 +332,7 @@ bots:
 # Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
 # 預估組合年化報酬: ~40-50%
 #   - Grid Futures (40%): OOS +188.2%, Sharpe 5.57, WF 100% (7x, fixed Sharpe 2026-02-01)
-#   - Bollinger NEUTRAL (25%): WF 100% (9/9), avg Sharpe 4.73 (18x, WF v4 use_margin fix 2026-02-01)
+#   - Bollinger NEUTRAL (25%): WF 100% (9/9), avg Sharpe 13.10 (18x, WF v3 2026-01-31)
 #   - Supertrend HYBRID_GRID (15%): OOS +25.8%, Sharpe 5.60 (10x, fixed 2% 2026-02-01)
 #   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
 # 槓桿配置 - Grid/RSI 7x, Supertrend 10x, Bollinger 18x (equity-based margin)
