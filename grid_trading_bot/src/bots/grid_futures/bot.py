@@ -1203,10 +1203,13 @@ class GridFuturesBot(BaseBot):
             # Increment bar counter for timeout tracking
             self._current_bar += 1
 
-            # Update closes for indicators
+            # Update closes and klines for indicators (ATR uses _klines)
             self._closes.append(current_price)
             if len(self._closes) > 500:
                 self._closes = self._closes[-500:]
+            self._klines.append(kline)
+            if len(self._klines) > 500:
+                self._klines = self._klines[-500:]
 
             # Update trend
             old_trend = self._current_trend
