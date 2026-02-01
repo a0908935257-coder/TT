@@ -376,16 +376,19 @@ class FundManager:
                             result.errors.append("No active bots found")
                             return result
 
-                        # Get available funds (inside lock to ensure consistency)
-                        available = self._fund_pool.get_unallocated()
-                        if available <= 0:
+                        # Use total balance for ratio calculation
+                        # Ratios are defined against total (e.g. 40%+25%+15%+10%=90%,
+                        # remaining 10% is implicitly the reserve)
+                        total = self._fund_pool.total_balance
+                        allocated = self._fund_pool.allocated_balance
+                        if total - allocated <= 0:
                             logger.info("No unallocated funds available for dispatch")
                             return result
 
-                        # Calculate allocations
+                        # Calculate allocations based on total balance
                         current_allocations = self._fund_pool.allocations
                         allocations = self._allocator.calculate(
-                            available_funds=available,
+                            available_funds=total,
                             bot_allocations=self._config.allocations,
                             current_allocations=current_allocations,
                             bot_ids=bot_ids,
@@ -461,18 +464,19 @@ class FundManager:
                         tx.mark_failed("No active bots found")
                         return tx
 
-                    # Get available funds
-                    available = self._fund_pool.get_unallocated()
-                    if available <= 0:
+                    # Use total balance for ratio calculation
+                    total = self._fund_pool.total_balance
+                    allocated = self._fund_pool.allocated_balance
+                    if total - allocated <= 0:
                         logger.info("No unallocated funds available for dispatch")
                         tx = AllocationTransaction(trigger=trigger)
                         tx.mark_committed()  # Not a failure, just nothing to do
                         return tx
 
-                    # Calculate allocations
+                    # Calculate allocations based on total balance
                     current_allocations = self._fund_pool.allocations
                     allocations = self._allocator.calculate(
-                        available_funds=available,
+                        available_funds=total,
                         bot_allocations=self._config.allocations,
                         current_allocations=current_allocations,
                         bot_ids=bot_ids,
