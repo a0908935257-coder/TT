@@ -206,6 +206,9 @@ class OrderRouter:
         # Active executions
         self._active_executions: Dict[str, ExecutionPlan] = {}
 
+        # Current execution context
+        self._current_market_type = MarketType.SPOT
+
         # Statistics
         self._total_executions = 0
         self._successful_executions = 0
@@ -758,6 +761,9 @@ class OrderRouter:
         Args:
             plan: Execution plan to execute
         """
+        # Store market_type for child execution
+        self._current_market_type = plan.request.market_type
+
         if plan.algorithm == ExecutionAlgorithm.DIRECT:
             # Execute single order immediately
             if not plan.child_orders:
@@ -794,7 +800,7 @@ class OrderRouter:
                 order_type=child.order_type.value,
                 quantity=child.quantity,
                 price=child.price,
-                market_type=plan.request.market_type,
+                market_type=self._current_market_type,
                 client_order_id=child.client_order_id,
             )
 
