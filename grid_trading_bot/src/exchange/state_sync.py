@@ -829,6 +829,9 @@ class StateSynchronizer:
             except Exception as e:
                 self._sync_state = SyncState.ERROR
                 self._sync_errors.append(str(e))
+                # Prevent unbounded growth
+                if len(self._sync_errors) > 50:
+                    self._sync_errors = self._sync_errors[-50:]
                 logger.error(f"Sync failed: {e}")
                 success = False
 
@@ -1241,6 +1244,9 @@ class StateSynchronizer:
         }
 
         self._conflicts.append(conflict_record)
+        # Prevent unbounded growth
+        if len(self._conflicts) > 100:
+            self._conflicts = self._conflicts[-100:]
         self._sync_state = SyncState.CONFLICT
 
         logger.warning(f"Conflict detected for {entity_type}/{entity_id}: {conflicts}")
