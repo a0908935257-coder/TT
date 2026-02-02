@@ -6954,7 +6954,7 @@ class BaseBot(ABC):
             "matched_lots": [],
             "total_cost_basis": Decimal("0"),
             "total_realized_pnl": Decimal("0"),
-            "total_fees": close_fee,
+            "total_fees": Decimal("0"),
             "unmatched_quantity": Decimal("0"),
         }
 

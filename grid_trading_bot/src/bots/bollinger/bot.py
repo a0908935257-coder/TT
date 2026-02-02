@@ -1002,8 +1002,13 @@ class BollingerBot(BaseBot):
         try:
             # Stage 6: Close old position if reversing direction
             if self._position and self._position.side != side:
-                logger.info(f"Reversing direction: closing {self._position.side.value} before opening {side.value}")
+                old_side = self._position.side.value
+                logger.info(f"Reversing direction: closing {old_side} before opening {side.value}")
                 await self._close_position(price, ExitReason.TREND_CHANGE)
+                # If position still exists, close failed — abort reversal to prevent dual exposure
+                if self._position is not None:
+                    logger.error(f"Failed to close {old_side} position, aborting reversal")
+                    return False
 
             # Validate price before calculation (indicator boundary check)
             if not self._validate_price(price, "entry_price"):
