@@ -810,9 +810,18 @@ class GridOrderManager:
                     if fail_count >= self._max_sync_failures:
                         logger.critical(
                             f"CRITICAL: Order {order_id} at level {level_index} failed sync "
-                            f"{fail_count} consecutive times. Mapping may be stale. "
+                            f"{fail_count} consecutive times. Cleaning stale mapping. "
                             f"Manual verification required."
                         )
+                        # Clean up stale mapping to prevent ghost orders
+                        if level_index is not None and level_index < len(self._setup.levels):
+                            level = self._setup.levels[level_index]
+                            level.state = LevelState.EMPTY
+                            level.order_id = None
+                        self._level_order_map.pop(level_index, None)
+                        self._order_level_map.pop(order_id, None)
+                        self._order_created_times.pop(order_id, None)
+                        self._sync_failure_counts.pop(order_id, None)
                         # Notify via notifier if available
                         try:
                             await self._notifier.send_error(
@@ -820,7 +829,7 @@ class GridOrderManager:
                                 message=(
                                     f"Order {order_id} at level {level_index} "
                                     f"failed sync {fail_count} times. "
-                                    f"Please verify manually."
+                                    f"Stale mapping cleaned. Please verify manually."
                                 ),
                             )
                         except Exception:
@@ -1095,8 +1104,9 @@ class GridOrderManager:
             matching_buy = await self._find_matching_buy_fill(level_index, fill_record)
             if matching_buy:
                 profit = self.calculate_profit(matching_buy, fill_record)
-                self._total_profit += profit
-                self._trade_count += 1
+                async with self._match_lock:
+                    self._total_profit += profit
+                    self._trade_count += 1
 
                 logger.info(
                     f"Trade completed: profit={profit:.4f}, "

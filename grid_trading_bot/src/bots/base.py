@@ -3452,10 +3452,13 @@ class BaseBot(ABC):
         Returns:
             Unique order key
         """
+        # Normalize Decimals to remove trailing zeros for consistent keys
+        qty_normalized = quantity.normalize()
         # For market orders, use a simpler key
         if price is None:
-            return f"{symbol}_{side}_{quantity}"
-        return f"{symbol}_{side}_{quantity}_{price}"
+            return f"{symbol}_{side}_{qty_normalized}"
+        price_normalized = price.normalize()
+        return f"{symbol}_{side}_{qty_normalized}_{price_normalized}"
 
     def _cleanup_old_pending_orders(self) -> None:
         """Remove expired pending orders."""
@@ -5817,6 +5820,7 @@ class BaseBot(ABC):
             await self._do_pause()
 
             # Update state
+            self._running = False
             self._state = BotState.PAUSED
 
             logger.info(f"Bot {self._bot_id} paused")
@@ -5824,6 +5828,7 @@ class BaseBot(ABC):
 
         except Exception as e:
             logger.error(f"Error pausing bot {self._bot_id}: {e}")
+            self._running = False
             self._state = BotState.ERROR
             self._error_message = str(e)
             return False
@@ -5850,7 +5855,11 @@ class BaseBot(ABC):
             await self._do_resume()
 
             # Update state
+            self._running = True
             self._state = BotState.RUNNING
+
+            # Restart heartbeat
+            self._start_heartbeat()
 
             logger.info(f"Bot {self._bot_id} resumed")
             return True
@@ -9078,6 +9087,19 @@ class BaseBot(ABC):
                 except Exception:
                     pass
 
+            # Trigger circuit breaker - emergency close is last line of defense
+            try:
+                await self.trigger_circuit_breaker_safe(
+                    reason=f"EMERGENCY_CLOSE_FAILED: {e}",
+                    severity="critical",
+                    metadata={"symbol": symbol, "side": side, "quantity": str(quantity)},
+                )
+            except Exception:
+                # If circuit breaker also fails, force stop
+                self._running = False
+                self._state = BotState.ERROR
+                self._error_message = f"Emergency close AND circuit breaker failed: {e}"
+
         return result
 
     # =========================================================================
@@ -11409,12 +11431,12 @@ class BaseBot(ABC):
     DNS_MAX_RETRIES = 3  # Max DNS resolution retries
 
     # Known exchange endpoints for DNS fallback
+    # IPs must be verified real Binance IPs before use - empty = DNS-only (safe default)
     EXCHANGE_DNS_FALLBACKS: Dict[str, list] = {
-        "api.binance.com": ["52.84.17.1", "52.84.17.2"],  # Example IPs - update with real ones
-        "fapi.binance.com": ["52.84.125.1", "52.84.125.2"],
-        "stream.binance.com": ["52.84.200.1", "52.84.200.2"],
-        "fstream.binance.com": ["52.84.201.1", "52.84.201.2"],
-        # Testnet
+        "api.binance.com": [],
+        "fapi.binance.com": [],
+        "stream.binance.com": [],
+        "fstream.binance.com": [],
         "testnet.binance.vision": [],
         "testnet.binancefuture.com": [],
     }
@@ -12285,109 +12307,108 @@ class BaseBot(ABC):
             # Create SSL context
             context = ssl.create_default_context()
 
-            # Connect and get certificate
-            with socket.create_connection((hostname, port), timeout=10) as sock:
-                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    cert = ssock.getpeercert()
+            # Connect and get certificate (run in executor to avoid blocking event loop)
+            loop = asyncio.get_event_loop()
+            cert = await loop.run_in_executor(None, self._fetch_ssl_cert_sync, hostname, port, context)
 
-                    if cert:
-                        # Parse certificate info
-                        result["valid"] = True
+            if cert:
+                # Parse certificate info
+                result["valid"] = True
 
-                        # Get expiry date
-                        not_after = cert.get("notAfter")
-                        if not_after:
-                            # Parse the date string
-                            from datetime import datetime as dt
-                            try:
-                                # Format: 'Mar 15 12:00:00 2024 GMT'
-                                expiry = dt.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
-                                expiry = expiry.replace(tzinfo=timezone.utc)
-                                result["expiry_date"] = expiry.isoformat()
+                # Get expiry date
+                not_after = cert.get("notAfter")
+                if not_after:
+                    # Parse the date string
+                    from datetime import datetime as dt
+                    try:
+                        # Format: 'Mar 15 12:00:00 2024 GMT'
+                        expiry = dt.strptime(not_after, "%b %d %H:%M:%S %Y %Z")
+                        expiry = expiry.replace(tzinfo=timezone.utc)
+                        result["expiry_date"] = expiry.isoformat()
 
-                                days_left = (expiry - datetime.now(timezone.utc)).days
-                                result["days_until_expiry"] = days_left
+                        days_left = (expiry - datetime.now(timezone.utc)).days
+                        result["days_until_expiry"] = days_left
 
-                                state["certificate_expiry"] = expiry
-                                state["days_until_expiry"] = days_left
+                        state["certificate_expiry"] = expiry
+                        state["days_until_expiry"] = days_left
 
-                                # Check expiry warnings
-                                if days_left <= 0:
-                                    result["valid"] = False
-                                    result["error"] = "Certificate expired"
-                                    self._record_ssl_event("certificate_expired", {
-                                        "hostname": hostname,
-                                        "expiry": expiry.isoformat(),
-                                    })
-                                elif days_left <= self.SSL_EXPIRY_CRITICAL_DAYS:
-                                    logger.error(
-                                        f"[{self._bot_id}] CRITICAL: SSL certificate for {hostname} "
-                                        f"expires in {days_left} days!"
-                                    )
-                                    self._record_ssl_event("certificate_expiry_critical", {
-                                        "hostname": hostname,
-                                        "days_left": days_left,
-                                    })
-                                elif days_left <= self.SSL_EXPIRY_WARNING_DAYS:
-                                    logger.warning(
-                                        f"[{self._bot_id}] SSL certificate for {hostname} "
-                                        f"expires in {days_left} days"
-                                    )
-                                    self._record_ssl_event("certificate_expiry_warning", {
-                                        "hostname": hostname,
-                                        "days_left": days_left,
-                                    })
-
-                            except ValueError as e:
-                                logger.warning(f"Could not parse cert date: {not_after}")
-
-                        # Get issuer
-                        issuer = cert.get("issuer")
-                        if issuer:
-                            issuer_dict = {k: v for ((k, v),) in issuer}
-                            result["issuer"] = issuer_dict.get("organizationName", "Unknown")
-
-                        # Get subject
-                        subject = cert.get("subject")
-                        if subject:
-                            subject_dict = {k: v for ((k, v),) in subject}
-                            result["subject"] = subject_dict.get("commonName", "Unknown")
-
-                        # Verify hostname match
-                        san = cert.get("subjectAltName", [])
-                        hostnames = [name for (typ, name) in san if typ == "DNS"]
-                        cn = subject_dict.get("commonName", "") if subject else ""
-
-                        hostname_match = (
-                            hostname in hostnames or
-                            hostname == cn or
-                            any(self._match_wildcard(hostname, h) for h in hostnames)
-                        )
-
-                        if not hostname_match:
-                            result["hostname_match"] = False
-                            result["error"] = f"Hostname mismatch: {hostname} not in {hostnames}"
-                            state["hostname_mismatch_detected"] = True
-                            self._record_ssl_event("hostname_mismatch", {
+                        # Check expiry warnings
+                        if days_left <= 0:
+                            result["valid"] = False
+                            result["error"] = "Certificate expired"
+                            self._record_ssl_event("certificate_expired", {
                                 "hostname": hostname,
-                                "cert_names": hostnames,
+                                "expiry": expiry.isoformat(),
                             })
-                        else:
-                            state["hostname_mismatch_detected"] = False
+                        elif days_left <= self.SSL_EXPIRY_CRITICAL_DAYS:
+                            logger.error(
+                                f"[{self._bot_id}] CRITICAL: SSL certificate for {hostname} "
+                                f"expires in {days_left} days!"
+                            )
+                            self._record_ssl_event("certificate_expiry_critical", {
+                                "hostname": hostname,
+                                "days_left": days_left,
+                            })
+                        elif days_left <= self.SSL_EXPIRY_WARNING_DAYS:
+                            logger.warning(
+                                f"[{self._bot_id}] SSL certificate for {hostname} "
+                                f"expires in {days_left} days"
+                            )
+                            self._record_ssl_event("certificate_expiry_warning", {
+                                "hostname": hostname,
+                                "days_left": days_left,
+                            })
 
-                        # Cache cert info
-                        state["cert_info"][hostname] = {
-                            "checked_at": datetime.now(timezone.utc).isoformat(),
-                            "expiry": result["expiry_date"],
-                            "issuer": result["issuer"],
-                            "valid": result["valid"],
-                        }
+                    except ValueError as e:
+                        logger.warning(f"Could not parse cert date: {not_after}")
 
-                        # Reset error count on success
-                        state["consecutive_ssl_errors"] = 0
-                        state["certificate_valid"] = result["valid"]
-                        state["last_check_time"] = datetime.now(timezone.utc)
-                        state["last_verified_hostname"] = hostname
+                # Get issuer
+                issuer = cert.get("issuer")
+                if issuer:
+                    issuer_dict = {k: v for ((k, v),) in issuer}
+                    result["issuer"] = issuer_dict.get("organizationName", "Unknown")
+
+                # Get subject
+                subject = cert.get("subject")
+                if subject:
+                    subject_dict = {k: v for ((k, v),) in subject}
+                    result["subject"] = subject_dict.get("commonName", "Unknown")
+
+                # Verify hostname match
+                san = cert.get("subjectAltName", [])
+                hostnames = [name for (typ, name) in san if typ == "DNS"]
+                cn = subject_dict.get("commonName", "") if subject else ""
+
+                hostname_match = (
+                    hostname in hostnames or
+                    hostname == cn or
+                    any(self._match_wildcard(hostname, h) for h in hostnames)
+                )
+
+                if not hostname_match:
+                    result["hostname_match"] = False
+                    result["error"] = f"Hostname mismatch: {hostname} not in {hostnames}"
+                    state["hostname_mismatch_detected"] = True
+                    self._record_ssl_event("hostname_mismatch", {
+                        "hostname": hostname,
+                        "cert_names": hostnames,
+                    })
+                else:
+                    state["hostname_mismatch_detected"] = False
+
+                # Cache cert info
+                state["cert_info"][hostname] = {
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "expiry": result["expiry_date"],
+                    "issuer": result["issuer"],
+                    "valid": result["valid"],
+                }
+
+                # Reset error count on success
+                state["consecutive_ssl_errors"] = 0
+                state["certificate_valid"] = result["valid"]
+                state["last_check_time"] = datetime.now(timezone.utc)
+                state["last_verified_hostname"] = hostname
 
         except ssl.SSLCertVerificationError as e:
             result["error"] = f"Certificate verification failed: {e}"
@@ -12435,6 +12456,15 @@ class BaseBot(ABC):
             })
 
         return result
+
+    @staticmethod
+    def _fetch_ssl_cert_sync(hostname: str, port: int, context) -> Optional[dict]:
+        """Fetch SSL certificate synchronously (meant to be called via run_in_executor)."""
+        import ssl
+        import socket
+        with socket.create_connection((hostname, port), timeout=10) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                return ssock.getpeercert()
 
     def _match_wildcard(self, hostname: str, pattern: str) -> bool:
         """Match hostname against wildcard pattern (e.g., *.binance.com)."""
