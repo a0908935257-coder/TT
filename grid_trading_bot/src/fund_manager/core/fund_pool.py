@@ -609,7 +609,7 @@ class FundPool:
             total += allocated * lev
         return total
 
-    def check_exposure_limit(self, max_ratio: Decimal = Decimal("3.0")) -> bool:
+    def check_exposure_limit(self, max_ratio: Decimal = Decimal("10.0")) -> bool:
         """
         Check if system-wide exposure exceeds the safety limit.
 
