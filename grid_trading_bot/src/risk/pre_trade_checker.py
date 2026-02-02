@@ -127,7 +127,7 @@ class PreTradeCheckResult:
     warnings: List[str] = field(default_factory=list)
     suggested_quantity: Optional[Decimal] = None  # If split required
     suggested_price: Optional[Decimal] = None  # If price adjustment needed
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def add_check(self, detail: CheckDetail) -> None:
         """Add a check result."""

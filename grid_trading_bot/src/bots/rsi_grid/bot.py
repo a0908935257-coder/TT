@@ -653,7 +653,7 @@ class RSIGridBot(BaseBot):
             positions = await self._exchange.futures.get_positions(self._config.symbol)
 
             for pos in positions:
-                if pos.quantity > 0:
+                if pos.quantity != Decimal("0"):
                     self._position = RSIGridPosition(
                         symbol=self._config.symbol,
                         side=PositionSide(pos.side) if isinstance(pos.side, str) else pos.side,
@@ -2176,7 +2176,7 @@ class RSIGridBot(BaseBot):
                 exchange_positions = await exchange.futures.get_positions(config.symbol)
                 exchange_pos = None
                 for pos in exchange_positions:
-                    if pos.quantity > 0:
+                    if pos.quantity != Decimal("0"):
                         exchange_pos = pos
                         break
 

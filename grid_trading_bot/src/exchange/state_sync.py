@@ -1302,20 +1302,24 @@ class StateSynchronizer:
         quantity = Decimal(str(data.get("positionAmt") or data.get("pa", 0)))
         side = "LONG" if quantity > 0 else "SHORT" if quantity < 0 else "BOTH"
 
+        _mp = data.get("markPrice") or data.get("mp")
+        mark_price = Decimal(str(_mp)) if _mp is not None else None
+
+        _lp = data.get("liquidationPrice") or data.get("lp")
+        liquidation_price = Decimal(str(_lp)) if _lp is not None else None
+
         return PositionState(
             symbol=data.get("symbol") or data.get("s", ""),
             side=side,
             quantity=abs(quantity),
             entry_price=Decimal(str(data.get("entryPrice") or data.get("ep", 0))),
-            mark_price=Decimal(str(data.get("markPrice") or data.get("mp", 0))) or None,
+            mark_price=mark_price,
             unrealized_pnl=Decimal(str(
                 data.get("unrealizedProfit") or data.get("up", 0)
             )),
             leverage=int(data.get("leverage", 1)),
             margin_type=data.get("marginType", "ISOLATED"),
-            liquidation_price=Decimal(str(
-                data.get("liquidationPrice") or data.get("lp", 0)
-            )) or None,
+            liquidation_price=liquidation_price,
             updated_at=datetime.now(timezone.utc),
         )
 
