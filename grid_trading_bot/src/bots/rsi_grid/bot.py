@@ -1197,7 +1197,7 @@ class RSIGridBot(BaseBot):
                 logger.info(f"Stop loss placed: {close_side.value} @ {stop_price}")
 
         except Exception as e:
-            logger.error(f"Failed to place stop loss: {e}")
+            logger.error(f"Failed to place stop loss: {e}", exc_info=True)
 
     async def _update_stop_loss_order(self) -> None:
         """Update stop loss order when position changes."""

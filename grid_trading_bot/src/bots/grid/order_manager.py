@@ -161,6 +161,10 @@ class GridOrderManager:
         # Lock for level<->order map modifications (prevents cancel/place race)
         self._level_lock: asyncio.Lock = asyncio.Lock()
 
+        # FIX: Dedup set to prevent double-processing fills from WS + sync race
+        self._processed_fill_ids: set[str] = set()
+        self._max_processed_fills: int = 5000
+
         # Track order creation times for timeout handling
         # Key: order_id, Value: creation timestamp
         self._order_created_times: dict[str, datetime] = {}
@@ -1037,6 +1041,18 @@ class GridOrderManager:
         if self._setup is None:
             logger.warning("Cannot handle fill - not initialized")
             return None
+
+        # FIX: Prevent double-processing fills (WS + sync_orders race)
+        if order.order_id in self._processed_fill_ids:
+            logger.debug(f"Order {order.order_id} already processed, skipping duplicate fill")
+            return None
+        self._processed_fill_ids.add(order.order_id)
+        # Prune old entries to prevent unbounded growth
+        if len(self._processed_fill_ids) > self._max_processed_fills:
+            # Remove oldest half (set has no order, but this prevents unbounded growth)
+            excess = len(self._processed_fill_ids) - self._max_processed_fills // 2
+            for _ in range(excess):
+                self._processed_fill_ids.pop()
 
         # Find level index for this order
         level_index = self.get_level_by_order_id(order.order_id)

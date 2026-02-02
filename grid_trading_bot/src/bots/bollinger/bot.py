@@ -1363,7 +1363,7 @@ class BollingerBot(BaseBot):
                 )
 
         except Exception as e:
-            logger.error(f"Failed to place stop loss order: {e}")
+            logger.error(f"Failed to place stop loss order: {e}", exc_info=True)
 
     async def _cancel_stop_loss_order(self) -> bool:
         """Cancel stop loss order with verification."""

@@ -1068,6 +1068,56 @@ class BaseBot(ABC):
             )
 
     # =========================================================================
+    # Orphan Order Cleanup on Startup
+    # =========================================================================
+
+    async def _cleanup_orphan_orders_on_start(self) -> None:
+        """
+        FIX: Cancel stale orders from previous session on startup.
+
+        After a crash, limit orders from the previous session may remain
+        on the exchange. This method finds and cancels them.
+        """
+        try:
+            symbol = getattr(self, '_symbol', None) or getattr(
+                getattr(self, '_config', None), 'symbol', None
+            )
+            if not symbol or not self._exchange:
+                return
+
+            open_orders = await self._exchange.get_open_orders(symbol)
+            if not open_orders:
+                return
+
+            bot_orders = [
+                o for o in open_orders
+                if o.client_order_id and o.client_order_id.startswith(self._bot_id)
+            ]
+
+            if bot_orders:
+                logger.warning(
+                    f"[{self._bot_id}] Found {len(bot_orders)} orphan orders "
+                    f"from previous session, cancelling..."
+                )
+                for order in bot_orders:
+                    try:
+                        await self._exchange.futures_cancel_order(
+                            symbol=symbol,
+                            order_id=order.order_id,
+                            bot_id=self._bot_id,
+                        )
+                        logger.info(f"[{self._bot_id}] Cancelled orphan order {order.order_id}")
+                    except Exception as cancel_err:
+                        logger.warning(
+                            f"[{self._bot_id}] Failed to cancel orphan order "
+                            f"{order.order_id}: {cancel_err}"
+                        )
+        except Exception as e:
+            logger.warning(
+                f"[{self._bot_id}] Orphan order cleanup failed (non-fatal): {e}"
+            )
+
+    # =========================================================================
     # Liquidity and Order Book Validation
     # =========================================================================
 
@@ -5726,6 +5776,9 @@ class BaseBot(ABC):
             # Verify exchange leverage matches config
             await self._verify_leverage_on_start()
 
+            # FIX: Cancel orphan orders from previous session on startup
+            await self._cleanup_orphan_orders_on_start()
+
             # Call subclass implementation
             await self._do_start()
 
@@ -5744,7 +5797,7 @@ class BaseBot(ABC):
             return True
 
         except Exception as e:
-            logger.error(f"Failed to start bot {self._bot_id}: {e}")
+            logger.error(f"Failed to start bot {self._bot_id}: {e}", exc_info=True)
             # Cleanup any resources that may have been started
             await self._stop_heartbeat()
             self._stop_position_reconciliation()
