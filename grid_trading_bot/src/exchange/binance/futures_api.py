@@ -44,6 +44,7 @@ from .constants import (
     FUTURES_REST_URL,
     FUTURES_TESTNET_URL,
 )
+from src.exchange.rate_limiter import RateLimiter, RateLimitConfig
 
 logger = get_logger(__name__)
 
@@ -99,6 +100,11 @@ class BinanceFuturesAPI:
         # Retry configuration
         self._max_retries = max_retries
         self._retry_delay = retry_delay
+
+        # FIX S-3: Rate limiter integration
+        self._rate_limiter = RateLimiter(
+            config=RateLimitConfig(max_weight_per_minute=2400)
+        )
 
     # =========================================================================
     # Lifecycle Management
@@ -193,18 +199,31 @@ class BinanceFuturesAPI:
 
             logger.debug(f"Request: {method} {endpoint} (attempt {attempt + 1}/{self._max_retries + 1})")
 
+            # FIX S-3: Acquire rate limit capacity before request
+            weight = self._rate_limiter.get_endpoint_weight(endpoint)
+            is_order = endpoint in ("/fapi/v1/order", "/fapi/v1/batchOrders", "/sapi/v1/algo/futures/newOrderTwap")
+            acquired = await self._rate_limiter.acquire(
+                weight=weight, is_order=is_order, endpoint=endpoint, timeout=10.0
+            )
+            if not acquired:
+                raise RateLimitError("Rate limit capacity not available within timeout")
+
             try:
                 if method == "GET":
                     async with self._session.get(url, params=params, headers=headers) as resp:
+                        self._rate_limiter.update_from_headers(dict(resp.headers))
                         return await self._handle_response(resp)
                 elif method == "POST":
                     async with self._session.post(url, params=params, headers=headers) as resp:
+                        self._rate_limiter.update_from_headers(dict(resp.headers))
                         return await self._handle_response(resp)
                 elif method == "PUT":
                     async with self._session.put(url, params=params, headers=headers) as resp:
+                        self._rate_limiter.update_from_headers(dict(resp.headers))
                         return await self._handle_response(resp)
                 elif method == "DELETE":
                     async with self._session.delete(url, params=params, headers=headers) as resp:
+                        self._rate_limiter.update_from_headers(dict(resp.headers))
                         return await self._handle_response(resp)
                 else:
                     raise ValueError(f"Unsupported HTTP method: {method}")

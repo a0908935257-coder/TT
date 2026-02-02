@@ -745,9 +745,19 @@ class StateSynchronizer:
 
         # Start background tasks
         self._sync_task = asyncio.create_task(self._sync_loop())
+        self._sync_task.add_done_callback(self._on_task_done)
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task.add_done_callback(self._on_task_done)
 
         logger.info("State synchronizer started")
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Log exceptions from background tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"Background task failed: {exc}", exc_info=(type(exc), exc, exc.__traceback__))
 
     async def stop(self) -> None:
         """Stop synchronizer and cleanup."""

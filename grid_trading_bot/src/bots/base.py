@@ -1117,6 +1117,71 @@ class BaseBot(ABC):
                 f"[{self._bot_id}] Orphan order cleanup failed (non-fatal): {e}"
             )
 
+    async def _validate_sl_against_liquidation(
+        self,
+        stop_price: "Decimal",
+        position_side: "PositionSide",
+        entry_price: "Decimal",
+        symbol: str,
+    ) -> "Decimal":
+        """
+        FIX F-1: Validate stop loss price against exchange liquidation price.
+
+        Ensures SL triggers before liquidation to prevent forced liquidation
+        at worse price. Fetches liquidation price from exchange position data.
+
+        Args:
+            stop_price: Calculated stop loss price
+            position_side: LONG or SHORT
+            entry_price: Position entry price
+            symbol: Trading symbol
+
+        Returns:
+            Adjusted stop_price (unchanged if valid, adjusted if too close to liquidation)
+        """
+        try:
+            positions = await self._exchange.futures.get_positions(symbol)
+            if not positions:
+                return stop_price
+
+            pos = positions[0]
+            liq_price = getattr(pos, 'liquidation_price', None)
+            if not liq_price or liq_price <= 0:
+                return stop_price
+
+            tick_size = getattr(self, '_tick_size', None)
+            if not tick_size or tick_size <= 0:
+                tick_size = Decimal("0.01")
+
+            from decimal import ROUND_DOWN, ROUND_UP
+
+            if position_side == PositionSide.LONG:
+                # Long: SL must be ABOVE liquidation price
+                if stop_price <= liq_price:
+                    old_sl = stop_price
+                    stop_price = liq_price + (entry_price - liq_price) * Decimal("0.1")
+                    stop_price = (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_UP) * tick_size
+                    logger.warning(
+                        f"[{self._bot_id}] SL {old_sl} <= liquidation {liq_price}. "
+                        f"Adjusted to {stop_price} (10% above liquidation)"
+                    )
+            else:
+                # Short: SL must be BELOW liquidation price
+                if stop_price >= liq_price:
+                    old_sl = stop_price
+                    stop_price = liq_price - (liq_price - entry_price) * Decimal("0.1")
+                    stop_price = (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+                    logger.warning(
+                        f"[{self._bot_id}] SL {old_sl} >= liquidation {liq_price}. "
+                        f"Adjusted to {stop_price} (10% below liquidation)"
+                    )
+
+            return stop_price
+
+        except Exception as e:
+            logger.debug(f"[{self._bot_id}] Could not validate SL vs liquidation: {e}")
+            return stop_price
+
     # =========================================================================
     # Liquidity and Order Book Validation
     # =========================================================================

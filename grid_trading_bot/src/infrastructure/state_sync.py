@@ -164,11 +164,21 @@ class StateManager:
             self._on_remote_change,
         )
         self._subscriber_task = asyncio.create_task(self._dummy_subscriber())
+        self._subscriber_task.add_done_callback(self._on_task_done)
 
         # Start sync loop
         self._sync_task = asyncio.create_task(self._sync_loop())
+        self._sync_task.add_done_callback(self._on_task_done)
 
         logger.info(f"State manager started on node {self._node_id}")
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Log exceptions from background tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"Background task failed: {exc}", exc_info=(type(exc), exc, exc.__traceback__))
 
     async def stop(self) -> None:
         """Stop state synchronization."""

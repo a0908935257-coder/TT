@@ -1181,6 +1181,14 @@ class RSIGridBot(BaseBot):
             else:
                 close_side = OrderSide.BUY
 
+            # FIX F-1: Validate SL against liquidation price
+            stop_price = await self._validate_sl_against_liquidation(
+                stop_price=stop_price,
+                position_side=self._position.side,
+                entry_price=self._position.entry_price,
+                symbol=self._config.symbol,
+            )
+
             sl_order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
                 side=close_side.value,  # Convert enum to string

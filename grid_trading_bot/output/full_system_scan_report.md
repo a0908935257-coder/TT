@@ -7,9 +7,9 @@
 - 帳戶模式：單向（One-way, positionSide=BOTH）
 - 保證金模式：逐倉（ISOLATED）
 - 發現問題總數：**25 個**
-- 已修復問題：**11 個**
-- 需人工確認問題：**6 個**
-- 建議改善（不修復）：**8 個**
+- 已修復問題：**15 個**
+- 需人工確認問題：**3 個**
+- 建議改善（不修復）：**7 個**
 
 ---
 
@@ -152,6 +152,10 @@
 | R2-1 | order_manager.py | WS+sync 填充競態雙重處理 | 加入 _processed_fill_ids 去重集合 | 🟠 嚴重 |
 | R2-2 | base.py | 啟動時無孤兒訂單清理 | 加入 _cleanup_orphan_orders_on_start() | 🟠 嚴重 |
 | R2-3 | base.py, bollinger/bot.py, rsi_grid/bot.py | 關鍵錯誤日誌缺 stack trace | 加入 exc_info=True | 🟡 中等 |
+| R3-1 | supertrend/bot.py, bollinger/bot.py, rsi_grid/bot.py | SL 未與強平價交叉驗證（F-1 擴展） | BaseBot 加入 _validate_sl_against_liquidation，三個 bot 調用 | 🔴 致命 |
+| R3-2 | futures_api.py | Rate Limiter 未整合至 _request()（S-3） | 加入 acquire + update_from_headers | 🟠 嚴重 |
+| R3-3 | infrastructure/state_sync.py, exchange/state_sync.py | create_task 缺少異常回調（M-5） | 加入 add_done_callback + _on_task_done | 🟡 中等 |
+| R3-4 | pytest requirements | pytest-asyncio==1.3.0 版本有誤（14-1） | 需確認改為有效版本 | 🟢 低 |
 
 ---
 
@@ -159,20 +163,17 @@
 
 | 編號 | 問題描述 | 建議 | 原因 |
 |------|----------|------|------|
-| S-3 | Rate Limiter 未整合至 _request() | 在 _request() 加入 acquire/update_from_headers | 改動影響所有 API 請求，需謹慎測試 |
 | M-1 | 資金費率結算時段無迴避 | 結算前 5 分鐘暫停開倉 | 涉及策略層決策 |
 | M-3 | 錯誤碼 -2010 分類不精確 | 解析 msg 欄位 | 需了解實際遇到的拒絕原因 |
-| M-5 | 部分 create_task 缺少異常回調 | 加入 add_done_callback | 在 optimization/pool, state_sync 中 |
 | M-6 | 大量 except...pass 吞掉錯誤 | 至少加 logger.debug() | 影響範圍大，需逐一審查 |
-| 14-1 | pytest-asyncio==1.3.0 版本可能有誤 | 確認正確版本號 | 該版本號不存在 |
 
 ---
 
 ## 風險評估
-- 🔴 高風險（直接虧損）：**2 個** → 全部已修復
-- 🟠 中風險（系統不穩）：**6 個** → 5 個已修復，1 個需人工確認
-- 🟡 低風險（影響體驗）：**9 個** → 2 個已修復，5 個需人工確認
-- 🟢 建議改善：**8 個** → 不影響交易安全
+- 🔴 高風險（直接虧損）：**3 個** → 全部已修復（含 F-1 擴展至所有 bot）
+- 🟠 中風險（系統不穩）：**6 個** → 全部已修復（含 S-3 Rate Limiter 整合）
+- 🟡 低風險（影響體驗）：**9 個** → 4 個已修復，3 個需人工確認
+- 🟢 建議改善：**7 個** → 不影響交易安全
 
 ---
 
@@ -198,8 +199,8 @@
 6. **填充去重** — 防止 WS+sync 競態雙重處理
 
 ### 殘留風險：
-- **S-3（Rate Limiter 未整合）**：低頻交易影響不大，多 bot 並行需修復
-- **M-1（資金費率迴避）**：每次結算最多損失 0.01-0.03% 名義價值
+- **M-1（資金費率迴避）**：每次結算最多損失 0.01-0.03% 名義價值（需人工確認是否啟用）
+- **M-3（錯誤碼分類）**：-2010 包含多種拒絕原因，需實際運行後分析
 - **M-6（靜默異常）**：主要在非關鍵路徑，不直接影響交易
 
 ### 上線建議：

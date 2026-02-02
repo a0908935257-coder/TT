@@ -1344,6 +1344,16 @@ class BollingerBot(BaseBot):
             else:
                 close_side = OrderSide.BUY
 
+            # FIX F-1: Validate SL against liquidation price
+            validated_sl = await self._validate_sl_against_liquidation(
+                stop_price=self._position.stop_loss_price,
+                position_side=self._position.side,
+                entry_price=self._position.entry_price,
+                symbol=self._config.symbol,
+            )
+            if validated_sl != self._position.stop_loss_price:
+                self._position.stop_loss_price = validated_sl
+
             # Place STOP_MARKET order
             sl_order = await self._exchange.futures_create_order(
                 symbol=self._config.symbol,
