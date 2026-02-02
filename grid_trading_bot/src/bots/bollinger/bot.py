@@ -894,7 +894,7 @@ class BollingerBot(BaseBot):
         grid_spacing = self._grid.grid_spacing
         if side == PositionSide.LONG:
             tp_price = entry_price + (grid_spacing * self._config.take_profit_grids)
-            sl_price = entry_price * (Decimal("1") - self._config.stop_loss_pct)
+            sl_price = self._position.stop_loss_price or entry_price * (Decimal("1") - self._config.stop_loss_pct)
 
             # Check take profit (kline high reached TP)
             if kline_high >= tp_price:
@@ -921,7 +921,7 @@ class BollingerBot(BaseBot):
 
         else:  # SHORT
             tp_price = entry_price - (grid_spacing * self._config.take_profit_grids)
-            sl_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
+            sl_price = self._position.stop_loss_price or entry_price * (Decimal("1") + self._config.stop_loss_pct)
 
             # Check take profit (kline low reached TP)
             if kline_low <= tp_price:

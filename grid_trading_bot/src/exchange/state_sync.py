@@ -1233,8 +1233,8 @@ class StateSynchronizer:
             elif cached.is_closed and exchange.is_open:
                 conflicts.append(f"Status mismatch: local={cached.status}, exchange={exchange.status}")
 
-        # Filled quantity conflict
-        if cached.filled_quantity > exchange.filled_quantity:
+        # Filled quantity conflict (detect both directions)
+        if cached.filled_quantity != exchange.filled_quantity:
             conflicts.append(
                 f"Filled qty mismatch: local={cached.filled_quantity}, "
                 f"exchange={exchange.filled_quantity}"

@@ -794,6 +794,7 @@ class OrderRouter:
                 order_type=child.order_type.value,
                 quantity=child.quantity,
                 price=child.price,
+                market_type=plan.request.market_type,
                 client_order_id=child.client_order_id,
             )
 
