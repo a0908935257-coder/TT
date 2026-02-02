@@ -171,7 +171,7 @@ class BotRegistry:
 
             # Get market_type from config if available
             if "market_type" in config:
-                market_type = MarketType(config["market_type"])
+                market_type = MarketType(config["market_type"].upper())
 
             # Create BotInfo
             bot_info = BotInfo(

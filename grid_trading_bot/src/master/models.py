@@ -11,14 +11,7 @@ from enum import Enum
 from typing import Any, Optional
 import uuid
 
-from src.core.models import BotState, VALID_STATE_TRANSITIONS  # noqa: F401 - re-export
-
-
-class MarketType(str, Enum):
-    """Market type enumeration."""
-
-    SPOT = "spot"
-    FUTURES = "futures"
+from src.core.models import BotState, MarketType, VALID_STATE_TRANSITIONS  # noqa: F401 - re-export
 
 
 class BotType(str, Enum):
@@ -78,7 +71,7 @@ class BotInfo:
             bot_id=data["bot_id"],
             bot_type=BotType(data["bot_type"]),
             symbol=data["symbol"],
-            market_type=MarketType(data["market_type"]),
+            market_type=MarketType(data["market_type"].upper()),
             state=BotState(data.get("state", "registered")),
             config=data.get("config", {}),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(timezone.utc),
