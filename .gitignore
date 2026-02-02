@@ -83,6 +83,9 @@ secrets.json
 # Jupyter
 .ipynb_checkpoints/
 
+# Validation results
+validation_results/
+
 # Testing
 .pytest_cache/
 .coverage
