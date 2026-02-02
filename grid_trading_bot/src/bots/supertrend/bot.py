@@ -720,16 +720,33 @@ class SupertrendBot(BaseBot):
             for pos in positions:
                 if pos.symbol == self._config.symbol and pos.quantity != Decimal("0"):
                     side = PositionSide.LONG if pos.quantity > 0 else PositionSide.SHORT
+
+                    # Calculate stop loss price (same logic as _open_position)
+                    if side == PositionSide.LONG:
+                        stop_loss_price = pos.entry_price * (Decimal("1") - self._config.stop_loss_pct)
+                    else:
+                        stop_loss_price = pos.entry_price * (Decimal("1") + self._config.stop_loss_pct)
+
+                    # Normalize stop loss price
+                    symbol_info = await self._get_symbol_info(self._config.symbol)
+                    stop_loss_price = self._normalize_price(stop_loss_price, symbol_info)
+
                     self._position = Position(
                         side=side,
                         entry_price=pos.entry_price,
                         quantity=abs(pos.quantity),
                         entry_time=datetime.now(timezone.utc),
                         unrealized_pnl=pos.unrealized_pnl,
+                        stop_loss_price=stop_loss_price,
                         highest_price=pos.entry_price,
                         lowest_price=pos.entry_price,
                     )
                     logger.info(f"Synced existing position: {side.value} {self._position.quantity}")
+
+                    # Place exchange stop loss order if enabled
+                    if self._config.use_exchange_stop_loss:
+                        await self._place_stop_loss_order()
+
                     break
 
         except Exception as e:
