@@ -298,23 +298,7 @@ class BinanceWebSocket:
                                 await asyncio.sleep(1)
                             else:
                                 logger.error("Failed to resubscribe after 3 attempts")
-            elif self._subscriptions:
-                # Ensure lock exists (connect() initializes it, but be safe)
-                if self._subscriptions_lock is None:
-                    self._subscriptions_lock = asyncio.Lock()
-                async with self._subscriptions_lock:
-                    streams_to_resubscribe = list(self._subscriptions.keys())
-                    if streams_to_resubscribe:
-                        logger.info(f"Resubscribing to {len(streams_to_resubscribe)} streams")
-                        for attempt in range(3):
-                            success = await self._send_subscribe(streams_to_resubscribe)
-                            if success:
-                                logger.info(f"Successfully resubscribed to {len(streams_to_resubscribe)} streams")
-                                break
-                            logger.warning(f"Resubscription attempt {attempt + 1}/3 failed")
-                            await asyncio.sleep(1)
-                        else:
-                            logger.error("Failed to resubscribe after 3 attempts")
+                                return False
 
             # Notify caller about reconnection (e.g., to trigger position resync)
             logger.warning(
@@ -396,6 +380,9 @@ class BinanceWebSocket:
         }
 
         try:
+            if not self._ws:
+                logger.error("WebSocket not connected, cannot subscribe")
+                return False
             await self._ws.send(json.dumps(message))
             logger.debug(f"Subscribed to: {streams}")
             return True
@@ -413,6 +400,9 @@ class BinanceWebSocket:
         }
 
         try:
+            if not self._ws:
+                logger.error("WebSocket not connected, cannot unsubscribe")
+                return False
             await self._ws.send(json.dumps(message))
             logger.debug(f"Unsubscribed from: {streams}")
             return True

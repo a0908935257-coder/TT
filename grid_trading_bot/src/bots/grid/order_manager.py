@@ -789,6 +789,10 @@ class GridOrderManager:
                         if order_id in self._order_level_map:
                             del self._order_level_map[order_id]
 
+                        # Clean up stale tracking data
+                        self._order_created_times.pop(order_id, None)
+                        self._sync_failure_counts.pop(order_id, None)
+
                         # Update in database
                         await self._data_manager.update_order(order, bot_id=self._bot_id)
 

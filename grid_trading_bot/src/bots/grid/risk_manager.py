@@ -1725,13 +1725,16 @@ class GridRiskManager:
                 logger.warning(f"Cannot pause from state: {self._bot_state.value}")
                 return False
 
+            # Save original state for rollback
+            original_risk_state = self._state
+
             # Update RiskState FIRST to ensure consistency when callbacks are triggered
             self._state = RiskState.PAUSED
 
             # Update BotState (this triggers callbacks/notifications)
             if not await self.change_state(BotState.PAUSED, reason):
-                # Rollback RiskState on failure
-                self._state = RiskState.NORMAL
+                # Rollback RiskState to original (could be BREAKOUT_*, not just NORMAL)
+                self._state = original_risk_state
                 logger.error("Failed to change BotState to PAUSED")
                 return False
 

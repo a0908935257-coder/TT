@@ -860,7 +860,7 @@ class ExchangeClient:
             request_id = f"{bot_id}_{self._request_counter}_{uuid.uuid4().hex[:8]}"
 
         # Create future for this event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         request = OrderRequest(
