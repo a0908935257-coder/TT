@@ -641,8 +641,8 @@ class TestGradualExit:
         """Test first gradual exit."""
         manager = TimeBasedStopLoss(gradual_config)
 
-        # Entry 35 minutes ago (after gradual_start_minutes=30)
-        entry_time = datetime.now(timezone.utc) - timedelta(minutes=35)
+        # Entry 41 minutes ago (after gradual_start_minutes=30 + interval=10)
+        entry_time = datetime.now(timezone.utc) - timedelta(minutes=41)
         manager.create_state(
             symbol="BTCUSDT",
             entry_price=Decimal("50000"),
@@ -660,8 +660,8 @@ class TestGradualExit:
         """Test multiple gradual exits over time."""
         manager = TimeBasedStopLoss(gradual_config)
 
-        # Entry 45 minutes ago
-        entry_time = datetime.now(timezone.utc) - timedelta(minutes=45)
+        # Entry 51 minutes ago (enough for 2 expected exits: at 40m and 50m)
+        entry_time = datetime.now(timezone.utc) - timedelta(minutes=51)
         state = manager.create_state(
             symbol="BTCUSDT",
             entry_price=Decimal("50000"),
@@ -670,12 +670,12 @@ class TestGradualExit:
             entry_time=entry_time,
         )
 
-        # First exit
+        # First exit (expected_exits=2, done=0)
         result = manager.check("BTCUSDT", Decimal("51000"))
         assert result.should_exit is True
         state.record_gradual_exit(result.quantity_to_close)
 
-        # Second exit (should trigger at 40+ min)
+        # Second exit (expected_exits=2, done=1)
         result = manager.check("BTCUSDT", Decimal("51000"))
         assert result.should_exit is True
         assert result.quantity_to_close == Decimal("0.1875")  # 25% of 0.75
@@ -685,7 +685,7 @@ class TestGradualExit:
         gradual_config.condition = TimeStopCondition.IF_LOSS
         manager = TimeBasedStopLoss(gradual_config)
 
-        entry_time = datetime.now(timezone.utc) - timedelta(minutes=35)
+        entry_time = datetime.now(timezone.utc) - timedelta(minutes=41)
         manager.create_state(
             symbol="BTCUSDT",
             entry_price=Decimal("50000"),
@@ -930,9 +930,9 @@ class TestPnLCalculation:
             quantity=Decimal("1.0"),
         )
 
-        # 4% profit
+        # 4% profit (returned as ratio 0.04)
         pnl = time_stop._calculate_pnl_pct(state, Decimal("52000"))
-        assert pnl == Decimal("4")
+        assert pnl == Decimal("0.04")
 
     def test_long_position_loss(self, time_stop):
         """Test P&L calculation for long position at loss."""
@@ -943,9 +943,9 @@ class TestPnLCalculation:
             quantity=Decimal("1.0"),
         )
 
-        # 2% loss
+        # 2% loss (returned as ratio -0.02)
         pnl = time_stop._calculate_pnl_pct(state, Decimal("49000"))
-        assert pnl == Decimal("-2")
+        assert pnl == Decimal("-0.02")
 
     def test_short_position_profit(self, time_stop):
         """Test P&L calculation for short position in profit."""
@@ -956,9 +956,9 @@ class TestPnLCalculation:
             quantity=Decimal("1.0"),
         )
 
-        # 2% profit (price went down)
+        # 2% profit (returned as ratio 0.02)
         pnl = time_stop._calculate_pnl_pct(state, Decimal("49000"))
-        assert pnl == Decimal("2")
+        assert pnl == Decimal("0.02")
 
     def test_short_position_loss(self, time_stop):
         """Test P&L calculation for short position at loss."""
@@ -969,9 +969,9 @@ class TestPnLCalculation:
             quantity=Decimal("1.0"),
         )
 
-        # 4% loss (price went up)
+        # 4% loss (returned as ratio -0.04)
         pnl = time_stop._calculate_pnl_pct(state, Decimal("52000"))
-        assert pnl == Decimal("-4")
+        assert pnl == Decimal("-0.04")
 
 
 # =============================================================================

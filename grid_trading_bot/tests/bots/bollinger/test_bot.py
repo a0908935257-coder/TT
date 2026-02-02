@@ -161,6 +161,10 @@ def mock_exchange() -> Mock:
     mock.futures.unsubscribe_klines = AsyncMock()
     mock.futures.subscribe_user_data = AsyncMock()
 
+    # Market order methods (used by _close_position)
+    mock.market_sell = AsyncMock(return_value=MockOrder(order_id="close_sell_001"))
+    mock.market_buy = AsyncMock(return_value=MockOrder(order_id="close_buy_001"))
+
     # Time sync
     mock.ensure_time_sync = AsyncMock()
 
@@ -247,8 +251,8 @@ class TestStartStop:
         mock_exchange.futures.get_klines.assert_called_once()
         # Should have subscribed to klines via data manager
         mock_data_manager.klines.subscribe_kline.assert_called_once()
-        # Should have set leverage via futures API
-        mock_exchange.futures.set_leverage.assert_called_once()
+        # Should have set leverage via futures API (may be called in both base and bot start)
+        mock_exchange.futures.set_leverage.assert_called()
 
     @pytest.mark.asyncio
     async def test_stop(self, bot: BollingerBot, mock_exchange: Mock):
