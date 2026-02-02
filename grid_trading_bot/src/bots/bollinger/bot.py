@@ -27,6 +27,7 @@ Bollinger BB_TREND_GRID Bot - 趨勢網格交易機器人.
 import asyncio
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Dict, List, Optional
@@ -199,7 +200,7 @@ class BollingerBot(BaseBot):
             interval=self._config.timeframe,
             limit=200,
         )
-        self._klines = list(klines)
+        self._klines = deque(klines, maxlen=300)
         logger.info(f"Loaded {len(self._klines)} historical klines")
 
         # 4. Initialize BB calculator
@@ -592,8 +593,6 @@ class BollingerBot(BaseBot):
         try:
             # Update klines list
             self._klines.append(kline)
-            if len(self._klines) > 300:
-                self._klines = self._klines[-300:]
 
             # Increment bar counter for timeout tracking
             self._current_bar += 1
@@ -1097,7 +1096,7 @@ class BollingerBot(BaseBot):
             # Apply position size reduction from oscillation prevention
             size_mult = self.get_position_size_reduction()
             if size_mult < Decimal("1.0"):
-                quantity = (quantity * size_mult).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
+                quantity = self._normalize_quantity(quantity * size_mult)
                 logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
                 if quantity <= 0:
                     return False
@@ -1183,8 +1182,10 @@ class BollingerBot(BaseBot):
                     )
 
                     if is_confirmed and fill_data:
-                        fill_price = Decimal(fill_data.get("avg_price", str(price)))
-                        fill_qty = Decimal(fill_data.get("filled_qty", str(order.filled_qty or quantity)))
+                        raw_price = fill_data.get("avg_price")
+                        fill_price = Decimal(str(raw_price)) if raw_price is not None else price
+                        raw_qty = fill_data.get("filled_qty")
+                        fill_qty = Decimal(str(raw_qty)) if raw_qty is not None else (order.filled_qty or quantity)
                     else:
                         fill_price = order.avg_price if order.avg_price else price
                         fill_qty = order.filled_qty if order.filled_qty else quantity
@@ -1410,20 +1411,15 @@ class BollingerBot(BaseBot):
             quantity = self._position.quantity
 
             # Place closing order (through order queue for cross-bot coordination)
-            if side == PositionSide.LONG:
-                order = await self._exchange.market_sell(
-                    symbol=self._config.symbol,
-                    quantity=quantity,
-                    market=MarketType.FUTURES,
-                    bot_id=self._bot_id,
-                )
-            else:
-                order = await self._exchange.market_buy(
-                    symbol=self._config.symbol,
-                    quantity=quantity,
-                    market=MarketType.FUTURES,
-                    bot_id=self._bot_id,
-                )
+            close_side = "SELL" if side == PositionSide.LONG else "BUY"
+            order = await self._exchange.futures_create_order(
+                symbol=self._config.symbol,
+                side=close_side,
+                order_type="MARKET",
+                quantity=quantity,
+                reduce_only=True,
+                bot_id=self._bot_id,
+            )
 
             if order:
                 exit_price = order.avg_price if order.avg_price else price

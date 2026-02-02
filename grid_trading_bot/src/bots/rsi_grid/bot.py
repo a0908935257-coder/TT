@@ -26,6 +26,7 @@ import asyncio
 import math
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Dict, List, Optional
@@ -487,8 +488,8 @@ class RSIGridBot(BaseBot):
                 limit=limit,
             )
 
-            self._klines = klines
-            self._closes = [k.close for k in klines]
+            self._klines = deque(klines, maxlen=500)
+            self._closes = deque([k.close for k in klines], maxlen=500)
 
             logger.info(f"Loaded {len(klines)} historical klines")
 
@@ -762,7 +763,7 @@ class RSIGridBot(BaseBot):
             # Apply position size reduction from oscillation prevention
             size_mult = self.get_position_size_reduction()
             if size_mult < Decimal("1.0"):
-                quantity = (quantity * size_mult).quantize(Decimal("0.001"))
+                quantity = self._normalize_quantity(quantity * size_mult)
                 logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
                 if quantity <= 0:
                     return False
@@ -848,8 +849,10 @@ class RSIGridBot(BaseBot):
                     )
 
                     if is_confirmed and fill_data:
-                        fill_price = Decimal(fill_data.get("avg_price", str(price)))
-                        fill_qty = Decimal(fill_data.get("filled_qty", str(order.filled_qty or quantity)))
+                        raw_price = fill_data.get("avg_price")
+                        fill_price = Decimal(str(raw_price)) if raw_price is not None else price
+                        raw_qty = fill_data.get("filled_qty")
+                        fill_qty = Decimal(str(raw_qty)) if raw_qty is not None else (order.filled_qty or quantity)
                     else:
                         fill_price = order.avg_price if order.avg_price else price
                         fill_qty = order.filled_qty if order.filled_qty else quantity
@@ -1003,7 +1006,7 @@ class RSIGridBot(BaseBot):
 
         try:
             close_qty = quantity or self._position.quantity
-            close_qty = close_qty.quantize(Decimal("0.001"))
+            close_qty = self._normalize_quantity(close_qty)
 
             is_full_close = (quantity is None or quantity >= self._position.quantity)
             if is_full_close and self._position.stop_loss_order_id:

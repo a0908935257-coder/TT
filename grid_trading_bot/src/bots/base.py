@@ -8763,6 +8763,17 @@ class BaseBot(ABC):
                     self._sl_protection_state["consecutive_failures"] = 0
                     self._sl_protection_state["last_known_sl_status"] = "ACTIVE"
 
+                elif order_status.get("status") == "PARTIALLY_FILLED":
+                    result["is_active"] = True
+                    filled_qty = Decimal(str(order_status.get("filled_qty", "0")))
+                    logger.warning(
+                        f"[{self._bot_id}] Stop loss order {stop_loss_order_id} "
+                        f"partially filled: {filled_qty}/{expected_quantity} — "
+                        f"remaining position may be unprotected"
+                    )
+                    self._sl_protection_state["consecutive_failures"] = 0
+                    self._sl_protection_state["last_known_sl_status"] = "PARTIALLY_FILLED"
+
                 elif order_status.get("status") in ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                     result["is_failed"] = True
                     result["failure_reason"] = order_status.get("status")

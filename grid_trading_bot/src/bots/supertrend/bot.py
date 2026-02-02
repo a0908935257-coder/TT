@@ -120,10 +120,10 @@ class SupertrendBot(BaseBot):
         self._grid_spacing: Optional[Decimal] = None
         self._grid_initialized: bool = False
         self._current_atr: Optional[Decimal] = None
-        self._recent_klines: List[Kline] = []  # For ATR calculation
+        self._recent_klines: deque = deque(maxlen=200)  # For ATR calculation
 
         # RSI Filter (RSI 過濾器)
-        self._rsi_closes: list[Decimal] = []  # Recent closes for RSI calculation
+        self._rsi_closes: deque[Decimal] = deque(maxlen=self._rsi_period + 50)  # Recent closes for RSI calculation
         self._current_rsi: Optional[Decimal] = None
         self._rsi_period = config.rsi_period if hasattr(config, 'rsi_period') else 14
         self._avg_gain: Optional[Decimal] = None  # Wilder's smoothing state
@@ -763,11 +763,6 @@ class SupertrendBot(BaseBot):
         """
         self._rsi_closes.append(close)
 
-        # Keep only enough closes for RSI calculation
-        max_closes = self._rsi_period + 50
-        if len(self._rsi_closes) > max_closes:
-            self._rsi_closes = self._rsi_closes[-max_closes:]
-
         if len(self._rsi_closes) < self._rsi_period + 1:
             return None
 
@@ -1249,9 +1244,6 @@ class SupertrendBot(BaseBot):
 
             # Store kline for ATR calculation
             self._recent_klines.append(kline)
-            max_klines = self._config.atr_period + 50
-            if len(self._recent_klines) > max_klines:
-                self._recent_klines = self._recent_klines[-max_klines:]
 
             # Update indicator
             supertrend = self._indicator.update(kline)
@@ -1638,8 +1630,10 @@ class SupertrendBot(BaseBot):
                     )
 
                     if is_confirmed and fill_data:
-                        fill_price = Decimal(fill_data.get("avg_price", str(price)))
-                        fill_qty = Decimal(fill_data.get("filled_qty", str(order.filled_qty or quantity)))
+                        raw_price = fill_data.get("avg_price")
+                        fill_price = Decimal(str(raw_price)) if raw_price is not None else price
+                        raw_qty = fill_data.get("filled_qty")
+                        fill_qty = Decimal(str(raw_qty)) if raw_qty is not None else (order.filled_qty or quantity)
                     else:
                         fill_price = order.avg_price if order.avg_price else price
                         fill_qty = order.filled_qty if order.filled_qty else quantity
