@@ -126,6 +126,8 @@ class SupertrendBot(BaseBot):
         self._rsi_closes: list[Decimal] = []  # Recent closes for RSI calculation
         self._current_rsi: Optional[Decimal] = None
         self._rsi_period = config.rsi_period if hasattr(config, 'rsi_period') else 14
+        self._avg_gain: Optional[Decimal] = None  # Wilder's smoothing state
+        self._avg_loss: Optional[Decimal] = None
 
         # Statistics
         self._total_pnl = Decimal("0")
@@ -769,30 +771,44 @@ class SupertrendBot(BaseBot):
         if len(self._rsi_closes) < self._rsi_period + 1:
             return None
 
-        # Calculate gains and losses
-        gains = []
-        losses = []
-        for i in range(-self._rsi_period, 0):
-            change = float(self._rsi_closes[i]) - float(self._rsi_closes[i - 1])
-            if change > 0:
-                gains.append(change)
-                losses.append(0)
-            else:
-                gains.append(0)
-                losses.append(abs(change))
+        # Wilder's Smoothing RSI calculation
+        # Use stored avg_gain/avg_loss state for proper smoothing
+        if not hasattr(self, '_avg_gain') or self._avg_gain is None:
+            # First calculation: use simple average to seed
+            gains = []
+            losses = []
+            closes = self._rsi_closes
+            start_idx = len(closes) - self._rsi_period - 1
+            for i in range(start_idx + 1, len(closes)):
+                change = Decimal(str(closes[i])) - Decimal(str(closes[i - 1]))
+                if change > 0:
+                    gains.append(change)
+                    losses.append(Decimal("0"))
+                else:
+                    gains.append(Decimal("0"))
+                    losses.append(abs(change))
 
-        avg_gain = sum(gains) / self._rsi_period
-        avg_loss = sum(losses) / self._rsi_period
+            self._avg_gain = sum(gains) / self._rsi_period
+            self._avg_loss = sum(losses) / self._rsi_period
+        else:
+            # Wilder's smoothing: avg = (prev_avg * (period-1) + current) / period
+            change = Decimal(str(self._rsi_closes[-1])) - Decimal(str(self._rsi_closes[-2]))
+            current_gain = change if change > 0 else Decimal("0")
+            current_loss = abs(change) if change < 0 else Decimal("0")
+
+            period = self._rsi_period
+            self._avg_gain = (self._avg_gain * (period - 1) + current_gain) / period
+            self._avg_loss = (self._avg_loss * (period - 1) + current_loss) / period
 
         # Handle edge cases to avoid division by zero
-        if avg_loss == 0 and avg_gain == 0:
+        if self._avg_loss == 0 and self._avg_gain == 0:
             return Decimal("50")  # Neutral RSI when no movement
-        if avg_loss == 0:
+        if self._avg_loss == 0:
             return Decimal("100")
 
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return Decimal(str(round(rsi, 2)))
+        rs = self._avg_gain / self._avg_loss
+        rsi = Decimal("100") - (Decimal("100") / (1 + rs))
+        return rsi.quantize(Decimal("0.01"))
 
     def _check_rsi_filter(self, side: PositionSide) -> bool:
         """

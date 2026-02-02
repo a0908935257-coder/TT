@@ -390,7 +390,11 @@ class RiskEngine:
             logger.info(f"Risk level changed: {old_level} -> {level}")
             if self._on_level_change:
                 try:
-                    self._on_level_change(old_level, level)
+                    import asyncio
+                    if asyncio.iscoroutinefunction(self._on_level_change):
+                        await self._on_level_change(old_level, level)
+                    else:
+                        self._on_level_change(old_level, level)
                 except Exception as e:
                     logger.error(f"Error in level change callback: {e}")
 

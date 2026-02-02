@@ -237,7 +237,11 @@ class EmergencyStop:
         # 5. Call callback if set
         if self._on_activate:
             try:
-                self._on_activate(reason)
+                import asyncio
+                if asyncio.iscoroutinefunction(self._on_activate):
+                    await self._on_activate(reason)
+                else:
+                    self._on_activate(reason)
             except Exception as e:
                 logger.error(f"Error in on_activate callback: {e}")
 

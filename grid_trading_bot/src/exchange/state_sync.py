@@ -1342,7 +1342,7 @@ class StateSynchronizer:
         cross_wallet = Decimal(str(data.get("cw", 0)))
         return BalanceState(
             asset=asset,
-            free=Decimal(str(data.get("free", 0))) if "free" in data else (wallet_balance - cross_wallet),
+            free=Decimal(str(data.get("free", 0))) if "free" in data else max(Decimal("0"), wallet_balance - cross_wallet),
             locked=Decimal(str(data.get("locked", 0))) if "locked" in data else cross_wallet,
             updated_at=datetime.now(timezone.utc),
         )

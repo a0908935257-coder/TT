@@ -961,7 +961,7 @@ class VWAPAlgorithm(BaseExecutionAlgorithm):
 
                 if self._config.adaptive_participation:
                     # Adjust based on how much we've filled vs expected
-                    elapsed_pct = self._progress.elapsed_seconds / (self._config.duration_minutes * 60)
+                    elapsed_pct = Decimal(str(self._progress.elapsed_seconds)) / Decimal(str(self._config.duration_minutes * 60))
                     expected_fill_pct = elapsed_pct * Decimal("100")
                     actual_fill_pct = self._progress.fill_pct
 

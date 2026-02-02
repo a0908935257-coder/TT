@@ -107,6 +107,9 @@ class GridFuturesBot(BaseBot):
         self._closes: List[Decimal] = []
         self._klines: List[Kline] = []
 
+        # Reentrancy guard for kline processing
+        self._kline_lock = asyncio.Lock()
+
         # Statistics
         self._grid_stats = GridFuturesStats()
 
@@ -1172,6 +1175,16 @@ class GridFuturesBot(BaseBot):
         if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
+        # Reentrancy guard: prevent concurrent kline processing
+        if self._kline_lock.locked():
+            logger.debug("Kline processing already in progress, skipping")
+            return
+
+        async with self._kline_lock:
+            await self._on_kline_inner(kline)
+
+    async def _on_kline_inner(self, kline: Kline) -> None:
+        """Inner kline processing logic, guarded by _kline_lock."""
         # === Data Protection: Validate data quality ===
         # Check data freshness
         if not self._validate_kline_freshness(kline):
@@ -1352,6 +1365,7 @@ class GridFuturesBot(BaseBot):
                                 self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                             self._last_triggered_level = i  # Track for hysteresis
                             logger.info(f"Long entry at grid level {i}: {grid_price}")
+                            break  # Only one entry/exit per kline
 
                 # Long exit: K 線高點觸及 grid level
                 elif level.state == GridLevelState.LONG_FILLED and kline_high >= grid_price:
@@ -1368,6 +1382,7 @@ class GridFuturesBot(BaseBot):
                             # Clear hysteresis on exit to allow fresh entry
                             if self._last_triggered_level == i:
                                 self._last_triggered_level = None
+                            break  # Only one entry/exit per kline
                     else:
                         # No position but level marked as filled - reset state
                         level.state = GridLevelState.EMPTY
@@ -1393,6 +1408,7 @@ class GridFuturesBot(BaseBot):
                                 self._signal_cooldown = self._cooldown_bars  # Reset cooldown
                             self._last_triggered_level = i  # Track for hysteresis
                             logger.info(f"Short entry at grid level {i}: {grid_price}")
+                            break  # Only one entry/exit per kline
 
                 # Short exit: K 線低點觸及 grid level
                 elif level.state == GridLevelState.SHORT_FILLED and kline_low <= grid_price:
@@ -1409,6 +1425,7 @@ class GridFuturesBot(BaseBot):
                             # Clear hysteresis on exit to allow fresh entry
                             if self._last_triggered_level == i:
                                 self._last_triggered_level = None
+                            break  # Only one entry/exit per kline
                     else:
                         # No position but level marked as filled - reset state
                         level.state = GridLevelState.EMPTY

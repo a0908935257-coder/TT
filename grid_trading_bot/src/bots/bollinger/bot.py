@@ -108,6 +108,9 @@ class BollingerBot(BaseBot):
         self._current_sma: Optional[Decimal] = None
         self._klines: List[Kline] = []
 
+        # Reentrancy guard for kline processing
+        self._kline_lock = asyncio.Lock()
+
         # Capital tracking
         self._capital: Decimal = Decimal("0")
         self._initial_capital: Decimal = Decimal("0")
@@ -545,6 +548,16 @@ class BollingerBot(BaseBot):
         if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
+        # Reentrancy guard: prevent concurrent kline processing
+        if self._kline_lock.locked():
+            logger.debug("Kline processing already in progress, skipping")
+            return
+
+        async with self._kline_lock:
+            await self._on_kline_inner(kline)
+
+    async def _on_kline_inner(self, kline: Kline) -> None:
+        """Inner kline processing logic, guarded by _kline_lock."""
         # === Data Protection: Validate data quality ===
         # Check data freshness
         if not self._validate_kline_freshness(kline):

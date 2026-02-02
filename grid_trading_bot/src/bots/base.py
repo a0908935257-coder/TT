@@ -2259,6 +2259,8 @@ class BaseBot(ABC):
 
         try:
             # Calculate required margin
+            if leverage <= 0:
+                raise ValueError(f"Invalid leverage: {leverage}, must be > 0")
             notional_value = quantity * price
             required_margin = notional_value / Decimal(leverage)
 
@@ -5350,7 +5352,7 @@ class BaseBot(ABC):
             for attempt in range(max_retries):
                 try:
                     # Adjust price for each attempt (more aggressive)
-                    adjustment_pct = Decimal(str(0.1 * (attempt + 1))) / 100
+                    adjustment_pct = Decimal("0.1") * Decimal(str(attempt + 1)) / Decimal("100")
 
                     if side.upper() == "BUY":
                         # For BUY: increase price (more aggressive)
@@ -8863,8 +8865,9 @@ class BaseBot(ABC):
                 stop_price = entry_price * (Decimal("1") + stop_loss_pct)
                 close_side = "BUY"
 
-            # Round to appropriate precision
-            stop_price = stop_price.quantize(Decimal("0.1"))
+            # Round to appropriate precision using symbol tick_size
+            symbol_info = await self._get_symbol_info(symbol)
+            stop_price = self._normalize_price(stop_price, symbol_info)
 
             # Place new stop loss order
             new_order = await self._exchange.futures_create_order(
@@ -9333,7 +9336,8 @@ class BaseBot(ABC):
                 # For short position stop, limit should be above stop price
                 limit_price = stop_price * (Decimal("1") + limit_buffer_pct)
 
-            limit_price = limit_price.quantize(Decimal("0.1"))
+            symbol_info = await self._get_symbol_info(symbol)
+            limit_price = self._normalize_price(limit_price, symbol_info)
             result["limit_price"] = limit_price
 
             # Place STOP_LIMIT order

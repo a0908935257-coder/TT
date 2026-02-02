@@ -380,8 +380,8 @@ class FundManager:
                         # Ratios are defined against total (e.g. 40%+25%+15%+10%=90%,
                         # remaining 10% is implicitly the reserve)
                         total = self._fund_pool.total_balance
-                        allocated = self._fund_pool.allocated_balance
-                        if total - allocated <= 0:
+                        unallocated = self._fund_pool.get_unallocated()
+                        if unallocated <= 0:
                             logger.info("No unallocated funds available for dispatch")
                             return result
 

@@ -11,20 +11,12 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from src.core import get_logger
-from src.core.models import MarketType
+from src.core.models import MarketType, PositionSide
 
 logger = get_logger(__name__)
-
-
-class PositionSide(str, Enum):
-    """Position side."""
-    LONG = "long"
-    SHORT = "short"
-    BOTH = "both"  # Hedge mode
 
 
 @dataclass

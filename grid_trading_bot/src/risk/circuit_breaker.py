@@ -224,7 +224,11 @@ class CircuitBreaker:
         # Call callback if set
         if self._on_trigger:
             try:
-                self._on_trigger(reason)
+                import asyncio
+                if asyncio.iscoroutinefunction(self._on_trigger):
+                    await self._on_trigger(reason)
+                else:
+                    self._on_trigger(reason)
             except Exception as e:
                 logger.error(f"Error in on_trigger callback: {e}")
 
@@ -272,7 +276,11 @@ class CircuitBreaker:
         # Call callback if set
         if self._on_reset:
             try:
-                self._on_reset()
+                import asyncio
+                if asyncio.iscoroutinefunction(self._on_reset):
+                    await self._on_reset()
+                else:
+                    self._on_reset()
             except Exception as e:
                 logger.error(f"Error in on_reset callback: {e}")
 
