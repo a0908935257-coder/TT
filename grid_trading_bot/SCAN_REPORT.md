@@ -147,8 +147,9 @@
 
 ### 第14步：依賴項安全掃描
 - 狀態：⚠️ 需人工確認
+- ✅ 已修復：
+  6. 已產生 `requirements.lock`（使用 pip-tools pip-compile 鎖定所有間接依賴精確版本）
 - 需人工確認：
-  6. 無 lock file（requirements.txt 有版本固定，但無 pip-tools/poetry lock）
   7. 建議執行 `pip audit` 檢查已知漏洞
 
 ### 第15步：邊界條件與特殊情況掃描
