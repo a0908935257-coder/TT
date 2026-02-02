@@ -271,11 +271,17 @@ class BinanceFuturesAPI:
         # Try to parse JSON
         try:
             data = await response.json()
-        except Exception:
+        except Exception as e:
             text = await response.text()
             if status >= 400:
                 raise ExchangeError(f"HTTP {status}: {text}")
-            return {}
+            logger.error(
+                f"JSON parse failed for response (status={status}): {e}. "
+                f"Response text: {text[:200] if text else '(empty)'}"
+            )
+            raise ExchangeError(
+                f"Unexpected non-JSON response (HTTP {status}): {text[:200] if text else '(empty)'}"
+            )
 
         # Check for Binance error (but not success codes)
         if isinstance(data, dict) and "code" in data and "msg" in data:
