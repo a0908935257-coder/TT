@@ -759,11 +759,20 @@ class FundPool:
         Args:
             snapshot: Allocation snapshot to restore
         """
+        # Find bots to delete (in current allocations but not in snapshot)
+        bots_to_delete = set(self._allocations.keys()) - set(snapshot.keys())
+
         self._allocations = snapshot.copy()
         # Persist all restored allocations to database
         for bot_id, amount in self._allocations.items():
             self._persist_allocation(bot_id, amount)
-        logger.info(f"Restored allocation snapshot with {len(snapshot)} bots")
+        # Remove stale allocations from database
+        for bot_id in bots_to_delete:
+            self._persist_allocation(bot_id, Decimal("0"))
+        logger.info(
+            f"Restored allocation snapshot with {len(snapshot)} bots, "
+            f"removed {len(bots_to_delete)} stale allocations"
+        )
 
     def get_allocation_diff(
         self,

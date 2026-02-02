@@ -936,6 +936,7 @@ class SupertrendBot(BaseBot):
             self._grid_levels.append(GridLevel(index=i, price=price))
 
         self._grid_initialized = True
+        self._last_triggered_level = None  # Clear stale hysteresis state
         logger.info(
             f"Grid initialized: {self._lower_price:.2f} - {self._upper_price:.2f}, "
             f"{self._config.grid_count} levels, spacing={self._grid_spacing:.2f}"
@@ -999,6 +1000,7 @@ class SupertrendBot(BaseBot):
             self._grid_levels.append(GridLevel(index=i, price=price))
 
         self._grid_initialized = True
+        self._last_triggered_level = None  # Clear stale hysteresis state
         logger.info(
             f"HYBRID_GRID initialized: {self._lower_price:.2f} - {self._upper_price:.2f}, "
             f"{self._config.grid_count} levels, bias={bias}, trend={self._current_trend}"
@@ -1143,7 +1145,7 @@ class SupertrendBot(BaseBot):
             + (f", RSI={self._current_rsi:.1f}" if self._current_rsi else "")
         )
 
-        success = await self._open_position(side, actual_price, tp_price)
+        success = await self._open_position(side, actual_price, tp_price, sl_multiplier=sl_mult)
         if success:
             self._signal_cooldown = self._cooldown_bars
 
@@ -1405,7 +1407,8 @@ class SupertrendBot(BaseBot):
         self,
         side: PositionSide,
         price: Decimal,
-        take_profit: Optional[Decimal] = None
+        take_profit: Optional[Decimal] = None,
+        sl_multiplier: Decimal = Decimal("1"),
     ) -> bool:
         """
         Open a new position (TREND_GRID mode).
@@ -1645,11 +1648,12 @@ class SupertrendBot(BaseBot):
                         f"Slippage exceeded limit ({slippage_pct:.4f}% > {self.DEFAULT_MAX_SLIPPAGE_PCT}%)"
                     )
 
-                # Calculate stop loss price
+                # Calculate stop loss price (apply sl_multiplier for hybrid grid)
+                effective_sl_pct = self._config.stop_loss_pct * sl_multiplier
                 if side == PositionSide.LONG:
-                    stop_loss_price = fill_price * (Decimal("1") - self._config.stop_loss_pct)
+                    stop_loss_price = fill_price * (Decimal("1") - effective_sl_pct)
                 else:
-                    stop_loss_price = fill_price * (Decimal("1") + self._config.stop_loss_pct)
+                    stop_loss_price = fill_price * (Decimal("1") + effective_sl_pct)
 
                 # Normalize stop loss price to exchange tick size
                 symbol_info = await self._get_symbol_info(self._config.symbol)
@@ -1796,7 +1800,19 @@ class SupertrendBot(BaseBot):
                 )
 
         except Exception as e:
-            logger.error(f"Failed to place stop loss order: {e}")
+            logger.error(f"Failed to place stop loss order: {e}", exc_info=True)
+            if self._notifier:
+                try:
+                    await self._notifier.send_warning(
+                        title="⚠️ CRITICAL: Stop Loss Order Failed",
+                        message=(
+                            f"Position opened but SL order failed!\n"
+                            f"Symbol: {self._config.symbol}\n"
+                            f"Error: {e}"
+                        ),
+                    )
+                except Exception:
+                    pass
 
     async def _cancel_stop_loss_order(self) -> bool:
         """
