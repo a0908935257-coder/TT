@@ -602,6 +602,12 @@ class GridBot(BaseBot):
                 f"range {new_setup.lower_price}-{new_setup.upper_price}"
             )
 
+            # Cancel all existing orders before reinitializing (prevent duplicate orders)
+            try:
+                await self._order_manager.cancel_all_orders()
+            except Exception as cancel_err:
+                logger.warning(f"Error cancelling orders before rebuild: {cancel_err}")
+
             # Initialize order manager with new setup
             self._order_manager.initialize(new_setup)
 
@@ -999,9 +1005,9 @@ class GridBot(BaseBot):
             price = Decimal(str(data.get("p", "0")))
             filled_qty = Decimal(str(data.get("z", "0")))
 
-            # Calculate average price from last filled or use L (last executed price)
-            last_price = Decimal(str(data.get("L", "0")))
-            avg_price = last_price if last_price > 0 else price if price > 0 else None
+            # Calculate average price from cumulative quote qty / filled qty (Z/z)
+            cumulative_quote = Decimal(str(data.get("Z", "0")))
+            avg_price = (cumulative_quote / filled_qty) if filled_qty > 0 else (price if price > 0 else None)
 
             # Parse commission
             fee = Decimal(str(data.get("n", "0")))

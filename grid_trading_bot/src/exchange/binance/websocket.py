@@ -659,9 +659,18 @@ class BinanceWebSocket:
         self._last_pong_time = now
 
         # Message deduplication - create unique ID from event time + stream
+        # Skip dedup for messages without event time (e.g., user data stream)
         if isinstance(data, dict):
             event_time = data.get("E", 0)  # Event time from Binance
             stream = data.get("stream") or self._get_stream_from_data(data) or ""
+
+            # Only deduplicate messages that have a real event time
+            if not event_time:
+                # No event time - skip dedup, process immediately
+                if self._on_message:
+                    self._on_message(data)
+                return
+
             msg_id = f"{stream}:{event_time}"
 
             current_time = now.timestamp()

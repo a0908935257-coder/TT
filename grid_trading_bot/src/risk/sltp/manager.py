@@ -310,6 +310,7 @@ class SLTPManager:
 
         if new_stop is not None:
             # Update state
+            old_stop = state.current_stop_loss
             if state.update_stop_loss(new_stop):
                 state.trailing_activated = True
                 state.trailing_stop_price = new_stop
@@ -322,7 +323,10 @@ class SLTPManager:
                             symbol, state.sl_order_id, new_stop
                         )
                     except Exception as e:
-                        logger.error(f"Failed to modify SL order: {e}")
+                        logger.error(f"Failed to modify SL order: {e}, rolling back local state")
+                        # Rollback local state to prevent desync with exchange
+                        state.current_stop_loss = old_stop
+                        state.trailing_stop_price = old_stop
 
         return new_stop
 

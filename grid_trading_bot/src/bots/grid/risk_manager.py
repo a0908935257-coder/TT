@@ -1328,20 +1328,21 @@ class GridRiskManager:
                             await self.handle_breakout(direction, current_price)
                             continue
 
-                    # Check stop loss (P&L based) - direction-agnostic
-                    if self.check_stop_loss(current_price):
-                        await self.execute_pnl_stop_loss(current_price)
-                        continue
+                    # Check stop loss (P&L based) - only when NORMAL (prevent duplicate sells)
+                    if self._state == RiskState.NORMAL:
+                        if self.check_stop_loss(current_price):
+                            await self.execute_pnl_stop_loss(current_price)
+                            continue
 
-                    # Check price stop loss (works even without filled positions)
-                    if self.check_price_stop_loss(current_price):
-                        await self.execute_price_stop_loss(current_price)
-                        continue
+                        # Check price stop loss (works even without filled positions)
+                        if self.check_price_stop_loss(current_price):
+                            await self.execute_price_stop_loss(current_price)
+                            continue
 
-                    # Check daily loss
-                    if self.check_daily_loss():
-                        await self.pause("Daily loss limit exceeded")
-                        continue
+                        # Check daily loss
+                        if self.check_daily_loss():
+                            await self.pause("Daily loss limit exceeded")
+                            continue
 
                     # Check price return if paused
                     if self._state == RiskState.PAUSED:

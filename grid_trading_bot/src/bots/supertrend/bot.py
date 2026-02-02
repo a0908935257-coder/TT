@@ -406,6 +406,14 @@ class SupertrendBot(BaseBot):
             market_type=MarketType.FUTURES,
         )
 
+        # Cancel existing background tasks before restarting (prevent duplicates)
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+        if hasattr(self, '_save_task') and self._save_task and not self._save_task.done():
+            self._save_task.cancel()
+        if hasattr(self, '_reconciliation_task') and self._reconciliation_task and not self._reconciliation_task.done():
+            self._reconciliation_task.cancel()
+
         # Restart background monitor (risk checks, stop loss, capital updates)
         self._monitor_task = asyncio.create_task(self._background_monitor())
 
@@ -1010,6 +1018,10 @@ class SupertrendBot(BaseBot):
         if not self._position:
             self._reset_filled_levels()
 
+        # Decrement signal cooldown (same logic as TREND_GRID path)
+        if self._signal_cooldown > 0:
+            self._signal_cooldown -= 1
+
         # Check signal cooldown
         if self._signal_cooldown > 0:
             logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
@@ -1035,13 +1047,15 @@ class SupertrendBot(BaseBot):
                         pass  # blocked
                     else:
                         await self._try_hybrid_entry(
-                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long"
+                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long",
+                            market_price=current_price,
                         )
                         return
                 else:
                     if self._check_rsi_filter(PositionSide.LONG):
                         await self._try_hybrid_entry(
-                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long"
+                            entry_level, level_idx, PositionSide.LONG, is_bullish, "long",
+                            market_price=current_price,
                         )
                         return
 
@@ -1055,12 +1069,14 @@ class SupertrendBot(BaseBot):
                         pass  # blocked
                     else:
                         await self._try_hybrid_entry(
-                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short"
+                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short",
+                            market_price=current_price,
                         )
                 else:
                     if self._check_rsi_filter(PositionSide.SHORT):
                         await self._try_hybrid_entry(
-                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short"
+                            entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short",
+                            market_price=current_price,
                         )
 
     async def _try_hybrid_entry(
@@ -1070,11 +1086,13 @@ class SupertrendBot(BaseBot):
         side: PositionSide,
         is_with_trend: bool,
         hysteresis_side: str,
+        market_price: Optional[Decimal] = None,
     ) -> None:
         """Attempt a hybrid grid entry with differentiated TP/SL."""
-        current_price = entry_level.price
+        grid_price = entry_level.price
+        actual_price = market_price if market_price is not None else grid_price
 
-        if not self._check_hysteresis(level_idx, hysteresis_side, current_price, current_price):
+        if not self._check_hysteresis(level_idx, hysteresis_side, grid_price, actual_price):
             return
 
         entry_level.is_filled = True
@@ -1314,10 +1332,10 @@ class SupertrendBot(BaseBot):
                     tp_level = min(level_idx + tp_grids, len(self._grid_levels) - 1)
                     tp_price = self._grid_levels[tp_level].price
 
+                    rsi_str = f", RSI={self._current_rsi:.1f}" if self._current_rsi else ""
                     logger.info(
                         f"TREND_GRID LONG signal: price={entry_price:.2f}, "
-                        f"grid_level={level_idx}, TP={tp_price:.2f}, "
-                        f"RSI={self._current_rsi:.1f}" if self._current_rsi else ""
+                        f"grid_level={level_idx}, TP={tp_price:.2f}{rsi_str}"
                     )
 
                     success = await self._open_position(PositionSide.LONG, entry_price, tp_price)
@@ -1346,10 +1364,10 @@ class SupertrendBot(BaseBot):
                     tp_level = max(level_idx + 1 - tp_grids, 0)
                     tp_price = self._grid_levels[tp_level].price
 
+                    rsi_str = f", RSI={self._current_rsi:.1f}" if self._current_rsi else ""
                     logger.info(
                         f"TREND_GRID SHORT signal: price={entry_price:.2f}, "
-                        f"grid_level={level_idx + 1}, TP={tp_price:.2f}, "
-                        f"RSI={self._current_rsi:.1f}" if self._current_rsi else ""
+                        f"grid_level={level_idx + 1}, TP={tp_price:.2f}{rsi_str}"
                     )
 
                     success = await self._open_position(PositionSide.SHORT, entry_price, tp_price)
@@ -1930,8 +1948,11 @@ class SupertrendBot(BaseBot):
             logger.info(f"New trading day - resetting daily stats")
             self._daily_pnl = Decimal("0")
             self._daily_start_time = today_start
-            # Only reset risk_paused if it was due to daily loss
-            # Keep consecutive_losses as it carries over days
+            # Reset risk_paused on new day so bot can resume trading
+            # Consecutive losses carry over, but daily loss pause should reset
+            if self._risk_paused:
+                logger.info("Resetting risk pause on new trading day")
+                self._risk_paused = False
 
     def _check_risk_limits(self) -> bool:
         """

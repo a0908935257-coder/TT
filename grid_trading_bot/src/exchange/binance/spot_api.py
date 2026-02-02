@@ -282,11 +282,12 @@ class BinanceSpotAPI:
             )
             return {}
 
-        # Check for Binance error
+        # Check for Binance error (filter out success codes)
         if "code" in data and "msg" in data:
             code = data["code"]
             msg = data["msg"]
-            self._raise_exception(code, msg)
+            if code not in (0, 200, "0", "200"):
+                self._raise_exception(code, msg)
 
         # Check HTTP status
         if status >= 400:

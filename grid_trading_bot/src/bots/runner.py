@@ -159,11 +159,11 @@ class BotRunner:
             )
             logger.info(f"Subscribed to {Channel.command(self._bot_id)}")
 
+            # Mark as running before starting heartbeat (avoid race condition)
+            self._running = True
+
             # Start heartbeat loop
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
-            # Mark as running and send started event
-            self._running = True
             await self._send_event(Event.started(self._bot_id, {"pid": os.getpid()}))
 
             # Start listening
@@ -405,7 +405,7 @@ class BotRunner:
             try:
                 loop.add_signal_handler(
                     sig,
-                    lambda: asyncio.create_task(self._signal_handler(sig)),
+                    lambda s=sig: asyncio.create_task(self._signal_handler(s)),
                 )
             except NotImplementedError:
                 # Windows doesn't support add_signal_handler

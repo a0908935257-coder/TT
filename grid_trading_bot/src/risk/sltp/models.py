@@ -220,8 +220,8 @@ class SLTPState:
     all_tp_triggered: bool = False
     closed_quantity: Decimal = Decimal("0")
 
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def update_price_extremes(self, high: Decimal, low: Decimal) -> None:
         """Update highest/lowest price tracking."""

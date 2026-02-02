@@ -686,7 +686,8 @@ class TimeBasedStopLoss:
         else:
             pnl_pct = (state.entry_price - current_price) / state.entry_price
 
-        return pnl_pct * Decimal("100")
+        # Return as ratio (e.g., 0.02 for 2%) to match config values like profit_target_pct
+        return pnl_pct
 
     def _get_close_quantity(self, state: TimeStopState) -> Decimal:
         """Get quantity to close based on action."""

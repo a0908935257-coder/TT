@@ -353,7 +353,7 @@ class PreTradeRiskChecker:
             is_active = self._circuit_breaker_check()
         except Exception as e:
             logger.error(f"Error checking circuit breaker: {e}")
-            is_active = False
+            is_active = True  # Fail-closed: assume active when check fails
 
         if is_active and not order.reduce_only:
             result.add_check(

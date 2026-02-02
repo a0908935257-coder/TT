@@ -200,6 +200,9 @@ class BinanceFuturesAPI:
                 elif method == "POST":
                     async with self._session.post(url, params=params, headers=headers) as resp:
                         return await self._handle_response(resp)
+                elif method == "PUT":
+                    async with self._session.put(url, params=params, headers=headers) as resp:
+                        return await self._handle_response(resp)
                 elif method == "DELETE":
                     async with self._session.delete(url, params=params, headers=headers) as resp:
                         return await self._handle_response(resp)
