@@ -178,9 +178,9 @@ Walk-Forward 驗證通過的策略:
   Grid Futures: NEUTRAL 7x, hysteresis (100% 一致性, Sharpe 5.57)
   Supertrend: HYBRID_GRID+RSI filter, 10x (Sharpe 5.60)
 
-資金分配 (中央管理):
-  Grid Futures: 30%  |  Bollinger: 30%
-  RSI-Grid: 15%      |  Supertrend: 15%
+資金分配 (Sharpe 加權, 加權槓桿 11.75x):
+  Bollinger: 40%     |  RSI-Grid: 20%
+  Grid Futures: 15%  |  Supertrend: 15%
   保留金: 10%
 
 Discord 指令:

@@ -87,7 +87,7 @@ bots:
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.25                          # 25%
+    ratio: 0.40                          # 40% (Sharpe 加權: 13.10/31.74)
     min_capital: 50
     max_capital: 8000
     priority: 9
@@ -151,7 +151,7 @@ bots:
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.10                          # 10% (優化後調整)
+    ratio: 0.20                          # 20% (Sharpe 加權: 7.47/31.74)
     min_capital: 50
     max_capital: 5000
     priority: 8
@@ -211,7 +211,7 @@ bots:
     status: active
 
     # --- 資金分配 ---
-    ratio: 0.40                          # 40% (主力策略)
+    ratio: 0.15                          # 15% (Sharpe 加權: 5.57/31.74)
     min_capital: 100
     max_capital: 10000
     priority: 10
@@ -331,13 +331,13 @@ bots:
       hybrid_sl_multiplier_counter: 0.8  # 優化結果: 0.8
       hybrid_rsi_asymmetric: false       # RSI 非對稱過濾: 關閉
 
-# Total: 90% allocated (Grid Futures 40% + Bollinger 25% + Supertrend 15% + RSI-Grid 10%), 10% reserve
-# 預估組合年化報酬: ~40-50%
-#   - Grid Futures (40%): OOS +188.2%, Sharpe 5.57, WF 100% (7x, fixed Sharpe 2026-02-01)
-#   - Bollinger NEUTRAL (25%): WF 100% (9/9), avg Sharpe 13.10 (18x, WF v3 2026-01-31)
+# Total: 90% allocated (Bollinger 40% + RSI-Grid 20% + Grid Futures 15% + Supertrend 15%), 10% reserve
+# Sharpe 加權分配 (OOS Sharpe 總和 31.74, 可分配 90%):
+#   - Bollinger NEUTRAL (40%): WF 100% (9/9), OOS Sharpe 13.10 (18x, WF v3 2026-01-31)
+#   - RSI-Grid (20%): OOS +302.1%, Sharpe 7.47 (10x, v5 Optuna 2026-02-01)
+#   - Grid Futures (15%): OOS +188.2%, Sharpe 5.57, WF 100% (7x, fixed Sharpe 2026-02-01)
 #   - Supertrend HYBRID_GRID (15%): OOS +25.8%, Sharpe 5.60 (10x, fixed 2% 2026-02-01)
-#   - RSI-Grid (10%): 12.09% 年化 (v2 vol filter 2026-01-30)
-# 槓桿配置 - Grid/RSI 7x, Supertrend 10x, Bollinger 18x (equity-based margin)
+# 加權槓桿: 0.40×18 + 0.20×10 + 0.15×7 + 0.15×10 = 11.75x
 
 # -----------------------------------------------------------------------------
 # Signal Coordinator Settings (多機器人訊號協調)
