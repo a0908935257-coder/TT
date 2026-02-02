@@ -357,6 +357,7 @@ class MockExchangeClient:
         symbol: str,
         order_id: str,
         market_type: MarketType = MarketType.SPOT,
+        bot_id: str = "unknown",
     ) -> Order:
         """
         Cancel an open order.

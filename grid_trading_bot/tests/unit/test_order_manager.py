@@ -355,8 +355,9 @@ class TestBoundaryLevels:
 
         reverse = await initialized_manager.on_order_filled(filled_order)
 
-        # No reverse because we're at the highest level
-        assert reverse is None
+        # At highest level, a SELL reverse is placed at the same level
+        assert reverse is not None
+        assert reverse.side == OrderSide.SELL
 
     @pytest.mark.asyncio
     async def test_no_reverse_at_lowest_level(self, initialized_manager):
@@ -380,8 +381,9 @@ class TestBoundaryLevels:
 
         reverse = await initialized_manager.on_order_filled(filled_order)
 
-        # No reverse because we're at the lowest level
-        assert reverse is None
+        # At lowest level, a BUY reverse is placed at the same level
+        assert reverse is not None
+        assert reverse.side == OrderSide.BUY
 
 
 class TestOrderSynchronization:

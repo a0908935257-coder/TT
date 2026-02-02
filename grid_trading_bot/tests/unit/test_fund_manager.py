@@ -856,7 +856,7 @@ class TestShouldRebalance:
         mock_dt.now.return_value = fake_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
-        manager = self._make_manager(frequency="monthly", day=0, hour=0)
+        manager = self._make_manager(frequency="monthly", day=1, hour=0)
         assert manager._should_rebalance() is True
 
     @patch("src.fund_manager.manager.datetime")
@@ -866,7 +866,7 @@ class TestShouldRebalance:
         mock_dt.now.return_value = fake_now
         mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
 
-        manager = self._make_manager(frequency="monthly", day=0, hour=0)
+        manager = self._make_manager(frequency="monthly", day=1, hour=0)
         assert manager._should_rebalance() is False
 
     @patch("src.fund_manager.manager.datetime")
@@ -928,7 +928,7 @@ class TestExposureBlocking:
             available_balance=Decimal("800"),
         )
         pool.set_allocation("grid_btc", Decimal("500"))
-        pool.set_leverage("grid_btc", 10)  # 500 * 10 = 5000 notional, 5x > 3x
+        pool.set_leverage("grid_btc", 30)  # 500 * 30 = 15000 notional, 15x > 12x limit
 
         result = await manager.dispatch_funds(trigger="manual")
 
@@ -960,14 +960,15 @@ class TestExposureBlocking:
         assert not any("exposure" in e.lower() for e in result.errors)
 
     @pytest.mark.asyncio
-    async def test_dispatch_ok_with_zero_balance(self):
-        """dispatch_funds should not block on zero balance (no exposure issue)."""
+    async def test_dispatch_blocked_with_zero_balance(self):
+        """dispatch_funds should block on zero balance (safety: no balance = exceeds limit)."""
         manager = FundManager(config=FundManagerConfig())
 
-        # No balance set → total_balance=0, check_exposure_limit returns False
+        # No balance set → total_balance=0, check_exposure_limit returns True (safety)
         result = await manager.dispatch_funds(trigger="manual")
 
-        assert not any("exposure" in e.lower() for e in result.errors)
+        assert result.success is False
+        assert any("exposure" in e.lower() for e in result.errors)
 
 
 class TestRebalanceConfig:

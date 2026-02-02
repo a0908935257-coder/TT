@@ -112,12 +112,12 @@ class TestRSIGridConfig:
         config = RSIGridConfig(symbol="BTCUSDT")
         assert config.use_volatility_filter is True
         assert config.vol_atr_baseline_period == 200
-        assert config.vol_ratio_low == 0.5
+        assert config.vol_ratio_low == 0.7
         assert config.vol_ratio_high == 2.0
 
     def test_max_hold_bars_default(self):
         config = RSIGridConfig(symbol="BTCUSDT")
-        assert config.max_hold_bars == 6
+        assert config.max_hold_bars == 8
 
 
 # =============================================================================
@@ -205,7 +205,7 @@ class TestCheckVolatilityRegime:
     def test_boundary_low(self):
         bot = _make_bot()
         bot._atr_baseline = Decimal("1000")
-        bot._atr_calc.atr = Decimal("500")  # ratio = 0.5 exactly
+        bot._atr_calc.atr = Decimal("700")  # ratio = 0.7 exactly (at vol_ratio_low boundary)
         assert bot._check_volatility_regime() is True
 
     def test_boundary_high(self):
@@ -514,11 +514,11 @@ class TestInitializeGrid:
         bot._grid = None
         bot._stats = RSIGridStats()
         bot._atr_calc.atr = Decimal("1000")
-        # atr_multiplier default is 3.0 → range_size = 3000
+        # atr_multiplier default is 4.0 → range_size = 4000
         bot._initialize_grid(Decimal("50000"))
         assert bot._grid is not None
-        assert bot._grid.upper_price == Decimal("53000")  # 50000 + 3000
-        assert bot._grid.lower_price == Decimal("47000")  # 50000 - 3000
+        assert bot._grid.upper_price == Decimal("54000")  # 50000 + 4000
+        assert bot._grid.lower_price == Decimal("46000")  # 50000 - 4000
 
     def test_fallback_no_atr(self):
         from src.bots.rsi_grid.models import RSIGridStats

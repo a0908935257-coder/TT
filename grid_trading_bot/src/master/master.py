@@ -331,6 +331,7 @@ class Master:
         Returns:
             True if restored successfully
         """
+        bound = False
         try:
             bot_info = self._registry.get(bot_id)
             if not bot_info:
@@ -346,6 +347,7 @@ class Master:
 
             # Bind instance to registry
             self._registry.bind_instance(bot_id, instance)
+            bound = True
 
             try:
                 # Restore state from database if bot supports it
@@ -364,11 +366,19 @@ class Master:
             except Exception as restore_error:
                 # Unbind instance on restore/start failure to prevent zombie instance
                 logger.error(f"Restore/start failed for {bot_id}, unbinding instance: {restore_error}")
-                self._registry.unbind_instance(bot_id)
+                if bound:
+                    self._registry.unbind_instance(bot_id)
+                    bound = False
                 return False
 
         except Exception as e:
             logger.error(f"Failed to restore bot {bot_id}: {e}")
+            # Ensure unbind if bind succeeded but something else failed
+            if bound:
+                try:
+                    self._registry.unbind_instance(bot_id)
+                except Exception:
+                    pass
             return False
 
     async def _save_state(self) -> None:
