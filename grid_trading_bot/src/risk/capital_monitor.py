@@ -164,8 +164,9 @@ class CapitalMonitor:
         if self._market_type == MarketType.FUTURES:
             positions = await self._exchange.get_positions()
             for pos in positions:
-                position_value += pos.quantity * pos.mark_price
-                unrealized_pnl += pos.unrealized_pnl
+                mark_price = pos.mark_price or Decimal("0")
+                position_value += pos.quantity * mark_price
+                unrealized_pnl += pos.unrealized_pnl or Decimal("0")
 
         # Calculate total capital
         total_capital = total_balance + position_value

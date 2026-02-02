@@ -5427,7 +5427,7 @@ class BaseBot(ABC):
                     })
 
                     # Some errors shouldn't be retried
-                    if error_cat in ["INSUFFICIENT_BALANCE", "POSITION_LIMIT", "SYMBOL_NOT_FOUND"]:
+                    if error_code in ["INSUFFICIENT_BALANCE", "POSITION_LIMIT", "SYMBOL_NOT_FOUND"]:
                         logger.error(
                             f"[{self._bot_id}] Non-retryable error: {error_cat}"
                         )
@@ -5835,6 +5835,9 @@ class BaseBot(ABC):
             # Call subclass implementation
             await self._do_pause()
 
+            # Stop heartbeat before updating state
+            await self._stop_heartbeat()
+
             # Update state
             self._running = False
             self._state = BotState.PAUSED
@@ -6174,6 +6177,10 @@ class BaseBot(ABC):
 
     def _init_strategy_risk_tracking(self) -> None:
         """Initialize per-strategy risk tracking."""
+        if not hasattr(self, "_strategy_stop_requested"):
+            self._strategy_stop_requested = False
+        if not hasattr(self, "_strategy_pause_requested"):
+            self._strategy_pause_requested = False
         if not hasattr(self, "_strategy_risk"):
             self._strategy_risk = {
                 "initial_capital": Decimal("0"),
@@ -6956,6 +6963,7 @@ class BaseBot(ABC):
         close_order_id: str,
         close_fee: Decimal = Decimal("0"),
         leverage: int = 1,
+        side: str = "SELL",
     ) -> Dict[str, Any]:
         """
         Close position using FIFO cost basis matching.
@@ -7053,7 +7061,7 @@ class BaseBot(ABC):
         # FIFO result already updated strategy capital above)
         self.record_virtual_fill(
             symbol=symbol,
-            side="SELL",  # Closing long
+            side=side,  # Use caller-specified side
             quantity=close_quantity,
             price=close_price,
             order_id=close_order_id,
@@ -7592,6 +7600,16 @@ class BaseBot(ABC):
         try:
             risk_result = await self.check_strategy_risk()
             details["strategy_risk_level"] = risk_result.get("risk_level")
+
+            # Process deferred stop/pause requests from strategy risk check
+            if getattr(self, "_strategy_stop_requested", False):
+                self._strategy_stop_requested = False
+                await self.stop(clear_position=True)
+                return False, "Strategy stopped by risk check", details
+            if getattr(self, "_strategy_pause_requested", False):
+                self._strategy_pause_requested = False
+                await self.pause()
+                return False, "Strategy paused by risk check", details
 
             if risk_result["risk_level"] in ["DANGER", "CRITICAL"]:
                 details["strategy_risk_ok"] = False
@@ -8226,12 +8244,17 @@ class BaseBot(ABC):
             # Update bot exposure
             cls._global_risk_tracker["bot_exposures"][bot_id] = exposure_amount
 
-            # Update symbol exposure (sum across all bots)
-            # This is a simplified approach - in production, track per-bot-per-symbol
-            if symbol not in cls._global_risk_tracker["symbol_exposures"]:
-                cls._global_risk_tracker["symbol_exposures"][symbol] = Decimal("0")
+            # Track per-bot symbol exposure for proper aggregation
+            if "bot_symbol_exposures" not in cls._global_risk_tracker:
+                cls._global_risk_tracker["bot_symbol_exposures"] = {}
+            cls._global_risk_tracker["bot_symbol_exposures"][(bot_id, symbol)] = exposure_amount
 
-            cls._global_risk_tracker["symbol_exposures"][symbol] = exposure_amount
+            # Recalculate symbol total from all bots
+            symbol_total = sum(
+                v for (bid, sym), v in cls._global_risk_tracker["bot_symbol_exposures"].items()
+                if sym == symbol
+            )
+            cls._global_risk_tracker["symbol_exposures"][symbol] = symbol_total
             cls._global_risk_tracker["last_update_time"] = datetime.now(timezone.utc)
 
     @classmethod
@@ -9117,8 +9140,6 @@ class BaseBot(ABC):
             try:
                 await self.trigger_circuit_breaker_safe(
                     reason=f"EMERGENCY_CLOSE_FAILED: {e}",
-                    severity="critical",
-                    metadata={"symbol": symbol, "side": side, "quantity": str(quantity)},
                 )
             except Exception:
                 # If circuit breaker also fails, force stop
@@ -10451,7 +10472,7 @@ class BaseBot(ABC):
             else:
                 positions = await self._exchange.futures.get_positions()
 
-            active_positions = [p for p in positions if p.quantity > 0]
+            active_positions = [p for p in positions if p.quantity != 0 and p.quantity != Decimal("0")]
             result["positions_found"] = len(active_positions)
 
             if active_positions:

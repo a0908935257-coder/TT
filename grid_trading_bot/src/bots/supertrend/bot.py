@@ -1557,6 +1557,7 @@ class SupertrendBot(BaseBot):
                     return False
 
             # Pre-trade risk check (risk gate + global risk limits)
+            gate_acquired = False
             is_allowed, ptc_msg, ptc_details = await self.pre_trade_with_global_check(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -1566,6 +1567,7 @@ class SupertrendBot(BaseBot):
             if not is_allowed:
                 logger.warning(f"[{self._bot_id}] Pre-trade check rejected: {ptc_msg}")
                 return False
+            gate_acquired = True
 
             # Check for duplicate order (prevent double-entry on retry)
             if self._is_duplicate_order(
@@ -1749,7 +1751,8 @@ class SupertrendBot(BaseBot):
             )
             return False
         finally:
-            self.release_risk_gate()
+            if gate_acquired:
+                self.release_risk_gate()
 
     def _check_trailing_stop(self, current_price: Decimal) -> bool:
         """

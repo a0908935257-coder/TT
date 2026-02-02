@@ -827,6 +827,7 @@ class GridFuturesBot(BaseBot):
                     return False
 
             # Pre-trade risk check (risk gate + global risk limits)
+            gate_acquired = False
             is_allowed, ptc_msg, ptc_details = await self.pre_trade_with_global_check(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -836,6 +837,7 @@ class GridFuturesBot(BaseBot):
             if not is_allowed:
                 logger.warning(f"[{self._bot_id}] Pre-trade check rejected: {ptc_msg}")
                 return False
+            gate_acquired = True
 
             # Mark order as pending (for deduplication)
             order_key = self._mark_order_pending(
@@ -1019,7 +1021,8 @@ class GridFuturesBot(BaseBot):
                 error=e,
             )
         finally:
-            self.release_risk_gate()
+            if gate_acquired:
+                self.release_risk_gate()
 
         return False
 
@@ -2176,7 +2179,7 @@ class GridFuturesBot(BaseBot):
                 exchange_positions = await exchange.futures.get_positions(config.symbol)
                 exchange_pos = None
                 for pos in exchange_positions:
-                    if pos.quantity > 0:
+                    if pos.quantity != Decimal("0"):
                         exchange_pos = pos
                         break
 
