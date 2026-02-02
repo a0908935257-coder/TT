@@ -53,7 +53,38 @@
 
 | # | 檔案 | 問題 | 結論 |
 |---|------|------|------|
-| — | grid_futures + bollinger | `_open_position` 無 `_check_risk_limits()` 呼叫 | **設計選擇**：這兩個 bot 無風控基礎設施（`_risk_paused`、`_daily_pnl`、`_consecutive_losses` 均不存在），風控由外部 risk engine 處理 |
+| — | grid_futures + bollinger | `_open_position` 無 `_check_risk_limits()` 呼叫 | **非缺陷** — 詳見下方風控架構分析 |
+
+### 風控架構分析：`_check_risk_limits()` 缺失不影響安全性
+
+經深度審計確認，四個 bot 的風控覆蓋是**等效**的。差異僅在實作路徑：
+
+**三層風控架構（四個 bot 全部具備）：**
+
+| 層級 | 機制 | Grid Futures | Bollinger | Supertrend | RSI Grid |
+|------|------|:---:|:---:|:---:|:---:|
+| **L1 進場前** | `pre_trade_with_global_check()` 原子鎖 | ✅ | ✅ | ✅ | ✅ |
+| | `check_strategy_risk()` 日虧損/連損/回撤 | ✅ | ✅ | ✅ | ✅ |
+| | `check_global_risk_limits()` 全局曝險 | ✅ | ✅ | ✅ | ✅ |
+| | `_check_position_limit()` 倉位上限 | ✅ | ✅ | ✅ | ✅ |
+| **L2 持倉中** | 三層止損：交易所→軟體備援→緊急平倉 | ✅ | ✅ | ✅ | ✅ |
+| | Circuit Breaker（CRITICAL 觸發） | ✅ | ✅ | ✅ | ✅ |
+| | 背景監控迴圈持續檢查 | ✅ | ✅ | ✅ | ✅ |
+| **L3 系統級** | Emergency Stop（全系統停機） | ✅ | ✅ | ✅ | ✅ |
+
+**唯一差異：**
+- Supertrend 和 RSI Grid 額外有 `_check_risk_limits()`（bot 內部快速檢查 `_risk_paused` + `_consecutive_losses`）
+- Grid Futures 和 Bollinger 透過 base.py 繼承的 `check_strategy_risk()` 在背景監控和 `pre_trade_with_global_check()` 中做**相同檢查**
+
+**per-bot 風控閾值（base.py 繼承，四個 bot 共用）：**
+
+| 指標 | WARNING | DANGER（暫停） | CRITICAL（停止） |
+|------|---------|---------------|----------------|
+| 策略虧損 | 3% | 5% | 10% |
+| 策略回撤 | 5% | 8% | — |
+| 連續虧損 | 3 次 | 5 次 | — |
+
+**結論**：Grid Futures 和 Bollinger 不需要補加 `_check_risk_limits()`，其風控由 base.py 的 `check_strategy_risk()` + `pre_trade_with_global_check()` 完整覆蓋。
 
 ---
 
