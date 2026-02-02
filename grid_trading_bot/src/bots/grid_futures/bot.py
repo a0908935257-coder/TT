@@ -707,11 +707,11 @@ class GridFuturesBot(BaseBot):
                         symbol=self._config.symbol,
                         side=local_side,
                         entry_price=pos.entry_price,
-                        quantity=pos.quantity,
+                        quantity=abs(pos.quantity),
                         leverage=self._config.leverage,
                         unrealized_pnl=pos.unrealized_pnl,
                     )
-                    logger.info(f"Synced existing position: {side_str} {pos.quantity}")
+                    logger.info(f"Synced existing position: {side_str} {abs(pos.quantity)}")
                     return
 
             self._position = None
@@ -840,6 +840,7 @@ class GridFuturesBot(BaseBot):
             gate_acquired = True
 
             # Mark order as pending (for deduplication)
+            order_key = None
             order_key = self._mark_order_pending(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -869,8 +870,6 @@ class GridFuturesBot(BaseBot):
                 order_quantity=quantity,
             )
 
-            # Clear pending order marker
-            self._clear_pending_order(order_key)
 
             if order:
                 order_id = str(getattr(order, "order_id", ""))
@@ -1021,6 +1020,8 @@ class GridFuturesBot(BaseBot):
                 error=e,
             )
         finally:
+            if order_key:
+                self._clear_pending_order(order_key)
             if gate_acquired:
                 self.release_risk_gate()
 

@@ -1579,6 +1579,7 @@ class SupertrendBot(BaseBot):
                 return False
 
             # Mark order as pending (for deduplication)
+            order_key = None
             order_key = self._mark_order_pending(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -1603,8 +1604,6 @@ class SupertrendBot(BaseBot):
                 order_quantity=quantity,
             )
 
-            # Clear pending order marker
-            self._clear_pending_order(order_key)
 
             if not order:
                 logger.warning("Order returned None/falsy - open position failed")
@@ -1751,6 +1750,8 @@ class SupertrendBot(BaseBot):
             )
             return False
         finally:
+            if order_key:
+                self._clear_pending_order(order_key)
             if gate_acquired:
                 self.release_risk_gate()
 
