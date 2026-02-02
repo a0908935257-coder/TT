@@ -561,6 +561,7 @@ class GridOrderManager:
                 self._symbol,
                 order_id,
                 self._market_type,
+                bot_id=self._bot_id,
             )
 
             # Update mappings (use pop to avoid KeyError in concurrent scenarios)
@@ -1278,8 +1279,8 @@ class GridOrderManager:
         Args:
             order: Updated Order from WebSocket
         """
-        # Only process orders we're tracking
-        if order.order_id not in self._orders:
+        # Only process orders we're tracking (check both caches and level mapping)
+        if order.order_id not in self._orders and order.order_id not in self._order_level_map:
             return
 
         # Update cached order

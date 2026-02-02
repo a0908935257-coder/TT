@@ -641,18 +641,30 @@ class RateLimiter:
         Returns:
             True if acquired, False if timeout/denied
         """
+        # Phase 1: Check if rate limited (under lock), determine sleep time
+        sleep_time = 0.0
         async with self._lock:
-            # Check if currently limited
-            if self._is_limited:
-                if self._retry_after:
-                    if timeout and self._retry_after > timeout:
-                        return False
-                    logger.warning(
-                        f"Rate limited, waiting {self._retry_after:.1f}s"
-                    )
-                    await asyncio.sleep(self._retry_after)
-                    self._is_limited = False
-                    self._retry_after = None
+            if self._is_limited and self._retry_after:
+                if timeout and self._retry_after > timeout:
+                    return False
+                sleep_time = self._retry_after
+                logger.warning(f"Rate limited, waiting {sleep_time:.1f}s")
+                self._is_limited = False
+                self._retry_after = None
+
+        # Phase 2: Sleep OUTSIDE lock to avoid blocking all callers
+        if sleep_time > 0:
+            await asyncio.sleep(sleep_time)
+
+        # Phase 3: Acquire resources and record (under lock)
+        async with self._lock:
+            # Re-check in case another rate limit arrived during sleep
+            if self._is_limited and self._retry_after:
+                if timeout and self._retry_after > timeout:
+                    return False
+                # Don't sleep again here — just clear and proceed
+                self._is_limited = False
+                self._retry_after = None
 
             # Check weight limit
             if not await self._weight_bucket.acquire(weight, timeout):

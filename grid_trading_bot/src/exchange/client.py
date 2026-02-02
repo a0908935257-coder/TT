@@ -916,11 +916,15 @@ class ExchangeClient:
         Returns:
             Unique client order ID string (max 36 chars for Binance)
         """
-        # Shorten bot_id if needed (max ~20 chars for prefix)
-        short_bot_id = bot_id[:20] if len(bot_id) > 20 else bot_id
+        # Shorten bot_id if needed — leave safety margin for 36-char Binance limit
+        # Format: {bot_id}_{timestamp}_{random} = N + 1 + 10 + 1 + 4 = N + 16
+        max_bot_len = 36 - 16  # = 20, but use 18 for safety margin
+        short_bot_id = bot_id[:18] if len(bot_id) > 18 else bot_id
         timestamp = int(datetime.now(timezone.utc).timestamp())
         random_suffix = uuid.uuid4().hex[:4]
-        return f"{short_bot_id}_{timestamp}_{random_suffix}"
+        result = f"{short_bot_id}_{timestamp}_{random_suffix}"
+        # Hard limit: truncate to 36 chars if somehow exceeded
+        return result[:36]
 
     @staticmethod
     def get_bot_id_from_client_order_id(client_order_id: str) -> Optional[str]:

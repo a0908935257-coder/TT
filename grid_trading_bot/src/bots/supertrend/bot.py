@@ -1948,11 +1948,11 @@ class SupertrendBot(BaseBot):
             logger.info(f"New trading day - resetting daily stats")
             self._daily_pnl = Decimal("0")
             self._daily_start_time = today_start
-            # Reset risk_paused on new day so bot can resume trading
-            # Consecutive losses carry over, but daily loss pause should reset
+            # Reset risk_paused and consecutive losses on new day
             if self._risk_paused:
-                logger.info("Resetting risk pause on new trading day")
+                logger.info("Resetting risk pause and consecutive losses on new trading day")
                 self._risk_paused = False
+                self._consecutive_losses = 0
 
     def _check_risk_limits(self) -> bool:
         """

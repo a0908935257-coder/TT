@@ -311,6 +311,7 @@ class SLTPManager:
         if new_stop is not None:
             # Update state
             old_stop = state.current_stop_loss
+            old_activated = state.trailing_activated
             if state.update_stop_loss(new_stop):
                 state.trailing_activated = True
                 state.trailing_stop_price = new_stop
@@ -327,6 +328,7 @@ class SLTPManager:
                         # Rollback local state to prevent desync with exchange
                         state.current_stop_loss = old_stop
                         state.trailing_stop_price = old_stop
+                        state.trailing_activated = old_activated
 
         return new_stop
 
