@@ -623,9 +623,9 @@ class TimeBasedStopLoss:
                 reason="Condition not met",
             )
 
-        # Calculate expected exits
+        # Calculate expected exits (first exit at start_after + interval, not at start_after)
         time_in_gradual = holding_minutes - start_after
-        expected_exits = int(time_in_gradual / interval) + 1
+        expected_exits = int(time_in_gradual / interval) if interval > 0 else 0
 
         # Check if we need another exit
         if state.gradual_exits_count < expected_exits:

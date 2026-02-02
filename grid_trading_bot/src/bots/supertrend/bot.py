@@ -407,12 +407,16 @@ class SupertrendBot(BaseBot):
         )
 
         # Cancel existing background tasks before restarting (prevent duplicates)
+        # Set to None after cancel so _start_*() guard checks don't block restart
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
+        self._monitor_task = None
         if hasattr(self, '_save_task') and self._save_task and not self._save_task.done():
             self._save_task.cancel()
+        self._save_task = None
         if hasattr(self, '_reconciliation_task') and self._reconciliation_task and not self._reconciliation_task.done():
             self._reconciliation_task.cancel()
+        self._reconciliation_task = None
 
         # Restart background monitor (risk checks, stop loss, capital updates)
         self._monitor_task = asyncio.create_task(self._background_monitor())
@@ -1042,10 +1046,8 @@ class SupertrendBot(BaseBot):
             entry_level = self._grid_levels[level_idx]
             if not entry_level.is_filled and kline.low <= entry_level.price:
                 if self._config.hybrid_rsi_asymmetric and not is_bullish:
-                    # Counter-trend long: must be oversold
-                    if self._current_rsi is not None and float(self._current_rsi) > self._config.rsi_oversold:
-                        pass  # blocked
-                    else:
+                    # Counter-trend long: must be oversold (block if RSI unavailable)
+                    if self._current_rsi is not None and float(self._current_rsi) <= self._config.rsi_oversold:
                         await self._try_hybrid_entry(
                             entry_level, level_idx, PositionSide.LONG, is_bullish, "long",
                             market_price=current_price,
@@ -1064,10 +1066,8 @@ class SupertrendBot(BaseBot):
             entry_level = self._grid_levels[level_idx + 1]
             if not entry_level.is_filled and kline.high >= entry_level.price:
                 if self._config.hybrid_rsi_asymmetric and is_bullish:
-                    # Counter-trend short: must be overbought
-                    if self._current_rsi is not None and float(self._current_rsi) < self._config.rsi_overbought:
-                        pass  # blocked
-                    else:
+                    # Counter-trend short: must be overbought (block if RSI unavailable)
+                    if self._current_rsi is not None and float(self._current_rsi) >= self._config.rsi_overbought:
                         await self._try_hybrid_entry(
                             entry_level, level_idx + 1, PositionSide.SHORT, not is_bullish, "short",
                             market_price=current_price,
@@ -1106,7 +1106,7 @@ class SupertrendBot(BaseBot):
             tp_mult = self._config.hybrid_tp_multiplier_counter
             sl_mult = self._config.hybrid_sl_multiplier_counter
 
-        min_tp_distance = current_price * Decimal("0.001")
+        min_tp_distance = actual_price * Decimal("0.001")
 
         if side == PositionSide.LONG:
             tp_level = min(
@@ -1116,8 +1116,8 @@ class SupertrendBot(BaseBot):
             if tp_level <= level_idx:
                 tp_level = min(level_idx + 1, len(self._grid_levels) - 1)
             tp_price = self._grid_levels[tp_level].price
-            if tp_price - current_price < min_tp_distance:
-                tp_price = current_price + min_tp_distance
+            if tp_price - actual_price < min_tp_distance:
+                tp_price = actual_price + min_tp_distance
 
             reason = "hybrid_grid_long" if is_with_trend else "hybrid_grid_long_counter"
         else:
@@ -1128,19 +1128,19 @@ class SupertrendBot(BaseBot):
             if tp_level >= level_idx:
                 tp_level = max(level_idx - 1, 0)
             tp_price = self._grid_levels[tp_level].price
-            if current_price - tp_price < min_tp_distance:
-                tp_price = current_price - min_tp_distance
+            if actual_price - tp_price < min_tp_distance:
+                tp_price = actual_price - min_tp_distance
 
             reason = "hybrid_grid_short" if is_with_trend else "hybrid_grid_short_counter"
 
         logger.info(
-            f"HYBRID_GRID {side.value} signal ({reason}): price={current_price:.2f}, "
+            f"HYBRID_GRID {side.value} signal ({reason}): price={actual_price:.2f}, "
             f"grid_level={level_idx}, TP={tp_price:.2f}, "
             f"trend={'WITH' if is_with_trend else 'COUNTER'}"
             + (f", RSI={self._current_rsi:.1f}" if self._current_rsi else "")
         )
 
-        success = await self._open_position(side, current_price, tp_price)
+        success = await self._open_position(side, actual_price, tp_price)
         if success:
             self._signal_cooldown = self._cooldown_bars
 

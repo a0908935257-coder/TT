@@ -665,42 +665,38 @@ class BinanceWebSocket:
             stream = data.get("stream") or self._get_stream_from_data(data) or ""
 
             # Only deduplicate messages that have a real event time
-            if not event_time:
-                # No event time - skip dedup, process immediately
-                if self._on_message:
-                    self._on_message(data)
-                return
+            # Messages without event_time (depth snapshots, etc.) skip dedup
+            # but still fall through to callback dispatch below
+            if event_time:
+                msg_id = f"{stream}:{event_time}"
+                current_time = now.timestamp()
 
-            msg_id = f"{stream}:{event_time}"
+                # Lock-protected dedup check and update
+                if self._dedup_lock:
+                    async with self._dedup_lock:
+                        if msg_id in self._recent_msg_ids:
+                            logger.debug(f"Duplicate message filtered: {msg_id}")
+                            return
+                        self._recent_msg_ids[msg_id] = current_time
 
-            current_time = now.timestamp()
-
-            # Lock-protected dedup check and update
-            if self._dedup_lock:
-                async with self._dedup_lock:
+                        # Cleanup old message IDs periodically
+                        should_cleanup = (
+                            len(self._recent_msg_ids) > 100 or
+                            (hasattr(self, '_last_dedup_cleanup') and
+                             current_time - self._last_dedup_cleanup > 60)
+                        )
+                        if should_cleanup or not hasattr(self, '_last_dedup_cleanup'):
+                            cutoff = current_time - self._dedup_window
+                            self._recent_msg_ids = {
+                                k: v for k, v in self._recent_msg_ids.items() if v > cutoff
+                            }
+                            self._last_dedup_cleanup = current_time
+                else:
+                    # Fallback without lock (before connect() initializes it)
                     if msg_id in self._recent_msg_ids:
                         logger.debug(f"Duplicate message filtered: {msg_id}")
                         return
                     self._recent_msg_ids[msg_id] = current_time
-
-                    # Cleanup old message IDs periodically
-                    should_cleanup = (
-                        len(self._recent_msg_ids) > 100 or
-                        (hasattr(self, '_last_dedup_cleanup') and
-                         current_time - self._last_dedup_cleanup > 60)
-                    )
-                    if should_cleanup or not hasattr(self, '_last_dedup_cleanup'):
-                        cutoff = current_time - self._dedup_window
-                        self._recent_msg_ids = {
-                            k: v for k, v in self._recent_msg_ids.items() if v > cutoff
-                        }
-                        self._last_dedup_cleanup = current_time
-            else:
-                # Fallback without lock (before connect() initializes it)
-                if msg_id in self._recent_msg_ids:
-                    logger.debug(f"Duplicate message filtered: {msg_id}")
-                    return
-                self._recent_msg_ids[msg_id] = current_time
 
         # Call global message handler if set
         if self._on_message:

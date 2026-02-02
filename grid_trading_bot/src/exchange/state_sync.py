@@ -1298,14 +1298,12 @@ class StateSynchronizer:
             side=data.get("side") or data.get("S", ""),
             order_type=data.get("type") or data.get("o", ""),
             quantity=Decimal(str(data.get("origQty") or data.get("q", 0))),
-            price=Decimal(str(data.get("price") or data.get("p", 0))) or None,
+            price=Decimal(str(data.get("price") or data.get("p", 0))) if (data.get("price") is not None or data.get("p") is not None) else None,
             status=data.get("status") or data.get("X", "NEW"),
             filled_quantity=Decimal(str(
                 data.get("executedQty") or data.get("z", 0)
             )),
-            average_price=Decimal(str(
-                data.get("avgPrice") or data.get("ap", 0)
-            )) or None,
+            average_price=Decimal(str(data.get("avgPrice") or data.get("ap", 0))) if (data.get("avgPrice") is not None or data.get("ap") is not None) else None,
             created_at=datetime.fromtimestamp(
                 int(data.get("time", 0)) / 1000,
                 tz=timezone.utc,
@@ -1345,14 +1343,15 @@ class StateSynchronizer:
         data: Dict[str, Any],
     ) -> BalanceState:
         """Parse balance data from exchange."""
+        # For REST API: use "free" and "locked" directly
+        # For WS futures ACCOUNT_UPDATE: "wb" = wallet balance, "cw" = cross wallet balance
+        # Available balance ≈ wb - cw (cross wallet is margin used in cross positions)
+        wallet_balance = Decimal(str(data.get("wb", 0)))
+        cross_wallet = Decimal(str(data.get("cw", 0)))
         return BalanceState(
             asset=asset,
-            free=Decimal(str(
-                data.get("free") or data.get("wb", 0)
-            )),
-            locked=Decimal(str(
-                data.get("locked") or data.get("cw", 0)
-            )),
+            free=Decimal(str(data.get("free", 0))) if "free" in data else (wallet_balance - cross_wallet),
+            locked=Decimal(str(data.get("locked", 0))) if "locked" in data else cross_wallet,
             updated_at=datetime.now(timezone.utc),
         )
 
