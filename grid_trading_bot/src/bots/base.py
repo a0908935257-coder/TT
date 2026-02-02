@@ -5356,10 +5356,10 @@ class BaseBot(ABC):
 
                     if side.upper() == "BUY":
                         # For BUY: increase price (more aggressive)
-                        adjusted_price = limit_price * (1 + adjustment_pct)
+                        adjusted_price = limit_price * (Decimal("1") + adjustment_pct)
                     else:
                         # For SELL: decrease price (more aggressive)
-                        adjusted_price = limit_price * (1 - adjustment_pct)
+                        adjusted_price = limit_price * (Decimal("1") - adjustment_pct)
 
                     # Normalize price
                     symbol_info = await self._get_symbol_info(symbol)
@@ -10070,9 +10070,9 @@ class BaseBot(ABC):
                 new_stop_price = current_entry_price * (Decimal("1") + current_stop_loss_pct)
                 close_side = "BUY"
 
-            # Use symbol tick size for price precision (fallback to 0.1 for BTCUSDT-like)
-            tick_size = getattr(self, '_tick_size', Decimal("0.1"))
-            new_stop_price = new_stop_price.quantize(tick_size)
+            # Use symbol tick size for price precision
+            symbol_info = await self._get_symbol_info(symbol)
+            new_stop_price = self._normalize_price(new_stop_price, symbol_info)
 
             # Place new stop loss
             new_order = await self._exchange.futures_create_order(

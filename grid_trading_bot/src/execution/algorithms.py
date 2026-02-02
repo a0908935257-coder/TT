@@ -983,9 +983,9 @@ class VWAPAlgorithm(BaseExecutionAlgorithm):
             except Exception as e:
                 logger.warning(f"Failed to get volume: {e}")
 
-        # Fallback: simple time-based calculation
-        elapsed_pct = self._progress.elapsed_seconds / (self._config.duration_minutes * 60)
-        expected_remaining_pct = Decimal("1") - Decimal(str(elapsed_pct))
+        # Fallback: simple time-based calculation (use Decimal throughout to avoid float precision loss)
+        elapsed_pct = Decimal(str(self._progress.elapsed_seconds)) / Decimal(str(self._config.duration_minutes * 60))
+        expected_remaining_pct = Decimal("1") - elapsed_pct
 
         if expected_remaining_pct <= 0:
             return remaining
