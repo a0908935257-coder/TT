@@ -1391,7 +1391,15 @@ class SupertrendBot(BaseBot):
             # Note: cooldown decrement moved before entry logic (see above)
 
         except Exception as e:
-            logger.error(f"Error processing kline: {e}")
+            logger.error(f"Error processing kline: {e}", exc_info=True)
+            if self._notifier:
+                try:
+                    await self._notifier.send_warning(
+                        title="⚠️ Supertrend: Kline Processing Error",
+                        message=f"Error: {e}\nSymbol: {self._config.symbol}",
+                    )
+                except Exception:
+                    pass  # Don't let notification failure mask the original error
 
     async def _open_position(
         self,

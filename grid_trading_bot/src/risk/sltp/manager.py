@@ -440,9 +440,6 @@ class SLTPManager:
         if state is None:
             return {"sl_hit": False, "tp_levels_hit": [], "new_trailing_stop": None}
 
-        # Update price extremes first
-        state.update_price_extremes(high, low)
-
         # Check stop loss
         sl_hit = self.check_stop_loss(symbol, current_price, high, low)
 

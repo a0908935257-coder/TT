@@ -594,9 +594,25 @@ class GridRiskManager:
                 except Exception as e:
                     logger.error(f"Failed to execute stop loss: {e}")
 
-        # For upward breakout, all sells executed - we're in cash (already "stopped" profit)
+        # For upward breakout: spot is already in cash, but futures may hold short positions
         else:
-            logger.info("Upper breakout stop loss: already in cash, no action needed")
+            if self._order_manager._market_type == MarketType.FUTURES:
+                total_short_qty = self._calculate_total_short_position()
+                if total_short_qty > 0:
+                    try:
+                        order = await self._order_manager._exchange.market_buy(
+                            self._order_manager.symbol,
+                            total_short_qty,
+                            self._order_manager._market_type,
+                        )
+                        loss = self._calculate_unrealized_pnl(current_price)
+                        await self._notify_stop_loss(current_price, total_short_qty, loss)
+                    except Exception as e:
+                        logger.error(f"Failed to close short positions on upper breakout: {e}")
+                else:
+                    logger.info("Upper breakout stop loss: no short positions to close")
+            else:
+                logger.info("Upper breakout stop loss: already in cash, no action needed")
 
         # Update state
         self._state = RiskState.STOPPED
@@ -1039,6 +1055,21 @@ class GridRiskManager:
 
         for record in self._order_manager._filled_history:
             if record.side == OrderSide.BUY and record.paired_record is None:
+                total += record.quantity
+
+        return total
+
+    def _calculate_total_short_position(self) -> Decimal:
+        """
+        Calculate total short position quantity from filled sells (futures).
+
+        Returns:
+            Total short quantity held (unpaired SELL records)
+        """
+        total = Decimal("0")
+
+        for record in self._order_manager._filled_history:
+            if record.side == OrderSide.SELL and record.paired_record is None:
                 total += record.quantity
 
         return total
