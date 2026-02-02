@@ -59,8 +59,8 @@
   - Fix 3: error code 與 retryability 一致
   - Fix 8: `close_cost_basis_fifo` 接受 side 參數（支援空頭平倉）
   - 訂單去重機制 (`_order_dedup_key`)
-- 需人工確認：
-  1. REJECTED/EXPIRED 訂單狀態缺少專用處理器（目前走通用錯誤路徑，不會丟失資金但可能延遲反應）
+- ✅ 已修復：
+  1. REJECTED/EXPIRED 訂單狀態已加入專用處理器（複用 `_handle_order_canceled` 清除 level mapping）
 
 ### 第6步：策略邏輯掃描
 - 狀態：✅ 通過
@@ -136,14 +136,14 @@
   - 日誌不含 API key/secret（透過 logger 過濾）
 
 ### 第13步：優雅關閉掃描
-- 狀態：⚠️ 需人工確認
+- 狀態：✅ 已修復
 - 確認項目：
   - SIGTERM/SIGINT 信號處理存在
   - 關閉時取消未成交訂單（可配置）
   - WebSocket 連線正確關閉
   - 最終日誌寫入
-- 需人工確認：
-  5. 關閉無超時機制（`master/main.py` ~L115），若某 bot 卡住可能導致永久等待
+- ✅ 已修復：
+  5. 關閉已加入超時機制（master.stop 30s, ipc_handler.stop 10s, redis.close 5s）
 
 ### 第14步：依賴項安全掃描
 - 狀態：⚠️ 需人工確認

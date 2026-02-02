@@ -124,14 +124,14 @@ async def run_master(
         # Stop Master
         if master:
             try:
-                await master.stop()
+                await asyncio.wait_for(master.stop(), timeout=30.0)
             except Exception as e:
                 logger.error(f"Error stopping master: {e}")
 
         # Stop IPC Handler
         if ipc_handler:
             try:
-                await ipc_handler.stop()
+                await asyncio.wait_for(ipc_handler.stop(), timeout=10.0)
             except Exception as e:
                 logger.error(f"Error stopping IPC handler: {e}")
 
@@ -146,7 +146,7 @@ async def run_master(
         # Close Redis connection
         if redis:
             try:
-                await redis.close()
+                await asyncio.wait_for(redis.close(), timeout=5.0)
             except Exception as e:
                 logger.error(f"Error closing Redis: {e}")
 

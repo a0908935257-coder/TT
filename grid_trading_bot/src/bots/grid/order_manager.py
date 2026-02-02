@@ -1314,6 +1314,12 @@ class GridOrderManager:
             await self.on_order_filled(order)
         elif order.status == OrderStatus.CANCELED:
             await self._handle_order_canceled(order)
+        elif order.status in (OrderStatus.REJECTED, OrderStatus.EXPIRED):
+            level_index = self.get_level_by_order_id(order.order_id)
+            logger.warning(
+                f"Order {order.status.value} at level {level_index}: {order.order_id}"
+            )
+            await self._handle_order_canceled(order)
         elif order.status == OrderStatus.PARTIALLY_FILLED:
             # Update order state for partial fills
             level_index = self.get_level_by_order_id(order.order_id)
