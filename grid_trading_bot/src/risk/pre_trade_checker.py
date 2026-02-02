@@ -414,7 +414,7 @@ class PreTradeRiskChecker:
             return
 
         # Reset counter on new day
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
         if self._daily_trade_date != today:
             self._daily_trade_count = 0
             self._daily_trade_date = today

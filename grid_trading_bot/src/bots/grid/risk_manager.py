@@ -763,9 +763,9 @@ class GridRiskManager:
 
         # Mode 1: Absolute price stop loss
         if self._config.price_stop_loss is not None:
-            if current_price < self._config.price_stop_loss:
+            if current_price <= self._config.price_stop_loss:
                 logger.warning(
-                    f"Price stop loss triggered: {current_price} < {self._config.price_stop_loss}"
+                    f"Price stop loss triggered: {current_price} <= {self._config.price_stop_loss}"
                 )
                 return True
 
@@ -777,9 +777,9 @@ class GridRiskManager:
                 stop_price = lower_bound * (
                     Decimal("1") - self._config.range_stop_loss_percent / Decimal("100")
                 )
-                if current_price < stop_price:
+                if current_price <= stop_price:
                     logger.warning(
-                        f"Range stop loss triggered: {current_price} < {stop_price} "
+                        f"Range stop loss triggered: {current_price} <= {stop_price} "
                         f"(lower_bound {lower_bound} - {self._config.range_stop_loss_percent}%)"
                     )
                     return True
@@ -1445,6 +1445,11 @@ class GridRiskManager:
         except Exception as e:
             logger.error(f"Health check error: {e}")
             self._consecutive_health_failures += 1
+
+            # Pause if consecutive failures (same check as normal path)
+            if self._consecutive_health_failures >= 3:
+                await self.pause("Health check failed 3 times (exception)")
+
 
         return status
 

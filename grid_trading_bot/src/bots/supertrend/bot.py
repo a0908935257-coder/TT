@@ -1274,6 +1274,10 @@ class SupertrendBot(BaseBot):
             if self._current_trend == 0:
                 return
 
+            # Decrement signal cooldown before entry logic to avoid off-by-one
+            if self._signal_cooldown > 0:
+                self._signal_cooldown -= 1
+
             # Check signal cooldown
             if self._signal_cooldown > 0:
                 logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping entry")
@@ -1353,9 +1357,7 @@ class SupertrendBot(BaseBot):
                         self._signal_cooldown = self._cooldown_bars
                         self._last_triggered_level = level_idx + 1
 
-            # Decrement signal cooldown (after entry logic to avoid off-by-one)
-            if self._signal_cooldown > 0:
-                self._signal_cooldown -= 1
+            # Note: cooldown decrement moved before entry logic (see above)
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")
@@ -1376,8 +1378,13 @@ class SupertrendBot(BaseBot):
         """
         # Stage 6: Close old position if reversing direction
         if self._position and self._position.side != side:
-            logger.info(f"Reversing direction: closing {self._position.side.value} before opening {side.value}")
+            old_side = self._position.side.value
+            logger.info(f"Reversing direction: closing {old_side} before opening {side.value}")
             await self._close_position(ExitReason.SIGNAL_FLIP)
+            # If position still exists, close failed — abort reversal to prevent dual exposure
+            if self._position is not None:
+                logger.error(f"Failed to close {old_side} position, aborting reversal")
+                return False
 
         # Check entry allowed (circuit breaker, cooldown, oscillation prevention)
         entry_allowed, entry_reason = self.check_entry_allowed()

@@ -5,8 +5,11 @@ Provides calculation logic for stop loss, take profit, and trailing stop prices.
 Pure calculation functions without side effects - stateless design.
 """
 
+import logging
 from decimal import Decimal
 from typing import Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from src.risk.sltp.models import (
     StopLossConfig,
@@ -178,6 +181,15 @@ class SLTPCalculator:
                 raise ValueError(
                     "level_percentages and level_close_pcts required for MULTI_LEVEL"
                 )
+            # Validate total close percentages don't exceed 100%
+            total_close_pct = sum(config.level_close_pcts)
+            if total_close_pct > Decimal("1.0"):
+                logger.warning(
+                    f"MULTI_LEVEL TP close_pcts sum={total_close_pct} > 1.0, normalizing"
+                )
+                config.level_close_pcts = [
+                    pct / total_close_pct for pct in config.level_close_pcts
+                ]
             levels = []
             for pct, close_pct in zip(config.level_percentages, config.level_close_pcts):
                 distance = entry_price * pct
