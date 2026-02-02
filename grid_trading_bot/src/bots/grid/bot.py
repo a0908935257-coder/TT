@@ -948,7 +948,16 @@ class GridBot(BaseBot):
         if event_type == "executionReport":
             order = self._parse_order_update(data)
             if order:
-                await self._order_manager.handle_order_update(order)
+                if order.status == OrderStatus.FILLED:
+                    # Route fills through bot.on_order_filled for profit tracking + risk mgmt
+                    # on_order_filled internally calls order_manager.on_order_filled
+                    await self.on_order_filled(order)
+                    # Also update order_manager cache (without re-calling on_order_filled)
+                    if order.order_id in self._order_manager._orders or order.order_id in self._order_manager._order_level_map:
+                        self._order_manager._orders[order.order_id] = order
+                else:
+                    # Non-fill updates (cancel, partial, etc.) go to order_manager directly
+                    await self._order_manager.handle_order_update(order)
 
     def _parse_order_update(self, data: dict) -> Optional[Order]:
         """Parse order update from WebSocket executionReport data.

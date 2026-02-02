@@ -642,6 +642,7 @@ class RateLimiter:
             True if acquired, False if timeout/denied
         """
         # Phase 1: Check if rate limited (under lock), determine sleep time
+        # Do NOT clear _is_limited here — all concurrent callers must also wait
         sleep_time = 0.0
         async with self._lock:
             if self._is_limited and self._retry_after:
@@ -649,20 +650,15 @@ class RateLimiter:
                     return False
                 sleep_time = self._retry_after
                 logger.warning(f"Rate limited, waiting {sleep_time:.1f}s")
-                self._is_limited = False
-                self._retry_after = None
 
-        # Phase 2: Sleep OUTSIDE lock to avoid blocking all callers
+        # Phase 2: Sleep OUTSIDE lock so other callers can also read sleep_time
         if sleep_time > 0:
             await asyncio.sleep(sleep_time)
 
         # Phase 3: Acquire resources and record (under lock)
         async with self._lock:
-            # Re-check in case another rate limit arrived during sleep
+            # Clear rate limit flag now that we've waited
             if self._is_limited and self._retry_after:
-                if timeout and self._retry_after > timeout:
-                    return False
-                # Don't sleep again here — just clear and proceed
                 self._is_limited = False
                 self._retry_after = None
 
