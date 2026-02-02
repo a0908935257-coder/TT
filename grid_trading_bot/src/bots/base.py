@@ -6641,7 +6641,10 @@ class BaseBot(ABC):
             if fill_record["is_reduce_only"] or (side == "SELL" and current_side == "LONG") or (side == "BUY" and current_side == "SHORT"):
                 # This was a closing trade - realized is defined in the closing branches above
                 if realized is not None:
-                    self.update_strategy_capital(realized_pnl=realized - fee)
+                    # Use proportional close_fee (same as virtual ledger) to avoid double-counting
+                    close_qty = min(quantity, current_qty) if current_qty > 0 else quantity
+                    proportional_fee = fee * close_qty / quantity if quantity > 0 else fee
+                    self.update_strategy_capital(realized_pnl=realized - proportional_fee)
 
         logger.debug(
             f"[{self._bot_id}] Virtual fill recorded: {side} {quantity} {symbol} @ {price}, "
