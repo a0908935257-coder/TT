@@ -1498,15 +1498,19 @@ class GridFuturesBot(BaseBot):
 
     def _calculate_stop_loss_price(self, entry_price: Decimal, side: PositionSide) -> Decimal:
         """Calculate stop loss price based on entry and config."""
-        tick_size = getattr(self, '_tick_size', Decimal("0.1"))
+        # FIX S-1: Use proper step-based truncation instead of quantize(tick_size)
+        # quantize(tick_size) only sets decimal places, not step granularity
+        tick_size = getattr(self, '_tick_size', None)
+        if tick_size is None or tick_size <= 0:
+            tick_size = Decimal("0.01")  # Safe fallback
         if side == PositionSide.LONG:
             stop_price = entry_price * (Decimal("1") - self._config.stop_loss_pct)
             # Round down for LONG SL (more protective - triggers sooner)
-            return stop_price.quantize(tick_size, rounding=ROUND_DOWN)
+            return (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
         else:
             stop_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
             # Round up for SHORT SL (more protective - triggers sooner)
-            return stop_price.quantize(tick_size, rounding=ROUND_UP)
+            return (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_UP) * tick_size
 
     async def _place_stop_loss_order(self) -> None:
         """Place stop loss order on exchange using Algo Order API."""
@@ -1519,6 +1523,33 @@ class GridFuturesBot(BaseBot):
                 self._position.entry_price,
                 self._position.side
             )
+
+            # FIX F-1: Validate SL triggers before liquidation price
+            liq_price = getattr(self._position, 'liquidation_price', None)
+            if liq_price and liq_price > 0:
+                if self._position.side == PositionSide.LONG:
+                    # Long: SL must be ABOVE liquidation price
+                    if stop_price <= liq_price:
+                        old_sl = stop_price
+                        # Set SL halfway between liq price and entry
+                        stop_price = liq_price + (self._position.entry_price - liq_price) * Decimal("0.1")
+                        tick_size = getattr(self, '_tick_size', Decimal("0.01"))
+                        stop_price = (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_UP) * tick_size
+                        logger.warning(
+                            f"SL price {old_sl} <= liquidation price {liq_price}. "
+                            f"Adjusted SL to {stop_price} (10% above liquidation)"
+                        )
+                else:
+                    # Short: SL must be BELOW liquidation price
+                    if stop_price >= liq_price:
+                        old_sl = stop_price
+                        stop_price = liq_price - (liq_price - self._position.entry_price) * Decimal("0.1")
+                        tick_size = getattr(self, '_tick_size', Decimal("0.01"))
+                        stop_price = (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
+                        logger.warning(
+                            f"SL price {old_sl} >= liquidation price {liq_price}. "
+                            f"Adjusted SL to {stop_price} (10% below liquidation)"
+                        )
 
             # Determine close side (opposite of position)
             if self._position.side == PositionSide.LONG:

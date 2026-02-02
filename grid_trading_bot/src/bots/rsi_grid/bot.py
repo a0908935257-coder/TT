@@ -1159,11 +1159,14 @@ class RSIGridBot(BaseBot):
         else:
             stop_price = entry_price + sl_distance
 
-        tick_size = getattr(self, '_tick_size', Decimal("0.1"))
+        # FIX S-1: Use proper step-based truncation instead of quantize(tick_size)
+        tick_size = getattr(self, '_tick_size', None)
+        if tick_size is None or tick_size <= 0:
+            tick_size = Decimal("0.01")  # Safe fallback
         if self._position.side == PositionSide.LONG:
-            return stop_price.quantize(tick_size, rounding=ROUND_DOWN)
+            return (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_DOWN) * tick_size
         else:
-            return stop_price.quantize(tick_size, rounding=ROUND_UP)
+            return (stop_price / tick_size).quantize(Decimal("1"), rounding=ROUND_UP) * tick_size
 
     async def _place_stop_loss_order(self) -> None:
         """Place stop loss order on exchange."""

@@ -80,7 +80,8 @@ class BinanceAuth:
 
         # Add timestamp with offset correction and recvWindow
         params["timestamp"] = int(time.time() * 1000) + self._time_offset
-        params["recvWindow"] = 60000
+        # FIX M-2: Reduced from 60000 (max) to 10000 to limit replay attack window
+        params["recvWindow"] = 10000
 
         # Create query string (preserve order, don't sort)
         query_string = urlencode(params)

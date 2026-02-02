@@ -969,7 +969,15 @@ class OrderRouter:
                 await self._execute_child(child)
 
         tasks = [execute_with_limit(child) for child in plan.child_orders]
-        await asyncio.gather(*tasks)
+        # FIX F-2: Use return_exceptions=True to prevent partial fill state
+        # when a single child order failure cancels all siblings
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"Child order {i} failed: {result}",
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     # =========================================================================
     # Result Creation

@@ -268,6 +268,16 @@ class BinanceFuturesAPI:
                 code="429"
             )
 
+        # FIX S-4: Handle HTTP 418 IP ban - requires longer backoff
+        if status == 418:
+            logger.critical(
+                "IP banned by Binance (HTTP 418). All requests paused for 5 minutes."
+            )
+            raise RateLimitError(
+                "IP banned by Binance (HTTP 418). Must wait before retrying.",
+                code="418"
+            )
+
         # Try to parse JSON
         try:
             data = await response.json()
@@ -911,6 +921,8 @@ class BinanceFuturesAPI:
             "triggerPrice": str(trigger_price),
             "quantity": str(quantity),
             "positionSide": position_side,
+            # FIX S-2: Use MARK_PRICE to prevent manipulation-triggered stop losses
+            "workingType": "MARK_PRICE",
         }
 
         # Add price for limit-type conditional orders (STOP, TAKE_PROFIT)
