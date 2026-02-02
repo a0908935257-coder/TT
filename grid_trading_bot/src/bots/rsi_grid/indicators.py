@@ -154,26 +154,26 @@ class RSICalculator:
         losses = []
 
         for i in range(1, self._period + 1):
-            change = float(klines[i].close) - float(klines[i - 1].close)
+            change = klines[i].close - klines[i - 1].close
             if change > 0:
                 gains.append(change)
-                losses.append(0)
+                losses.append(Decimal("0"))
             else:
-                gains.append(0)
+                gains.append(Decimal("0"))
                 losses.append(abs(change))
 
-        self._avg_gain = Decimal(str(sum(gains) / self._period))
-        self._avg_loss = Decimal(str(sum(losses) / self._period))
+        self._avg_gain = sum(gains) / self._period
+        self._avg_loss = sum(losses) / self._period
 
         # Process remaining klines using Wilder's smoothing
         for i in range(self._period + 1, len(klines)):
-            change = float(klines[i].close) - float(klines[i - 1].close)
+            change = klines[i].close - klines[i - 1].close
             if change > 0:
-                current_gain = Decimal(str(change))
+                current_gain = change
                 current_loss = Decimal("0")
             else:
                 current_gain = Decimal("0")
-                current_loss = Decimal(str(abs(change)))
+                current_loss = abs(change)
 
             # Wilder's smoothing: new_avg = (prev_avg * (period-1) + current) / period
             self._avg_gain = (self._avg_gain * (self._period - 1) + current_gain) / self._period

@@ -867,7 +867,7 @@ class BollingerBot(BaseBot):
                         if self._config.use_hysteresis:
                             self._last_triggered_level = level.index
                         return  # Skip cooldown decrement on successful entry
-                    break
+                    # On failure, continue trying other levels
 
             # Bearish trend: SHORT only (sell rallies)
             elif self._current_trend == -1:
@@ -884,7 +884,7 @@ class BollingerBot(BaseBot):
                         if self._config.use_hysteresis:
                             self._last_triggered_level = level.index
                         return  # Skip cooldown decrement on successful entry
-                    break
+                    # On failure, continue trying other levels
 
         # Decrement signal cooldown (after entry logic to avoid off-by-one)
         if self._signal_cooldown > 0:

@@ -92,7 +92,7 @@ VALID_STATE_TRANSITIONS: dict[BotState, list[BotState]] = {
     BotState.REGISTERED: [BotState.INITIALIZING],
     BotState.INITIALIZING: [BotState.RUNNING, BotState.ERROR],
     BotState.RUNNING: [BotState.PAUSED, BotState.STOPPING, BotState.ERROR],
-    BotState.PAUSED: [BotState.RUNNING, BotState.STOPPING],
+    BotState.PAUSED: [BotState.RUNNING, BotState.STOPPING, BotState.ERROR],
     BotState.STOPPING: [BotState.STOPPED],
     BotState.STOPPED: [BotState.INITIALIZING],
     BotState.ERROR: [BotState.STOPPED],
@@ -447,7 +447,12 @@ class Position(TradingBaseModel):
 
         if position_side == "BOTH":
             # One-way mode: determine direction from positionAmt sign
-            side = PositionSide.LONG if position_amt > 0 else PositionSide.SHORT
+            if position_amt == 0:
+                side = PositionSide.BOTH  # No position, use BOTH as neutral
+            elif position_amt > 0:
+                side = PositionSide.LONG
+            else:
+                side = PositionSide.SHORT
         else:
             # Hedge mode: use positionSide directly
             side = PositionSide(position_side)

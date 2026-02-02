@@ -1829,6 +1829,10 @@ class POVAlgorithm(BaseExecutionAlgorithm):
                     # Volume per second
                     volume_rate = (newest_vol - oldest_vol) / Decimal(str(time_delta))
 
+                    # Clamp negative volume rate to zero
+                    if volume_rate < 0:
+                        volume_rate = Decimal("0")
+
                     # Our participation
                     slice_qty = volume_rate * self._current_participation_rate
 
