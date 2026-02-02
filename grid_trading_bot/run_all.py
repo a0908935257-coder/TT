@@ -166,17 +166,17 @@ def print_banner():
 啟動項目:
   ✓ Master 主控台
   ✓ Fund Manager (中央資金分配系統)
-  ✓ Bollinger Bot (合約 2x) - BB_TREND_GRID 策略
-  ✓ RSI-Grid Bot (合約 2x) - RSI 區域 + 網格進場
-  ✓ Grid Futures Bot (合約 10x) - NEUTRAL 雙向網格
-  ✓ Supertrend Bot (合約 2x) - TREND_GRID + RSI 過濾
+  ✓ Bollinger Bot (合約 18x) - BB_NEUTRAL_GRID 策略
+  ✓ RSI-Grid Bot (合約 10x) - RSI 區域 + 網格進場
+  ✓ Grid Futures Bot (合約 7x) - NEUTRAL 雙向網格
+  ✓ Supertrend Bot (合約 10x) - HYBRID_GRID + RSI 過濾
   ✓ Discord Bot (遠端管理)
 
 Walk-Forward 驗證通過的策略:
-  Bollinger: BB(20,2.0)+Grid, 2x (80% 一致性, Sharpe 6.56)
-  RSI-Grid: RSI(14)+Grid(10)+SMA(20), 2x (目標 Sharpe > 3.0)
-  Grid Futures: NEUTRAL 10x, hysteresis (100% 一致性, Sharpe 8.33)
-  Supertrend: TREND_GRID+RSI filter, 2x (70% 一致性, Sharpe 5.84)
+  Bollinger: BB(11,2.0)+Grid, 18x (100% 一致性, Sharpe 13.10)
+  RSI-Grid: RSI(5)+Grid(6), 10x (Sharpe 7.47)
+  Grid Futures: NEUTRAL 7x, hysteresis (100% 一致性, Sharpe 5.57)
+  Supertrend: HYBRID_GRID+RSI filter, 10x (Sharpe 5.60)
 
 資金分配 (中央管理):
   Grid Futures: 30%  |  Bollinger: 30%
