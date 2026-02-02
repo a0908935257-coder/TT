@@ -495,11 +495,11 @@ class GridBot(BaseBot):
         if not self._order_manager:
             return
 
-        # Delegate to order manager
-        await self._order_manager.on_order_filled(order)
-
         # Use lock to prevent race conditions in profit tracking
+        # on_order_filled must be inside lock so concurrent fills don't corrupt delta calculation
         async with self._profit_lock:
+            # Delegate to order manager
+            await self._order_manager.on_order_filled(order)
             # Get profit from last trade (if completed)
             stats = self._order_manager.get_statistics()
             current_profit = stats.get("total_profit", Decimal("0"))

@@ -150,6 +150,9 @@ class SupertrendBot(BaseBot):
         self._atr_history: list[Decimal] = []
         self._atr_baseline: Optional[Decimal] = None
 
+        # Reentrancy guard for kline processing (prevent concurrent entries)
+        self._kline_lock = asyncio.Lock()
+
         # Kline callback reference for unsubscribe
         self._kline_callback = None
 
@@ -1160,6 +1163,16 @@ class SupertrendBot(BaseBot):
         if not self._should_process_kline(kline, require_closed=True, check_symbol=False):
             return
 
+        # Reentrancy guard: prevent concurrent kline processing (e.g., delayed WS delivery)
+        if self._kline_lock.locked():
+            logger.debug("Kline processing already in progress, skipping")
+            return
+
+        async with self._kline_lock:
+            await self._on_kline_inner(kline)
+
+    async def _on_kline_inner(self, kline: Kline) -> None:
+        """Inner kline processing logic (TREND_GRID mode), guarded by _kline_lock."""
         # === Data Protection: Validate data quality ===
         # Check data freshness
         if not self._validate_kline_freshness(kline):
@@ -1324,7 +1337,6 @@ class SupertrendBot(BaseBot):
                     if not self._check_rsi_filter(PositionSide.LONG):
                         return
 
-                    entry_level.is_filled = True
                     entry_price = entry_level.price
 
                     # Calculate take profit at next grid level up
@@ -1340,6 +1352,7 @@ class SupertrendBot(BaseBot):
 
                     success = await self._open_position(PositionSide.LONG, entry_price, tp_price)
                     if success:
+                        entry_level.is_filled = True
                         self._signal_cooldown = self._cooldown_bars
                         self._last_triggered_level = level_idx
 
@@ -1356,7 +1369,6 @@ class SupertrendBot(BaseBot):
                     if not self._check_rsi_filter(PositionSide.SHORT):
                         return
 
-                    entry_level.is_filled = True
                     entry_price = entry_level.price
 
                     # Calculate take profit at next grid level down
@@ -1372,6 +1384,7 @@ class SupertrendBot(BaseBot):
 
                     success = await self._open_position(PositionSide.SHORT, entry_price, tp_price)
                     if success:
+                        entry_level.is_filled = True
                         self._signal_cooldown = self._cooldown_bars
                         self._last_triggered_level = level_idx + 1
 
@@ -1898,6 +1911,19 @@ class SupertrendBot(BaseBot):
                 logger.debug(
                     f"Cost basis closed: {len(cost_basis_result.get('matched_lots', []))} lots, "
                     f"Attributed P&L: {cost_basis_result.get('total_realized_pnl')}"
+                )
+
+                # Record virtual fill for close (keep virtual position in sync)
+                close_side_str = close_side.value  # "SELL" or "BUY"
+                self.record_virtual_fill(
+                    symbol=self._config.symbol,
+                    side=close_side_str,
+                    quantity=self._position.quantity,
+                    price=fill_price,
+                    order_id=order_id_str,
+                    fee=close_fee,
+                    is_reduce_only=True,
+                    leverage=self._config.leverage,
                 )
 
                 # Update risk tracking

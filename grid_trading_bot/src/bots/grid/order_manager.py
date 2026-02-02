@@ -528,8 +528,14 @@ class GridOrderManager:
                     )
             except Exception as e:
                 logger.error(f"Non-retryable error placing order at level {level_index}: {e}")
+                # Reset level state so it can be retried later
+                level.state = LevelState.EMPTY
+                level.order_id = None
                 return None
 
+        # All retries exhausted - reset level state to allow future placement
+        level.state = LevelState.EMPTY
+        level.order_id = None
         return None
 
     async def cancel_order_at_level(self, level_index: int) -> bool:
