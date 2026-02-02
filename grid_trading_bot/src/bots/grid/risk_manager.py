@@ -68,13 +68,14 @@ class RiskState(str, Enum):
 # BotState is imported from src.master.models for consistency
 # Valid state transitions for GridRiskManager (subset of master.models)
 VALID_STATE_TRANSITIONS: dict[BotState, set[BotState]] = {
-    BotState.INITIALIZING: {BotState.RUNNING, BotState.ERROR, BotState.STOPPED},
+    BotState.REGISTERED: {BotState.INITIALIZING},
+    BotState.INITIALIZING: {BotState.RUNNING, BotState.ERROR},
     BotState.RUNNING: {BotState.PAUSED, BotState.STOPPING, BotState.ERROR},
-    BotState.PAUSED: {BotState.RUNNING, BotState.STOPPING, BotState.STOPPED},
+    BotState.PAUSED: {BotState.RUNNING, BotState.STOPPING, BotState.ERROR},
     BotState.STOPPING: {BotState.STOPPED},
-    BotState.STOPPED: set(),  # Terminal state
-    BotState.ERROR: {BotState.STOPPED, BotState.PAUSED},
-    BotState.UNKNOWN: {BotState.STOPPED, BotState.ERROR},  # UNKNOWN can transition to recovery states
+    BotState.STOPPED: {BotState.INITIALIZING},
+    BotState.ERROR: {BotState.STOPPED},
+    BotState.UNKNOWN: {BotState.STOPPED, BotState.ERROR},
 }
 
 

@@ -1037,7 +1037,7 @@ class RSIGridBot(BaseBot):
                 else:
                     pnl = close_qty * (self._position.entry_price - fill_price)
 
-                fee = close_qty * fill_price * self._config.fee_rate * 2
+                fee = close_qty * (self._position.entry_price + fill_price) * self._config.fee_rate
 
                 # Calculate MFE/MAE
                 mfe, mae = self.calculate_mfe_mae(

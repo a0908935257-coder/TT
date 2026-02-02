@@ -30,7 +30,7 @@ import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
@@ -799,7 +799,7 @@ class GridFuturesBot(BaseBot):
             # Apply position size reduction from oscillation prevention
             size_mult = self.get_position_size_reduction()
             if size_mult < Decimal("1.0"):
-                quantity = (quantity * size_mult).quantize(Decimal("0.001"))
+                quantity = (quantity * size_mult).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
                 logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
                 if quantity <= 0:
                     return False
@@ -1043,7 +1043,7 @@ class GridFuturesBot(BaseBot):
         try:
             close_qty = quantity or self._position.quantity
             # Round to exchange precision
-            close_qty = close_qty.quantize(Decimal("0.001"))
+            close_qty = close_qty.quantize(Decimal("0.001"), rounding=ROUND_DOWN)
 
             # Cancel stop loss order if closing full position
             is_full_close = (quantity is None or quantity >= self._position.quantity)
@@ -1070,7 +1070,7 @@ class GridFuturesBot(BaseBot):
                 else:
                     pnl = close_qty * (self._position.entry_price - fill_price)
 
-                fee = close_qty * fill_price * self._config.fee_rate * 2  # Entry + exit fee
+                fee = close_qty * (self._position.entry_price + fill_price) * self._config.fee_rate  # Entry + exit fee
 
                 # Record trade
                 # Calculate MFE/MAE
@@ -1499,12 +1499,15 @@ class GridFuturesBot(BaseBot):
 
     def _calculate_stop_loss_price(self, entry_price: Decimal, side: PositionSide) -> Decimal:
         """Calculate stop loss price based on entry and config."""
+        tick_size = getattr(self, '_tick_size', Decimal("0.1"))
         if side == PositionSide.LONG:
             stop_price = entry_price * (Decimal("1") - self._config.stop_loss_pct)
+            # Round down for LONG SL (more protective - triggers sooner)
+            return stop_price.quantize(tick_size, rounding=ROUND_DOWN)
         else:
             stop_price = entry_price * (Decimal("1") + self._config.stop_loss_pct)
-        # Round to tick size
-        return stop_price.quantize(getattr(self, '_tick_size', Decimal("0.1")))
+            # Round up for SHORT SL (more protective - triggers sooner)
+            return stop_price.quantize(tick_size, rounding=ROUND_UP)
 
     async def _place_stop_loss_order(self) -> None:
         """Place stop loss order on exchange using Algo Order API."""

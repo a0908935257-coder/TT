@@ -1062,7 +1062,7 @@ class GridOrderManager:
             logger.error(f"Order {order.order_id} has invalid fill quantity: {fill_qty}")
             return None
 
-        fee = order.fee if order.fee else fill_price * fill_qty * self.DEFAULT_FEE_RATE
+        fee = order.fee if order.fee is not None else fill_price * fill_qty * self.DEFAULT_FEE_RATE
 
         # Create fill record
         fill_record = FilledRecord(
