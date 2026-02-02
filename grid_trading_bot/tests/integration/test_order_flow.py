@@ -408,8 +408,9 @@ class TestEdgeCases:
 
         reverse = await manager.on_order_filled(filled)
 
-        # No reverse should be placed (can't go lower than index 0)
-        assert reverse is None
+        # At lowest level, a BUY reverse is placed at the same level
+        assert reverse is not None
+        assert reverse.side == OrderSide.BUY
 
     @pytest.mark.asyncio
     async def test_rapid_fills(self, order_flow_setup):
