@@ -1486,33 +1486,7 @@ class SupertrendBot(BaseBot):
             logger.warning(f"SSL check failed: {ssl_reason}")
             return False
 
-        # Check balance before order (prevent rejection)
-        balance_ok, balance_msg = await self._check_balance_for_order(
-            symbol=self._config.symbol,
-            quantity=Decimal("0.001"),  # Will be calculated below
-            price=price,
-            leverage=self._config.leverage,
-        )
-        if not balance_ok:
-            logger.warning(f"Order blocked: {balance_msg}")
-            return False
-
-        # Check SignalCoordinator for multi-bot conflict prevention
-        if self._signal_coordinator:
-            signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
-            result = await self._signal_coordinator.request_signal(
-                bot_id=self._bot_id,
-                symbol=self._config.symbol,
-                direction=signal_dir,
-                quantity=Decimal("0"),  # Will be calculated below
-                price=price,
-                reason=f"Supertrend grid level",
-            )
-            if not result.approved:
-                logger.warning(f"Signal blocked by coordinator: {result.message}")
-                return False
-
-        # Note: Global risk check is done after calculating quantity below
+        # Note: Balance check and signal coordinator check moved after quantity calculation
 
         try:
             # Validate price before calculation (indicator boundary check)
@@ -1555,6 +1529,32 @@ class SupertrendBot(BaseBot):
             if quantity <= 0:
                 logger.warning("Insufficient balance to open position")
                 return False
+
+            # Check balance with actual calculated quantity (moved from above)
+            balance_ok, balance_msg = await self._check_balance_for_order(
+                symbol=self._config.symbol,
+                quantity=quantity,
+                price=price,
+                leverage=self._config.leverage,
+            )
+            if not balance_ok:
+                logger.warning(f"Order blocked: {balance_msg}")
+                return False
+
+            # Check SignalCoordinator for multi-bot conflict prevention
+            if self._signal_coordinator:
+                signal_dir = SignalDirection.LONG if side == PositionSide.LONG else SignalDirection.SHORT
+                result = await self._signal_coordinator.request_signal(
+                    bot_id=self._bot_id,
+                    symbol=self._config.symbol,
+                    direction=signal_dir,
+                    quantity=quantity,
+                    price=price,
+                    reason=f"Supertrend grid level",
+                )
+                if not result.approved:
+                    logger.warning(f"Signal blocked by coordinator: {result.message}")
+                    return False
 
             # Pre-trade risk check (risk gate + global risk limits)
             is_allowed, ptc_msg, ptc_details = await self.pre_trade_with_global_check(

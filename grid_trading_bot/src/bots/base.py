@@ -4933,12 +4933,28 @@ class BaseBot(ABC):
         """
         self._init_fill_tracking()
 
-        # Record the fill
+        # Record the fill (with cleanup to prevent memory leak)
         self._confirmed_fills[order_id] = {
             "timestamp": time.time(),
             "data": fill_data,
             "source": "websocket",
         }
+        # Keep only recent 1000 entries
+        if len(self._confirmed_fills) > 1000:
+            oldest_keys = sorted(
+                self._confirmed_fills.keys(),
+                key=lambda k: self._confirmed_fills[k]["timestamp"],
+            )[:len(self._confirmed_fills) - 1000]
+            for k in oldest_keys:
+                del self._confirmed_fills[k]
+
+        # Clean up stale pending fills (> 60 seconds old)
+        stale_keys = [
+            k for k, v in self._pending_fills.items()
+            if time.time() - v.get("buffered_at", 0) > 60
+        ]
+        for k in stale_keys:
+            del self._pending_fills[k]
 
         # Trigger callback if registered
         if order_id in self._pending_fill_callbacks:
@@ -4948,7 +4964,7 @@ class BaseBot(ABC):
                 logger.error(f"[{self._bot_id}] Error in fill callback: {e}")
         else:
             # No callback registered yet — buffer as early arrival
-            self._pending_fills[order_id] = fill_data
+            self._pending_fills[order_id] = {**fill_data, "buffered_at": time.time()}
             logger.info(
                 f"[{self._bot_id}] Early fill arrival buffered for order {order_id}"
             )
@@ -5396,7 +5412,7 @@ class BaseBot(ABC):
                             await self._cancel_order_with_timeout(str(order_id), symbol)
 
                 except Exception as e:
-                    error_code, error_cat = await self._classify_order_error(e)
+                    error_code, error_cat = self._classify_order_error(e)
                     logger.warning(
                         f"[{self._bot_id}] LIMIT order attempt {attempt + 1} failed: "
                         f"{error_code} ({error_cat})"
@@ -5454,7 +5470,7 @@ class BaseBot(ABC):
                     return True, order, execution_details
 
             except Exception as e:
-                error_code, error_cat = await self._classify_order_error(e)
+                error_code, error_cat = self._classify_order_error(e)
                 logger.error(
                     f"[{self._bot_id}] MARKET order also failed: {error_code}"
                 )
@@ -5868,6 +5884,7 @@ class BaseBot(ABC):
             logger.error(f"Error resuming bot {self._bot_id}: {e}")
             self._state = BotState.ERROR
             self._error_message = str(e)
+            self._running = False
             return False
 
     # =========================================================================
@@ -6393,8 +6410,9 @@ class BaseBot(ABC):
                     f"Drawdown: {result['metrics'].get('drawdown_pct', 0):.2%}"
                 ),
             )
-        # Pause only this bot
-        await self.pause()
+        # Signal pause request instead of calling pause() directly
+        self._strategy_pause_requested = True
+        logger.error(f"[{self._bot_id}] Strategy pause requested - will execute at next safe point")
 
     async def _on_strategy_risk_stop(self, result: Dict[str, Any]) -> None:
         """
@@ -6415,8 +6433,10 @@ class BaseBot(ABC):
                     f"Action: Closing positions and stopping"
                 ),
             )
-        # Stop only this bot with position clearing
-        await self.stop(clear_position=True)
+        # Signal stop request instead of calling stop() directly
+        # (calling stop() in check_strategy_risk interrupts the execution flow)
+        self._strategy_stop_requested = True
+        logger.critical(f"[{self._bot_id}] Strategy stop requested - will execute at next safe point")
 
     def reset_strategy_risk_pause(self) -> bool:
         """
@@ -7535,6 +7555,12 @@ class BaseBot(ABC):
             Tuple of (is_allowed, message, details)
         """
         self._init_risk_bypass_prevention()
+
+        # Check circuit breaker first (H1 fix)
+        cb_active, cb_reason = self.is_circuit_breaker_active()
+        if cb_active:
+            return False, f"Circuit breaker active: {cb_reason}", {"circuit_breaker": True}
+
         tracking = self._risk_bypass_tracking
 
         details = {

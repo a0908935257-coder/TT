@@ -656,24 +656,28 @@ class FundPool:
         if not self._db_path:
             return
         try:
-            conn = sqlite3.connect(self._db_path)
-            try:
-                now = datetime.now(timezone.utc).isoformat()
-                if amount <= 0:
-                    conn.execute(
-                        "DELETE FROM allocations WHERE bot_id = ?", (bot_id,)
-                    )
-                else:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO allocations (bot_id, amount, updated_at) "
-                        "VALUES (?, ?, ?)",
-                        (bot_id, str(amount), now),
-                    )
-                conn.commit()
-            finally:
-                conn.close()
+            self._persist_allocation_sync(bot_id, amount)
         except Exception as e:
             logger.warning(f"Failed to persist allocation for {bot_id}: {e}")
+
+    def _persist_allocation_sync(self, bot_id: str, amount: Decimal) -> None:
+        """Synchronous SQLite persist (can be offloaded to executor)."""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            if amount <= 0:
+                conn.execute(
+                    "DELETE FROM allocations WHERE bot_id = ?", (bot_id,)
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO allocations (bot_id, amount, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    (bot_id, str(amount), now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
     def _restore_allocations(self) -> None:
         """Restore allocations from SQLite on startup."""

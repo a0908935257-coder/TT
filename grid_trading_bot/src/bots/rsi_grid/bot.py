@@ -656,7 +656,7 @@ class RSIGridBot(BaseBot):
                 if pos.quantity > 0:
                     self._position = RSIGridPosition(
                         symbol=self._config.symbol,
-                        side=pos.side,
+                        side=PositionSide(pos.side) if isinstance(pos.side, str) else pos.side,
                         entry_price=pos.entry_price,
                         quantity=pos.quantity,
                         leverage=self._config.leverage,
@@ -793,6 +793,7 @@ class RSIGridBot(BaseBot):
                     return False
 
             # Pre-trade risk check (risk gate + global risk limits)
+            gate_acquired = False
             is_allowed, ptc_msg, ptc_details = await self.pre_trade_with_global_check(
                 symbol=self._config.symbol,
                 side=order_side,
@@ -802,6 +803,7 @@ class RSIGridBot(BaseBot):
             if not is_allowed:
                 logger.warning(f"[{self._bot_id}] Pre-trade check rejected: {ptc_msg}")
                 return False
+            gate_acquired = True
 
             # Mark order as pending (for deduplication)
             order_key = self._mark_order_pending(
@@ -984,7 +986,8 @@ class RSIGridBot(BaseBot):
         finally:
             if order_key:
                 self._clear_pending_order(order_key)
-            self.release_risk_gate()
+            if gate_acquired:
+                self.release_risk_gate()
 
         return False
 

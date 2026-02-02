@@ -639,7 +639,11 @@ class GridBot(BaseBot):
                     restored = await self._order_manager.place_initial_orders()
                     logger.info(f"Restored {restored} orders after rollback")
                 except Exception as restore_error:
-                    logger.error(f"Failed to restore orders after rollback: {restore_error}")
+                    logger.critical(f"Failed to restore orders after rollback: {restore_error}")
+                    # Rollback also failed - bot is in inconsistent state
+                    raise RuntimeError(
+                        f"Grid rebuild AND rollback both failed: {restore_error}"
+                    ) from restore_error
 
             await self._notify_error(f"Grid rebuild failed: {e}")
             # Re-raise with context to distinguish from initialization errors

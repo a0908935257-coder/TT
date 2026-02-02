@@ -460,6 +460,72 @@ class StateCache(Generic[T]):
                 new_data=value,
             )
 
+    async def set_if_newer(
+        self,
+        key: str,
+        value: T,
+        timestamp_attr: str = "updated_at",
+        ttl: Optional[float] = None,
+        source: str = "unknown",
+    ) -> bool:
+        """
+        Atomically set value only if it's newer than cached entry.
+
+        Prevents TOCTOU race between get_entry() timestamp check and set().
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            timestamp_attr: Attribute name for timestamp comparison
+            ttl: TTL in seconds
+            source: Data source identifier
+
+        Returns:
+            True if value was set, False if skipped (older data)
+        """
+        async with self._lock:
+            old_entry = self._cache.get(key)
+
+            if old_entry and not old_entry.is_expired:
+                old_ts = getattr(old_entry.data, timestamp_attr, None)
+                new_ts = getattr(value, timestamp_attr, None)
+
+                if old_ts and new_ts and old_ts > new_ts:
+                    return False  # Cached data is newer, skip
+
+            # Proceed with set
+            if len(self._cache) >= self.max_size and key not in self._cache:
+                oldest_key = min(
+                    self._cache.keys(),
+                    key=lambda k: self._cache[k].updated_at
+                )
+                del self._cache[oldest_key]
+
+            ttl_seconds = ttl if ttl is not None else self.default_ttl
+            expires_at = None
+            if ttl_seconds is not None:
+                expires_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=ttl_seconds
+                )
+
+            is_update = old_entry is not None
+            entry = CacheEntry(
+                data=value,
+                expires_at=expires_at,
+                version=(old_entry.version + 1) if old_entry else 1,
+                source=source,
+            )
+            self._cache[key] = entry
+
+            self._emit_event(
+                CacheEventType.UPDATED if is_update else CacheEventType.ADDED,
+                key,
+                "cache",
+                old_data=old_entry.data if old_entry else None,
+                new_data=value,
+            )
+            return True
+
     async def delete(self, key: str) -> bool:
         """
         Delete value from cache.
@@ -546,77 +612,6 @@ class StateCache(Generic[T]):
 
             return len(expired_keys)
 
-    async def set_if_newer(
-        self,
-        key: str,
-        value: T,
-        timestamp: datetime,
-        ttl: Optional[float] = None,
-        source: str = "unknown",
-    ) -> bool:
-        """
-        Atomically set value only if it's newer than existing data.
-
-        This prevents race conditions where REST sync might overwrite
-        more recent WebSocket updates.
-
-        Args:
-            key: Cache key
-            value: Value to cache
-            timestamp: Timestamp of this data (e.g., updated_at)
-            ttl: TTL in seconds (uses default if None)
-            source: Data source identifier
-
-        Returns:
-            True if value was set, False if existing data is newer
-        """
-        async with self._lock:
-            entry = self._cache.get(key)
-
-            if entry and not entry.is_expired:
-                # Check if existing data has a timestamp
-                existing_ts = getattr(entry.data, 'updated_at', None)
-                if existing_ts and timestamp and existing_ts > timestamp:
-                    # Existing data is newer, don't update
-                    return False
-
-            # Proceed with setting (reuse existing set logic)
-            # Check size limit
-            if len(self._cache) >= self.max_size and key not in self._cache:
-                oldest_key = min(
-                    self._cache.keys(),
-                    key=lambda k: self._cache[k].updated_at
-                )
-                del self._cache[oldest_key]
-
-            ttl_seconds = ttl if ttl is not None else self.default_ttl
-            expires_at = None
-            if ttl_seconds is not None:
-                expires_at = datetime.now(timezone.utc) + timedelta(
-                    seconds=ttl_seconds
-                )
-
-            old_entry = self._cache.get(key)
-            is_update = old_entry is not None
-
-            new_entry = CacheEntry(
-                data=value,
-                expires_at=expires_at,
-                version=(old_entry.version + 1) if old_entry else 1,
-                source=source,
-            )
-
-            self._cache[key] = new_entry
-
-            self._emit_event(
-                CacheEventType.UPDATED if is_update else CacheEventType.ADDED,
-                key,
-                "cache",
-                old_data=old_entry.data if old_entry else None,
-                new_data=value,
-            )
-
-            return True
 
 
 # =============================================================================
@@ -857,29 +852,22 @@ class StateSynchronizer:
                 order_id = order_state.order_id
                 exchange_order_ids.add(order_id)
 
-                # Check for conflicts and timestamp
+                # Check for conflicts (read-only, no race concern)
                 cached_entry = await self._order_cache.get_entry(order_id)
                 if cached_entry:
-                    cached_order = cached_entry.data
-                    self._check_order_conflict(cached_order, order_state)
+                    self._check_order_conflict(cached_entry.data, order_state)
 
-                    # Don't overwrite with older data (compare updated_at timestamps)
-                    if (
-                        cached_order.updated_at
-                        and order_state.updated_at
-                        and cached_order.updated_at > order_state.updated_at
-                    ):
-                        logger.debug(
-                            f"Skipping REST sync for {order_id}: "
-                            f"cached={cached_order.updated_at} > incoming={order_state.updated_at}"
-                        )
-                        continue
-
-                await self._order_cache.set(
+                # Atomic set-if-newer to prevent TOCTOU race with WS updates
+                was_set = await self._order_cache.set_if_newer(
                     order_id,
                     order_state,
+                    timestamp_attr="updated_at",
                     source="rest_sync",
                 )
+                if not was_set:
+                    logger.debug(
+                        f"Skipping REST sync for {order_id}: cached data is newer"
+                    )
 
             # Mark closed orders that are no longer open
             for key in cached_keys:
@@ -986,29 +974,23 @@ class StateSynchronizer:
         try:
             order = self._parse_order(order_data)
 
-            # Check for conflict and timestamp
+            # Check for conflict (read-only, no race concern)
             cached_entry = await self._order_cache.get_entry(order.order_id)
             if cached_entry:
-                cached_order = cached_entry.data
-                self._check_order_conflict(cached_order, order)
+                self._check_order_conflict(cached_entry.data, order)
 
-                # Don't overwrite with older data (compare updated_at timestamps)
-                if (
-                    cached_order.updated_at
-                    and order.updated_at
-                    and cached_order.updated_at > order.updated_at
-                ):
-                    logger.debug(
-                        f"Skipping WS update for {order.order_id}: "
-                        f"cached={cached_order.updated_at} > incoming={order.updated_at}"
-                    )
-                    return
-
-            await self._order_cache.set(
+            # Atomic set-if-newer to prevent TOCTOU race with REST sync
+            was_set = await self._order_cache.set_if_newer(
                 order.order_id,
                 order,
+                timestamp_attr="updated_at",
                 source="websocket",
             )
+            if not was_set:
+                logger.debug(
+                    f"Skipping WS update for {order.order_id}: cached data is newer"
+                )
+                return
 
             logger.debug(f"Order updated from WS: {order.order_id} -> {order.status}")
 

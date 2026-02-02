@@ -697,7 +697,7 @@ class GridFuturesBot(BaseBot):
             positions = await self._exchange.futures.get_positions(self._config.symbol)
 
             for pos in positions:
-                if pos.quantity > 0:
+                if pos.quantity != Decimal("0"):
                     # pos.side is a string due to Pydantic's use_enum_values=True
                     # Convert to local PositionSide enum
                     side_str = pos.side if isinstance(pos.side, str) else pos.side.value

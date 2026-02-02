@@ -288,7 +288,7 @@ class CapitalMonitor:
         Returns:
             DailyPnL record for today
         """
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
 
         # If no snapshot, return empty P&L
         if self._last_snapshot is None:

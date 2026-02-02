@@ -158,6 +158,9 @@ class GridOrderManager:
         # Initialized early to avoid race condition in lazy initialization
         self._match_lock: asyncio.Lock = asyncio.Lock()
 
+        # Lock for level<->order map modifications (prevents cancel/place race)
+        self._level_lock: asyncio.Lock = asyncio.Lock()
+
         # Track order creation times for timeout handling
         # Key: order_id, Value: creation timestamp
         self._order_created_times: dict[str, datetime] = {}

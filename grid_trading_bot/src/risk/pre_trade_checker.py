@@ -236,6 +236,9 @@ class PreTradeRiskChecker:
 
         # Lock for concurrent access from multiple bots
         self._lock = asyncio.Lock()
+        # Threading lock for sync check() called from multiple coroutines
+        import threading
+        self._counter_lock = threading.Lock()
 
         # Order frequency tracking
         self._order_timestamps: Deque[datetime] = deque(maxlen=1000)
@@ -292,7 +295,8 @@ class PreTradeRiskChecker:
             )
             return result
 
-        self._total_checks += 1
+        with self._counter_lock:
+            self._total_checks += 1
 
         # Run all checks
         self._check_circuit_breaker(order, result)
@@ -306,17 +310,18 @@ class PreTradeRiskChecker:
         self._check_price_deviation(order, result)
         self._check_available_funds(order, result)
 
-        # Record order time if passed
-        if result.passed:
-            now = datetime.now(timezone.utc)
-            self._order_timestamps.append(now)
-            self._last_order_time = now
-            if not order.reduce_only:
-                self._daily_trade_count += 1
-        else:
-            self._total_rejections += 1
-            for reason in result.rejection_reasons:
-                self._rejection_counts[reason] += 1
+        # Record order time if passed (protected against concurrent access)
+        with self._counter_lock:
+            if result.passed:
+                now = datetime.now(timezone.utc)
+                self._order_timestamps.append(now)
+                self._last_order_time = now
+                if not order.reduce_only:
+                    self._daily_trade_count += 1
+            else:
+                self._total_rejections += 1
+                for reason in result.rejection_reasons:
+                    self._rejection_counts[reason] += 1
 
         # Log result
         if result.passed:
