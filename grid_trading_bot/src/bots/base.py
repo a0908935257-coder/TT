@@ -6495,6 +6495,7 @@ class BaseBot(ABC):
         fee: Decimal = Decimal("0"),
         is_reduce_only: bool = False,
         leverage: int = 1,
+        skip_pnl_update: bool = False,
     ) -> Dict[str, Any]:
         """
         Record a fill in the virtual position ledger.
@@ -6599,11 +6600,12 @@ class BaseBot(ABC):
                         pos["side"] = None
                         pos["avg_entry_price"] = Decimal("0")
 
-        # Update strategy risk tracking
-        if fill_record["is_reduce_only"] or (side == "SELL" and current_side == "LONG") or (side == "BUY" and current_side == "SHORT"):
-            # This was a closing trade - realized is defined in the closing branches above
-            if realized is not None:
-                self.update_strategy_capital(realized_pnl=realized - fee)
+        # Update strategy risk tracking (skip if caller already updated, e.g. FIFO close)
+        if not skip_pnl_update:
+            if fill_record["is_reduce_only"] or (side == "SELL" and current_side == "LONG") or (side == "BUY" and current_side == "SHORT"):
+                # This was a closing trade - realized is defined in the closing branches above
+                if realized is not None:
+                    self.update_strategy_capital(realized_pnl=realized - fee)
 
         logger.debug(
             f"[{self._bot_id}] Virtual fill recorded: {side} {quantity} {symbol} @ {price}, "
@@ -7002,7 +7004,7 @@ class BaseBot(ABC):
 
             result["total_cost_basis"] += cost_basis
             result["total_realized_pnl"] += lot_pnl
-            result["total_fees"] += entry_fee_portion
+            result["total_fees"] += entry_fee_portion + exit_fee_portion
 
             # Update lot
             lot["remaining_quantity"] -= match_qty
@@ -7018,7 +7020,8 @@ class BaseBot(ABC):
         # Update strategy risk with realized P&L
         self.update_strategy_capital(realized_pnl=result["total_realized_pnl"])
 
-        # Also record in virtual ledger
+        # Also record in virtual ledger (skip PnL update to avoid double counting -
+        # FIFO result already updated strategy capital above)
         self.record_virtual_fill(
             symbol=symbol,
             side="SELL",  # Closing long
@@ -7028,6 +7031,7 @@ class BaseBot(ABC):
             fee=close_fee,
             is_reduce_only=True,
             leverage=leverage,
+            skip_pnl_update=True,
         )
 
         logger.info(
