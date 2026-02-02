@@ -265,7 +265,7 @@ class MultiLevelGridStrategy(BacktestStrategy):
 
         # Calculate grid levels
         self._grid_levels: list[Decimal] = []
-        self._level_states: dict[int, str] = {}  # level_idx -> 'empty', 'filled'
+        self._level_states: dict[int, bool] = {}  # level_idx -> True if filled
         self._calculate_grid_levels()
 
         # State
@@ -285,13 +285,13 @@ class MultiLevelGridStrategy(BacktestStrategy):
             for i in range(count + 1):
                 level = lower * (ratio ** Decimal(i))
                 self._grid_levels.append(level)
-                self._level_states[i] = "empty"
+                self._level_states[i] = False
         else:
             step = (upper - lower) / Decimal(count)
             for i in range(count + 1):
                 level = lower + step * Decimal(i)
                 self._grid_levels.append(level)
-                self._level_states[i] = "empty"
+                self._level_states[i] = False
 
     def warmup_period(self) -> int:
         """Return warmup period."""
@@ -320,10 +320,10 @@ class MultiLevelGridStrategy(BacktestStrategy):
         for i, level in enumerate(self._grid_levels[:-1]):
             if (
                 self._prev_price > level >= current_price
-                and self._level_states[i] == "empty"
+                and not self._level_states[i]
             ):
                 # Buy at this level
-                self._level_states[i] = "filled"
+                self._level_states[i] = True
                 stop_loss = level * (Decimal("1") - self._config.stop_loss_pct)
                 tp_idx = min(i + 1, len(self._grid_levels) - 1)
                 take_profit = self._grid_levels[tp_idx]
@@ -349,7 +349,7 @@ class MultiLevelGridStrategy(BacktestStrategy):
         # Reset the level that was filled
         for i, level in enumerate(self._grid_levels):
             if abs(trade.entry_price - level) < level * Decimal("0.001"):
-                self._level_states[i] = "empty"
+                self._level_states[i] = False
                 break
 
     def reset(self) -> None:

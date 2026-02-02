@@ -6026,7 +6026,8 @@ class BaseBot(ABC):
         try:
             await self._exchange.get_account()
             return True
-        except Exception:
+        except Exception as e:
+            logger.warning("Exchange health check failed: %s", e)
             return False
 
     # =========================================================================
