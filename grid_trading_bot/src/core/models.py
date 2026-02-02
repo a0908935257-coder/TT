@@ -63,6 +63,43 @@ class MarketType(str, Enum):
     FUTURES = "FUTURES"
 
 
+class BotState(str, Enum):
+    """
+    Bot operational state.
+
+    State transitions:
+    REGISTERED -> INITIALIZING (start)
+    INITIALIZING -> RUNNING (init complete) | ERROR (init failed)
+    RUNNING -> PAUSED (pause) | STOPPING (stop) | ERROR (runtime error)
+    PAUSED -> RUNNING (resume) | STOPPING (stop)
+    STOPPING -> STOPPED (stop complete)
+    STOPPED -> INITIALIZING (restart)
+    ERROR -> STOPPED (acknowledge)
+    """
+
+    REGISTERED = "registered"        # Registered but not started
+    INITIALIZING = "initializing"    # Bot is initializing
+    RUNNING = "running"              # Bot is running normally
+    PAUSED = "paused"                # Bot is paused (can resume)
+    STOPPING = "stopping"            # Bot is stopping
+    STOPPED = "stopped"              # Bot is stopped
+    ERROR = "error"                  # Bot encountered error
+    UNKNOWN = "unknown"              # Unknown/unrecognized state (fallback)
+
+
+# Valid state transitions mapping
+VALID_STATE_TRANSITIONS: dict[BotState, list[BotState]] = {
+    BotState.REGISTERED: [BotState.INITIALIZING],
+    BotState.INITIALIZING: [BotState.RUNNING, BotState.ERROR],
+    BotState.RUNNING: [BotState.PAUSED, BotState.STOPPING, BotState.ERROR],
+    BotState.PAUSED: [BotState.RUNNING, BotState.STOPPING],
+    BotState.STOPPING: [BotState.STOPPED],
+    BotState.STOPPED: [BotState.INITIALIZING],
+    BotState.ERROR: [BotState.STOPPED],
+    BotState.UNKNOWN: [BotState.STOPPED, BotState.ERROR],
+}
+
+
 class KlineInterval(str, Enum):
     """Kline/candlestick interval."""
 
