@@ -27,7 +27,7 @@ import math
 import time
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Dict, List, Optional
 
 from typing import Callable
@@ -1088,8 +1088,9 @@ class RSIGridBot(BaseBot):
                     f"Attributed P&L: {cost_basis_result.get('total_realized_pnl')}"
                 )
 
-                # Update risk tracking
-                self._update_risk_tracking(pnl)
+                # Update risk tracking (use net PnL after fees)
+                net_pnl = pnl - fee
+                self._update_risk_tracking(net_pnl)
 
                 # Update position
                 if close_qty < self._position.quantity:
@@ -1155,7 +1156,11 @@ class RSIGridBot(BaseBot):
         else:
             stop_price = entry_price + sl_distance
 
-        return stop_price.quantize(getattr(self, '_tick_size', Decimal("0.1")))
+        tick_size = getattr(self, '_tick_size', Decimal("0.1"))
+        if self._position.side == PositionSide.LONG:
+            return stop_price.quantize(tick_size, rounding=ROUND_DOWN)
+        else:
+            return stop_price.quantize(tick_size, rounding=ROUND_UP)
 
     async def _place_stop_loss_order(self) -> None:
         """Place stop loss order on exchange."""

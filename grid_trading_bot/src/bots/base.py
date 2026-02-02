@@ -3738,7 +3738,7 @@ class BaseBot(ABC):
                             "avg_price": getattr(order, "avg_price", None),
                         }
 
-                    if status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                    if status in ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                         logger.warning(
                             f"[{self._bot_id}] Order {order_id} ended with status: {status}"
                         )
@@ -4659,7 +4659,7 @@ class BaseBot(ABC):
                             )
 
                             # Cancel remaining if requested
-                            if cancel_on_timeout and status not in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
+                            if cancel_on_timeout and status not in ["FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                                 logger.info(
                                     f"[{self._bot_id}] Cancelling remaining order {order_id} "
                                     f"after timeout"
@@ -4705,7 +4705,7 @@ class BaseBot(ABC):
                             "action": "filled",
                         }
 
-                    if status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                    if status in ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                         # Order ended - handle any partial fill
                         if filled_qty > 0:
                             fill_result = await self._handle_partial_fill(
@@ -5086,7 +5086,7 @@ class BaseBot(ABC):
                             )
                             return True, order_data
 
-                        elif status in ["CANCELED", "REJECTED", "EXPIRED"]:
+                        elif status in ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                             logger.warning(
                                 f"[{self._bot_id}] Order {order_id} ended with status: {status}"
                             )
@@ -5192,7 +5192,7 @@ class BaseBot(ABC):
                     status = getattr(order, "status", "").upper()
 
                     # Order reached terminal state
-                    if status in ["FILLED", "CANCELED", "REJECTED", "EXPIRED"]:
+                    if status in ["FILLED", "CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                         logger.info(
                             f"[{self._bot_id}] Order {order_id} reached terminal state: {status}"
                         )
@@ -8763,7 +8763,7 @@ class BaseBot(ABC):
                     self._sl_protection_state["consecutive_failures"] = 0
                     self._sl_protection_state["last_known_sl_status"] = "ACTIVE"
 
-                elif order_status.get("status") in ["CANCELLED", "REJECTED", "EXPIRED"]:
+                elif order_status.get("status") in ["CANCELED", "CANCELLED", "REJECTED", "EXPIRED"]:
                     result["is_failed"] = True
                     result["failure_reason"] = order_status.get("status")
                     result["needs_replacement"] = True

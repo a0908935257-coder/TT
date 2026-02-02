@@ -28,7 +28,7 @@ import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Dict, List, Optional
 
 from src.bots.base import BaseBot, BotStats
@@ -1097,7 +1097,7 @@ class BollingerBot(BaseBot):
             # Apply position size reduction from oscillation prevention
             size_mult = self.get_position_size_reduction()
             if size_mult < Decimal("1.0"):
-                quantity = (quantity * size_mult).quantize(Decimal("0.001"))
+                quantity = (quantity * size_mult).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
                 logger.info(f"Position size reduced to {size_mult*100:.0f}%: {quantity}")
                 if quantity <= 0:
                     return False

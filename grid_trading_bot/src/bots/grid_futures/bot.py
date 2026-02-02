@@ -1387,8 +1387,8 @@ class GridFuturesBot(BaseBot):
                         # No position but level marked as filled - reset state
                         level.state = GridLevelState.EMPTY
 
-                # Short entry: K 線高點觸及 grid level (賣漲，與回測一致)
-                elif level.state == GridLevelState.EMPTY and kline_high >= grid_price:
+                # Short entry: separate check (not elif) to avoid long-bias when kline spans level
+                if level.state == GridLevelState.EMPTY and kline_high >= grid_price:
                     # Check signal cooldown to prevent signal stacking (if enabled)
                     if self._config.use_signal_cooldown and self._signal_cooldown > 0:
                         logger.debug(f"Signal cooldown active ({self._signal_cooldown} bars), skipping short entry")

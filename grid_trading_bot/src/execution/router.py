@@ -939,9 +939,15 @@ class OrderRouter:
         for child in plan.child_orders:
             await self._execute_child(child)
 
-            # Wait for this child to complete before next
+            # Wait for this child to complete before next (with timeout)
+            wait_elapsed = 0
+            max_wait = 300  # 5 minutes max per child order
             while not child.is_complete:
                 await asyncio.sleep(0.5)
+                wait_elapsed += 0.5
+                if wait_elapsed >= max_wait:
+                    logger.error(f"Child order timed out after {max_wait}s: {child}")
+                    break
 
     async def _execute_parallel_children(
         self,

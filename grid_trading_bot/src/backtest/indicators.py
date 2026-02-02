@@ -309,9 +309,9 @@ class SupertrendIndicator:
         if self._prev_trend == 0:
             trend = 1 if close > upper_band else -1
         elif self._prev_trend == 1:
-            trend = 1 if close > self._prev_lower_band else -1
+            trend = 1 if close > lower_band else -1
         else:
-            trend = -1 if close < self._prev_upper_band else 1
+            trend = -1 if close < upper_band else 1
 
         supertrend = lower_band if trend == 1 else upper_band
 
