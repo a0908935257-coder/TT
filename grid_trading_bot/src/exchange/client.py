@@ -681,18 +681,34 @@ class ExchangeClient:
         """
         return time.time() - self._last_sync_time > 10
 
-    async def _quick_time_sync(self) -> None:
+    async def _quick_time_sync(self, futures_only: bool = False) -> None:
         """
-        Perform quick time sync for Futures API before order submission.
+        Perform quick time sync before order submission.
 
-        This is a lightweight sync that only updates the Futures time offset,
-        used to prevent -1021 errors in WSL2 environments with clock drift.
+        Used to prevent -1021 errors in WSL2 environments with clock drift.
+
+        Args:
+            futures_only: If True, only sync Futures API. If False, sync both.
         """
         try:
-            await self._futures.sync_time()
+            if futures_only:
+                await self._futures.sync_time()
+                futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
+                logger.debug(f"Pre-order time sync (futures), offset: {futures_offset}ms")
+            else:
+                # Sync both APIs in parallel for efficiency
+                await asyncio.gather(
+                    self._spot.sync_time(),
+                    self._futures.sync_time(),
+                    return_exceptions=True,  # Don't fail if one sync fails
+                )
+                spot_offset = self._spot._auth.time_offset if self._spot._auth else 0
+                futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
+                logger.debug(
+                    f"Pre-order time sync completed, "
+                    f"spot: {spot_offset}ms, futures: {futures_offset}ms"
+                )
             self._last_sync_time = time.time()
-            futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
-            logger.debug(f"Pre-order time sync completed, offset: {futures_offset}ms")
         except Exception as e:
             logger.warning(f"Pre-order time sync failed: {e}")
 
@@ -805,13 +821,18 @@ class ExchangeClient:
                 "Order rejected: time sync unhealthy — Binance would reject with -1021"
             )
 
-        # Pre-order time sync for WSL2 drift protection
-        if self._should_sync_before_order():
-            await self._quick_time_sync()
-
         params = request.params
         operation = request.operation
         bot_id = request.bot_id
+
+        # Pre-order time sync for WSL2 drift protection
+        if self._should_sync_before_order():
+            # Determine if we only need Futures sync
+            futures_only = operation.startswith("futures_") or (
+                operation in ("create", "cancel") and
+                params.get("market") == MarketType.FUTURES
+            )
+            await self._quick_time_sync(futures_only=futures_only)
 
         # Generate client_order_id with bot prefix for order tracking
         client_order_id = self.generate_client_order_id(bot_id)
