@@ -16,7 +16,7 @@ RSI-Grid v2 策略參數優化腳本.
 import argparse
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -341,11 +341,11 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"rsi_grid_v2_optimization_{timestamp}.json"
 
     results = {
-        "optimization_date": datetime.now().isoformat(),
+        "optimization_date": datetime.now(timezone.utc).isoformat(),
         "data_file": args.data_file,
         "trials": args.trials,
         "leverage": args.leverage,

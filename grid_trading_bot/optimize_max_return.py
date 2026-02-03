@@ -14,7 +14,7 @@
 
 import argparse
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -359,12 +359,12 @@ def main():
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"max_return_optimization_{timestamp}.json"
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump({
-            "optimization_date": datetime.now().isoformat(),
+            "optimization_date": datetime.now(timezone.utc).isoformat(),
             "target": "maximize_return",
             "results": results,
         }, f, indent=2, ensure_ascii=False)

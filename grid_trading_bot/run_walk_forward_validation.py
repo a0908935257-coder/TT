@@ -21,7 +21,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -276,7 +276,7 @@ def run_walk_forward_validation(
     # 收集結果
     result_data = {
         "strategy": strategy_name,
-        "validation_date": datetime.now().isoformat(),
+        "validation_date": datetime.now(timezone.utc).isoformat(),
         "data_bars": len(klines),
         "periods": periods,
         "is_ratio": is_ratio,
@@ -659,7 +659,7 @@ async def main():
         print_summary(all_results)
 
         # 儲存結果
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         filename = f"validation_{args.symbol}_{timestamp}.json"
         save_validation_results({
             "metadata": {
@@ -668,7 +668,7 @@ async def main():
                 "days": args.days,
                 "periods": args.periods,
                 "data_bars": len(klines),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             },
             "results": all_results,
         }, filename)

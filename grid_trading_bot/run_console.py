@@ -88,7 +88,7 @@ class SimpleMaster:
 
     def _wrap_bot_info(self, bot):
         """將 GridBot 包裝成 BotInfo 物件"""
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         state = getattr(bot, '_state', None)
         if state is None:
@@ -99,7 +99,7 @@ class SimpleMaster:
             'symbol': getattr(bot, 'symbol', getattr(bot._config, 'symbol', 'UNKNOWN')),
             'state': state,
             'bot_type': type('BotType', (), {'value': 'grid'})(),
-            'created_at': getattr(bot, '_created_at', datetime.now()),
+            'created_at': getattr(bot, '_created_at', datetime.now(timezone.utc)),
             'profit': getattr(bot, '_total_profit', 0),
         })()
 

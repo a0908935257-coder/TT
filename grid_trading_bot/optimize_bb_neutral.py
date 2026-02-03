@@ -23,7 +23,7 @@ BB_NEUTRAL_GRID 策略 Walk-Forward 優化腳本 (v3).
 import argparse
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -336,11 +336,11 @@ def save_results(study: optuna.Study, output_dir: str, leverage: int, data_file:
     output_path.mkdir(exist_ok=True)
 
     best = study.best_trial
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_file = output_path / f"bb_neutral_optimization_{timestamp}.json"
 
     results = {
-        "optimization_date": datetime.now().isoformat(),
+        "optimization_date": datetime.now(timezone.utc).isoformat(),
         "optimization_version": "v3_walk_forward",
         "data_file": data_file,
         "n_trials": len(study.trials),
