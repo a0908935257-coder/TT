@@ -35,15 +35,20 @@ class BinanceAuth:
         self.api_secret = api_secret
         self._time_offset: int = 0  # Offset in milliseconds
 
-    def set_time_offset(self, server_time: int) -> None:
+    def set_time_offset(self, server_time: int, request_latency_ms: int = 0) -> None:
         """
         Calculate and set time offset from server time.
 
         Args:
             server_time: Server timestamp in milliseconds
+            request_latency_ms: Network round-trip latency in milliseconds (optional).
+                               If provided, adjusts for network delay by assuming
+                               the server time was captured halfway through the request.
         """
         local_time = int(time.time() * 1000)
-        self._time_offset = server_time - local_time
+        # Compensate for network latency: server time was captured ~halfway through request
+        adjusted_server_time = server_time + (request_latency_ms // 2)
+        self._time_offset = adjusted_server_time - local_time
 
     @property
     def time_offset(self) -> int:

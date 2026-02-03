@@ -111,11 +111,19 @@ class BinanceSpotAPI:
     async def sync_time(self) -> None:
         """Synchronize local time with Binance server time."""
         try:
+            import time as time_module
+            start_time = time_module.time()
             data = await self._request("GET", "/api/v3/time")
+            end_time = time_module.time()
+            latency_ms = int((end_time - start_time) * 1000)
+
             server_time_ms = data["serverTime"]
             if self._auth:
-                self._auth.set_time_offset(server_time_ms)
-                logger.info(f"Time synced, offset: {self._auth.time_offset}ms")
+                self._auth.set_time_offset(server_time_ms, latency_ms)
+                logger.info(
+                    f"Time synced, offset: {self._auth.time_offset}ms "
+                    f"(latency: {latency_ms}ms)"
+                )
         except Exception as e:
             logger.warning(f"Failed to sync time: {e}")
 
@@ -222,6 +230,20 @@ class BinanceSpotAPI:
                         f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{self._max_retries})"
                     )
                     await asyncio.sleep(delay)
+                    continue
+                raise
+
+            except ExchangeError as e:
+                # Handle timestamp/signature errors (-1021, -1022) with re-sync and retry
+                error_str = str(e)
+                if ("-1021" in error_str or "-1022" in error_str) and attempt < self._max_retries:
+                    logger.warning(
+                        f"Timestamp error on {endpoint}: {e}. "
+                        f"Re-syncing time and retrying (attempt {attempt + 1}/{self._max_retries})"
+                    )
+                    await self.sync_time()
+                    await asyncio.sleep(0.1)  # Brief pause after sync
+                    last_exception = e
                     continue
                 raise
 

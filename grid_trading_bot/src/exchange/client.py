@@ -167,12 +167,15 @@ class ExchangeClient:
         self._time_sync_healthy = True
 
         # =======================================================================
-        # Time Synchronization
+        # Time Synchronization (WSL2 drift protection)
         # =======================================================================
         self._time_sync_task: Optional[asyncio.Task] = None
-        self._time_sync_interval = 60  # Sync every 1 minute (was 5 minutes)
+        self._time_sync_interval = 30  # Base sync interval (adaptive: 10-60 seconds)
+        self._time_sync_interval_min = 10  # Minimum interval when drift detected
+        self._time_sync_interval_max = 60  # Maximum interval when stable
         self._time_offset_warning_ms = 1000  # Warn if offset > 1 second
-        self._time_offset_critical_ms = 3000  # Critical if offset > 3 seconds (was 5 seconds)
+        self._time_offset_critical_ms = 3000  # Critical if offset > 3 seconds
+        self._last_sync_time: float = 0  # Track last successful sync time
 
     # =========================================================================
     # Properties
@@ -579,6 +582,7 @@ class ExchangeClient:
         Synchronize time and check for excessive drift.
 
         Issues warnings if time offset exceeds thresholds.
+        Implements adaptive interval adjustment based on drift severity.
         """
         # Sync spot (check _auth exists to avoid AttributeError)
         await self._spot.sync_time()
@@ -587,6 +591,31 @@ class ExchangeClient:
         # Sync futures (check _auth exists to avoid AttributeError)
         await self._futures.sync_time()
         futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
+
+        # Update last sync time
+        self._last_sync_time = time.time()
+
+        # Determine max offset for adaptive interval adjustment
+        max_offset = max(abs(spot_offset), abs(futures_offset))
+
+        # Adaptive interval adjustment based on drift severity
+        if max_offset > 500:
+            # High drift: use minimum interval
+            self._time_sync_interval = self._time_sync_interval_min
+            logger.warning(
+                f"High time drift detected ({max_offset}ms), "
+                f"reducing sync interval to {self._time_sync_interval}s"
+            )
+        elif max_offset < 200:
+            # Low drift: gradually increase interval (max 60s)
+            self._time_sync_interval = min(
+                self._time_sync_interval + 5,
+                self._time_sync_interval_max
+            )
+            logger.debug(
+                f"Stable time offset ({max_offset}ms), "
+                f"sync interval: {self._time_sync_interval}s"
+            )
 
         # Check spot offset
         if abs(spot_offset) > self._time_offset_critical_ms:
@@ -639,6 +668,33 @@ class ExchangeClient:
         """
         await self._sync_time_with_warning()
         return self.get_time_offsets()
+
+    def _should_sync_before_order(self) -> bool:
+        """
+        Check if time sync is needed before placing an order.
+
+        Returns True if last sync was more than 10 seconds ago,
+        which helps prevent -1021 timestamp errors in WSL2 environments.
+
+        Returns:
+            True if sync is recommended before order submission
+        """
+        return time.time() - self._last_sync_time > 10
+
+    async def _quick_time_sync(self) -> None:
+        """
+        Perform quick time sync for Futures API before order submission.
+
+        This is a lightweight sync that only updates the Futures time offset,
+        used to prevent -1021 errors in WSL2 environments with clock drift.
+        """
+        try:
+            await self._futures.sync_time()
+            self._last_sync_time = time.time()
+            futures_offset = self._futures._auth.time_offset if self._futures._auth else 0
+            logger.debug(f"Pre-order time sync completed, offset: {futures_offset}ms")
+        except Exception as e:
+            logger.warning(f"Pre-order time sync failed: {e}")
 
     # =========================================================================
     # Order Queue Management (Cross-bot Coordination)
@@ -748,6 +804,10 @@ class ExchangeClient:
             raise RuntimeError(
                 "Order rejected: time sync unhealthy — Binance would reject with -1021"
             )
+
+        # Pre-order time sync for WSL2 drift protection
+        if self._should_sync_before_order():
+            await self._quick_time_sync()
 
         params = request.params
         operation = request.operation
