@@ -508,8 +508,8 @@ class OrderRouter:
                     # Assume orderbook is ~1% of 24h volume
                     estimated_depth = volume_24h * Decimal("0.01")
                     return (request.quantity / estimated_depth) * Decimal("100")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to estimate market impact: {e}")
 
         # Default to medium (will use TWAP)
         return Decimal("2.5")

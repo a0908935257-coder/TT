@@ -583,7 +583,7 @@ def get_deployment_info(
             stderr=subprocess.DEVNULL,
         ).decode().strip()[:8]
     except Exception:
-        pass
+        pass  # Git not available, use default
 
     try:
         git_branch = subprocess.check_output(
@@ -591,7 +591,7 @@ def get_deployment_info(
             stderr=subprocess.DEVNULL,
         ).decode().strip()
     except Exception:
-        pass
+        pass  # Git not available, use default
 
     return DeploymentInfo(
         version=version,

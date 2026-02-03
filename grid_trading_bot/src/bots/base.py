@@ -1011,8 +1011,8 @@ class BaseBot(ABC):
                                 f"{field}={value} looks like whole percentage, "
                                 f"expected decimal (e.g., 0.05 for 5%)"
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Config value conversion error: {e}")
 
             if warnings:
                 for warning in warnings:
@@ -1030,8 +1030,8 @@ class BaseBot(ABC):
                             ),
                             level="warning",
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to send config warning notification: {e}")
 
             logger.info(f"[{self._bot_id}] Configuration validation passed")
 
@@ -3908,8 +3908,8 @@ class BaseBot(ABC):
                 match = re.search(r"code=(-?\d+)", error_str)
                 if match:
                     error_code = match.group(1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to parse error code from string: {e}")
 
         # Order not found / unknown order
         if "unknown order" in error_str or "not found" in error_str or error_code in ["-2011", "-2013"]:
@@ -8704,8 +8704,8 @@ class BaseBot(ABC):
                     value = getattr(self._config, attr)
                     if not callable(value):
                         config_dict[attr] = value
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to get config attribute {attr}: {e}")
 
         return self.validate_risk_parameters(config_dict)
 
@@ -9176,8 +9176,8 @@ class BaseBot(ABC):
                             f"Position closing immediately"
                         ),
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to send hard loss cap notification: {e}")
 
         # Check if in emergency mode due to stop loss failures
         elif self._sl_protection_state.get("emergency_mode"):
@@ -10383,8 +10383,8 @@ class BaseBot(ABC):
                         f"Lockout until: {state['lockout_until'].isoformat()}"
                     ),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to send circuit breaker notification: {e}")
 
         return result
 

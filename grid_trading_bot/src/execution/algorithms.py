@@ -1541,8 +1541,8 @@ class SniperAlgorithm(BaseExecutionAlgorithm):
                     slice_qty = max(level_qty, min_slice)
                     return min(slice_qty, remaining)
 
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get adaptive slice from orderbook: {e}")
 
         # Fallback to min slice
         return min(min_slice, remaining)

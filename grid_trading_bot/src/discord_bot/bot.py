@@ -237,8 +237,8 @@ class TradingBot(commands.Bot):
                     value=str(len(bots)),
                     inline=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get bot count for notification: {e}")
 
         embed.set_footer(text=f"Bot: {self.user}")
 
@@ -370,8 +370,8 @@ class TradingBot(commands.Bot):
                     timestamp=datetime.now(timezone.utc),
                 )
                 await channel.send(embed=embed)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to send shutdown notification: {e}")
 
         await self.close()
 

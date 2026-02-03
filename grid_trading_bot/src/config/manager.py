@@ -234,9 +234,9 @@ class ConfigManager:
         for callback in callbacks:
             try:
                 callback(old_config, new_config)
-            except Exception:
+            except Exception as e:
                 # Don't let callback errors break the reload
-                pass
+                logger.debug(f"Config callback error (ignored): {e}")
 
     def is_loaded(self) -> bool:
         """
@@ -395,8 +395,8 @@ class ConfigManager:
                         )
                 except ValueError:
                     raise
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Config value check error (ignored): {e}")
 
         return corrected
 

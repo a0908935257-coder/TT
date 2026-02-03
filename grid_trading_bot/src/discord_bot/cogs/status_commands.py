@@ -213,8 +213,8 @@ class StatusCommands(commands.Cog):
                 risk_status = self.risk_engine.get_status()
                 if risk_status:
                     embed_color = get_risk_color(risk_status.level)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get risk status: {e}")
 
         embed = discord.Embed(
             title="📊 System Status",
@@ -426,8 +426,8 @@ class StatusCommands(commands.Cog):
                                 value=f"{worst_day.date}: {float(worst_day.pnl):+,.2f}",
                                 inline=True,
                             )
-                except Exception:
-                    pass  # History not available
+                except Exception as e:
+                    logger.debug(f"History not available: {e}")
 
         except Exception as e:
             logger.error(f"Error getting profit stats: {e}")

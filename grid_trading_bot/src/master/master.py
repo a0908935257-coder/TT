@@ -377,8 +377,8 @@ class Master:
             if bound:
                 try:
                     self._registry.unbind_instance(bot_id)
-                except Exception:
-                    pass
+                except Exception as unbind_err:
+                    logger.debug(f"Failed to unbind bot {bot_id} during cleanup: {unbind_err}")
             return False
 
     async def _save_state(self) -> None:
