@@ -349,7 +349,7 @@ class LeverageManager:
         if leverage <= 0:
             raise ValueError("Leverage must be positive")
 
-        return notional / Decimal(leverage)
+        return notional / Decimal(str(leverage))
 
     def calculate_maint_margin(
         self,
@@ -407,11 +407,11 @@ class LeverageManager:
         if side_lower == "long":
             # Long liquidation: price drops
             # Liq = Entry * (1 - 1/leverage + MMR)
-            liq_price = entry_price * (Decimal("1") - Decimal("1") / Decimal(leverage) + mmr)
+            liq_price = entry_price * (Decimal("1") - Decimal("1") / Decimal(str(leverage)) + mmr)
         else:
             # Short liquidation: price rises
             # Liq = Entry * (1 + 1/leverage - MMR)
-            liq_price = entry_price * (Decimal("1") + Decimal("1") / Decimal(leverage) - mmr)
+            liq_price = entry_price * (Decimal("1") + Decimal("1") / Decimal(str(leverage)) - mmr)
 
         # Ensure non-negative
         return max(Decimal("0"), liq_price)

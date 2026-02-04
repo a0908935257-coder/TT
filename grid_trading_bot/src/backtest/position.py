@@ -79,7 +79,7 @@ class Position:
         """
         if leverage <= 1:
             return None
-        lev = Decimal(leverage)
+        lev = Decimal(str(leverage))
         if self.side == "LONG":
             return self.entry_price * (Decimal("1") - (Decimal("1") - maintenance_margin_pct) / lev)
         else:
@@ -101,7 +101,7 @@ class Position:
             pct = (current_price - self.entry_price) / self.entry_price
         else:
             pct = (self.entry_price - current_price) / self.entry_price
-        return pct * Decimal(leverage) * Decimal("100")
+        return pct * Decimal(str(leverage)) * Decimal("100")
 
 
 class PositionManager:

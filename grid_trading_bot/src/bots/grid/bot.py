@@ -776,6 +776,17 @@ class GridBot(BaseBot):
                 await asyncio.sleep(self._config.save_interval_minutes * 60)
                 if self._running:
                     await self._save_state()
+                    # J-4: Check and clean up stale orders periodically
+                    if self._order_manager:
+                        try:
+                            stale_count = await self._order_manager.check_stale_orders()
+                            if stale_count > 0:
+                                logger.warning(
+                                    f"Cleaned up {stale_count} stale orders "
+                                    f"(age > {self._order_manager._max_order_age}s)"
+                                )
+                        except Exception as e:
+                            logger.warning(f"Failed to check stale orders: {e}")
 
         self._save_task = asyncio.create_task(save_loop())
 

@@ -185,14 +185,39 @@ FUTURES_PRIVATE_ENDPOINTS = {
 # =============================================================================
 
 BINANCE_ERROR_CODES = {
-    -1000: "UNKNOWN",           # Unknown error
-    -1002: "UNAUTHORIZED",      # Not authorized
-    -1003: "TOO_MANY_REQUESTS", # Rate limit
-    -1021: "INVALID_TIMESTAMP", # Timestamp outside of recvWindow
-    -1022: "INVALID_SIGNATURE", # Signature verification failed
-    -2010: "INSUFFICIENT_BALANCE",  # Insufficient balance
-    -2011: "ORDER_NOT_FOUND",   # Order does not exist
-    -2013: "NO_SUCH_ORDER",     # Order does not exist
-    -2014: "BAD_API_KEY_FMT",   # API key format invalid
-    -2015: "REJECTED_MBX_KEY",  # Invalid API key or IP
+    # General Server/Request Errors
+    -1000: "UNKNOWN",                      # Unknown error
+    -1001: "DISCONNECTED",                 # Internal error; connection issue
+    -1002: "UNAUTHORIZED",                 # Not authorized
+    -1003: "TOO_MANY_REQUESTS",            # Rate limit exceeded
+    -1006: "UNEXPECTED_RESP",              # Unexpected response from server
+    -1007: "TIMEOUT",                      # Request timeout
+    -1010: "ERROR_MSG_RECEIVED",           # Error message received
+    -1020: "UNSUPPORTED_OPERATION",        # Operation not supported
+    -1021: "INVALID_TIMESTAMP",            # Timestamp outside recvWindow
+    -1022: "INVALID_SIGNATURE",            # Signature verification failed
+
+    # Order Errors
+    -1013: "INVALID_QUANTITY",             # Quantity invalid
+    -1014: "UNKNOWN_ORDER_COMPOSITION",    # Unknown order composition
+    -1015: "TOO_MANY_ORDERS",              # Too many orders
+    -1016: "SERVICE_SHUTTING_DOWN",        # Service shutting down
+
+    # Account/Balance Errors
+    -2010: "INSUFFICIENT_BALANCE",         # Insufficient balance
+    -2011: "ORDER_NOT_FOUND",              # Order does not exist (cancel)
+    -2013: "NO_SUCH_ORDER",                # Order does not exist (query)
+    -2014: "BAD_API_KEY_FMT",              # API key format invalid
+    -2015: "REJECTED_MBX_KEY",             # Invalid API key or IP
+    -2019: "MARGIN_NOT_SUFFICIENT",        # Margin not sufficient
+    -2021: "ORDER_IMMEDIATELY_TRIGGERED",  # Stop order would trigger immediately
+    -2022: "INVALID_ORDER_TYPE",           # Invalid order type for operation
+
+    # Futures Specific Errors
+    -4000: "INVALID_ORDER_STATUS",         # Order status invalid for operation
+    -4014: "PRICE_LESS_THAN_ZERO",         # Price less than zero
+    -4029: "INVALID_TICK_SIZE",            # Price not multiple of tick size
+    -4030: "INVALID_STEP_SIZE",            # Quantity not multiple of step size
+    -4046: "MARGIN_TYPE_CANNOT_BE_CHANGED",# Margin type cannot be changed
+    -5021: "POSITION_NOT_SUFFICIENT",      # Position not sufficient
 }
