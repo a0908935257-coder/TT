@@ -545,6 +545,136 @@ class GridOrderManager:
         level.order_id = None
         return None
 
+    async def _place_order_with_quantity(
+        self,
+        level_index: int,
+        side: OrderSide,
+        quantity: Decimal,
+    ) -> Optional[Order]:
+        """
+        Place an order at a specific grid level with explicit quantity.
+
+        This is used for reverse orders where quantity comes from the filled order,
+        not from level.allocated_amount (which is 0 for SELL levels).
+
+        Args:
+            level_index: Grid level index
+            side: Order side (BUY or SELL)
+            quantity: Order quantity (from filled order)
+
+        Returns:
+            Order if successful, None otherwise
+
+        Raises:
+            RuntimeError: If setup is not initialized
+            ValueError: If level_index is invalid
+        """
+        if self._setup is None:
+            raise RuntimeError("GridOrderManager not initialized. Call initialize() first.")
+
+        if level_index < 0 or level_index >= len(self._setup.levels):
+            raise ValueError(f"Invalid level index: {level_index}")
+
+        level = self._setup.levels[level_index]
+
+        # Cancel existing order if present
+        if level_index in self._level_order_map:
+            logger.debug(f"Cancelling existing order at level {level_index}")
+            await self.cancel_order_at_level(level_index)
+
+        # Validate quantity
+        if quantity <= 0:
+            logger.error(f"Invalid quantity {quantity} for level {level_index}")
+            return None
+
+        # Round to exchange precision
+        rounded_quantity = self._exchange.round_quantity(
+            self._symbol,
+            quantity,
+            self._market_type,
+        )
+        rounded_price = self._exchange.round_price(
+            self._symbol,
+            level.price,
+            self._market_type,
+        )
+
+        max_retries = 3
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Place order via exchange with bot_id for tracking
+                if side == OrderSide.BUY:
+                    order = await self._exchange.limit_buy(
+                        self._symbol,
+                        rounded_quantity,
+                        rounded_price,
+                        self._market_type,
+                        bot_id=self._bot_id,
+                    )
+                else:
+                    order = await self._exchange.limit_sell(
+                        self._symbol,
+                        rounded_quantity,
+                        rounded_price,
+                        self._market_type,
+                        bot_id=self._bot_id,
+                    )
+
+                # Update mappings
+                self._level_order_map[level_index] = order.order_id
+                self._order_level_map[order.order_id] = level_index
+                self._orders[order.order_id] = order
+                self._order_created_times[order.order_id] = datetime.now(timezone.utc)
+
+                # Update level state
+                if side == OrderSide.BUY:
+                    level.state = LevelState.PENDING_BUY
+                else:
+                    level.state = LevelState.PENDING_SELL
+                level.order_id = order.order_id
+
+                # Save to database
+                await self._data_manager.save_order(
+                    order,
+                    bot_id=self._bot_id,
+                    market_type=self._market_type,
+                )
+
+                logger.info(
+                    f"Reverse order placed at level {level_index}: "
+                    f"{side.value} {rounded_quantity} @ {rounded_price}"
+                )
+
+                return order
+
+            except (ConnectionError, TimeoutError, OSError) as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s, 2s
+                    logger.warning(
+                        f"Reverse order placement failed (attempt {attempt}/{max_retries}), "
+                        f"retrying in {delay}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Reverse order placement failed after {max_retries} attempts "
+                        f"at level {level_index}: {e}"
+                    )
+            except Exception as e:
+                logger.error(f"Non-retryable error placing reverse order at level {level_index}: {e}")
+                # Reset level state so it can be retried later
+                level.state = LevelState.EMPTY
+                level.order_id = None
+                return None
+
+        # All retries exhausted - reset level state to allow future placement
+        level.state = LevelState.EMPTY
+        level.order_id = None
+        return None
+
     async def cancel_order_at_level(self, level_index: int) -> bool:
         """
         Cancel order at a specific grid level.
@@ -1136,8 +1266,12 @@ class GridOrderManager:
         # Update order in database
         await self._data_manager.update_order(order, bot_id=self._bot_id)
 
-        # Place reverse order
-        reverse_order = await self.place_reverse_order(level_index, filled_side)
+        # Place reverse order with the filled quantity
+        # CRITICAL: Pass filled_qty so reverse order uses correct quantity
+        # (not level.allocated_amount which is 0 for SELL levels)
+        reverse_order = await self.place_reverse_order(
+            level_index, filled_side, filled_quantity=fill_qty
+        )
 
         # Send notification
         await self._notify_order_filled(fill_record, profit, reverse_order)
@@ -1153,6 +1287,7 @@ class GridOrderManager:
         self,
         level_index: int,
         filled_side: OrderSide | str,
+        filled_quantity: Optional[Decimal] = None,
     ) -> Optional[Order]:
         """
         Place reverse order after a fill.
@@ -1160,9 +1295,13 @@ class GridOrderManager:
         BUY filled -> Place SELL at level_index + 1 (upper level)
         SELL filled -> Place BUY at level_index - 1 (lower level)
 
+        CRITICAL FIX: Reverse orders use the filled quantity from the previous order,
+        NOT the level's allocated_amount (which is 0 for SELL levels).
+
         Args:
             level_index: Index of the filled level
             filled_side: Side of the filled order
+            filled_quantity: Quantity that was filled (used for reverse order)
 
         Returns:
             The reverse Order if placed, None otherwise
@@ -1173,6 +1312,16 @@ class GridOrderManager:
         # Convert side to enum if string
         if isinstance(filled_side, str):
             filled_side = OrderSide(filled_side.upper())
+
+        # Get the filled level to retrieve filled_quantity if not provided
+        filled_level = self._setup.levels[level_index]
+        if filled_quantity is None:
+            filled_quantity = filled_level.filled_quantity
+            if filled_quantity is None or filled_quantity <= 0:
+                logger.error(
+                    f"Cannot place reverse order: no filled_quantity for level {level_index}"
+                )
+                return None
 
         # Determine target level and side for reverse order
         if filled_side == OrderSide.BUY:
@@ -1199,11 +1348,13 @@ class GridOrderManager:
                     f"Level {level_index} is lowest level - placing BUY at same level"
                 )
 
-        # Place the reverse order
+        # Place the reverse order with explicit quantity
         logger.info(
-            f"Placing reverse order: {reverse_side.value} at level {target_level_index}"
+            f"Placing reverse order: {reverse_side.value} {filled_quantity} at level {target_level_index}"
         )
-        return await self.place_order_at_level(target_level_index, reverse_side)
+        return await self._place_order_with_quantity(
+            target_level_index, reverse_side, filled_quantity
+        )
 
     def calculate_profit(
         self,
