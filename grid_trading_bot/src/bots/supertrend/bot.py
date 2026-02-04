@@ -2169,7 +2169,7 @@ class SupertrendBot(BaseBot):
             "risk_paused": self._risk_paused,
             # RSI filter state
             "current_rsi": str(self._current_rsi) if self._current_rsi else None,
-            "rsi_closes": [str(c) for c in self._rsi_closes[-50:]],
+            "rsi_closes": [str(c) for c in list(self._rsi_closes)[-50:]],
         }
 
         # Save grid state for TREND_GRID mode
