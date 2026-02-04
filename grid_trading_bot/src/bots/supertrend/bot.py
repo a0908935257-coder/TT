@@ -123,9 +123,9 @@ class SupertrendBot(BaseBot):
         self._recent_klines: deque = deque(maxlen=200)  # For ATR calculation
 
         # RSI Filter (RSI 過濾器)
+        self._rsi_period = config.rsi_period if hasattr(config, 'rsi_period') else 14
         self._rsi_closes: deque[Decimal] = deque(maxlen=self._rsi_period + 50)  # Recent closes for RSI calculation
         self._current_rsi: Optional[Decimal] = None
-        self._rsi_period = config.rsi_period if hasattr(config, 'rsi_period') else 14
         self._avg_gain: Optional[Decimal] = None  # Wilder's smoothing state
         self._avg_loss: Optional[Decimal] = None
 
