@@ -544,6 +544,19 @@ class SupertrendBot(BaseBot):
                         )
                     self.mark_position_synced()
 
+                # Stop loss sync check (止損同步管理)
+                if self._position and self._config.use_exchange_stop_loss:
+                    sync_result = await self.sync_stop_loss_order(
+                        symbol=self._config.symbol,
+                        position_side=self._position.side.value.upper(),
+                        current_entry_price=self._position.entry_price,
+                        current_quantity=self._position.quantity,
+                        current_stop_loss_pct=self._config.stop_loss_pct,
+                    )
+                    if sync_result["action_taken"] == "SYNCED":
+                        self._position.stop_loss_order_id = sync_result["new_order_id"]
+                        self._position.stop_loss_price = sync_result["new_stop_price"]
+
                 # Comprehensive stop loss check (三層止損保護)
                 if self._position:
                     ticker = await self._exchange.futures.get_ticker(self._config.symbol)
