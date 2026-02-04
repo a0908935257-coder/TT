@@ -292,6 +292,13 @@ class MockDataManager:
         await asyncio.sleep(self._latency)
         return self._bot_states.get(bot_id)
 
+    async def get_bot_state(
+        self,
+        bot_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Alias for load_bot_state for API compatibility."""
+        return await self.load_bot_state(bot_id)
+
     async def delete_bot_state(self, bot_id: str) -> bool:
         """
         Delete bot state from storage.
