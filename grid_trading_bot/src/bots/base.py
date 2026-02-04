@@ -6184,15 +6184,16 @@ class BaseBot(ABC):
     # Capital Management
     # =========================================================================
 
-    async def update_capital(self, new_max_capital: Decimal) -> bool:
+    async def update_capital(self, new_allocated_capital: Decimal) -> bool:
         """
-        Update maximum capital allocation for this bot.
+        Update capital allocation for this bot from Fund Manager.
 
         Called by FundManager when capital allocation changes.
+        Updates allocated_capital (preferred) or falls back to max_capital.
         Subclasses can override to implement specific behavior.
 
         Args:
-            new_max_capital: New maximum capital amount
+            new_allocated_capital: New capital amount from Fund Manager
 
         Returns:
             True if update was successful
@@ -6202,20 +6203,27 @@ class BaseBot(ABC):
             if not hasattr(self, "_capital_lock"):
                 self._capital_lock = asyncio.Lock()
 
-            # Store previous value for logging
-            previous = getattr(self._config, "max_capital", None)
-
             # Update config under lock to prevent race conditions
             async with self._capital_lock:
-                if hasattr(self._config, "max_capital"):
-                    self._config.max_capital = new_max_capital
+                # Prefer allocated_capital (Fund Manager allocation)
+                if hasattr(self._config, "allocated_capital"):
+                    previous = getattr(self._config, "allocated_capital", None)
+                    self._config.allocated_capital = new_allocated_capital
                     logger.info(
-                        f"Bot {self._bot_id} capital updated: "
-                        f"{previous} -> {new_max_capital}"
+                        f"Bot {self._bot_id} allocated_capital updated: "
+                        f"{previous} -> {new_allocated_capital}"
+                    )
+                elif hasattr(self._config, "max_capital"):
+                    # Fallback for configs without allocated_capital
+                    previous = getattr(self._config, "max_capital", None)
+                    self._config.max_capital = new_allocated_capital
+                    logger.info(
+                        f"Bot {self._bot_id} max_capital updated (fallback): "
+                        f"{previous} -> {new_allocated_capital}"
                     )
 
             # Notify subclass of capital change (they can override _on_capital_updated)
-            await self._on_capital_updated(new_max_capital)
+            await self._on_capital_updated(new_allocated_capital)
 
             return True
 

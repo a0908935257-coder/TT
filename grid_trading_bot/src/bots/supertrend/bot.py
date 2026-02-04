@@ -2164,22 +2164,13 @@ class SupertrendBot(BaseBot):
         """
         Handle capital update from FundManager.
 
-        Updates the allocated_capital setting which will be used
-        for position sizing on the next trade. If capital is reduced
-        and current position exceeds the new limit, closes the position.
+        Called by BaseBot.update_capital() after allocated_capital is updated.
+        Checks if existing position exceeds new capital limit and closes if needed.
 
         Args:
             new_allocated_capital: New capital allocation from Fund Manager
         """
-        previous = self._config.allocated_capital
-
-        # Update config with new capital (using allocated_capital for Fund Manager)
-        self._config.allocated_capital = new_allocated_capital
-
-        logger.info(
-            f"[FundManager] Capital updated for {self._bot_id}: "
-            f"{previous} -> {new_allocated_capital}"
-        )
+        # Note: allocated_capital already updated by BaseBot.update_capital()
 
         # Check if existing position exceeds new capital limit
         if self._position and self._position.quantity > 0:
