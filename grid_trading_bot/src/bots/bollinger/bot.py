@@ -223,7 +223,23 @@ class BollingerBot(BaseBot):
             current_price = self._klines[-1].close
             self._initialize_grid(current_price)
 
-        # 6. Sync existing position
+        # 5.5 Calculate initial trend for position sync (Hedge Mode support)
+        if self._klines and len(self._klines) >= self._config.bb_period:
+            try:
+                bands, _ = self._bb_calculator.get_all(self._klines)
+                current_price = self._klines[-1].close
+                if current_price > bands.middle:
+                    self._current_trend = 1  # Bullish - expect LONG
+                elif current_price < bands.middle:
+                    self._current_trend = -1  # Bearish - expect SHORT
+                else:
+                    self._current_trend = 0
+                self._current_sma = bands.middle
+                logger.info(f"Initial trend: {'BULLISH' if self._current_trend == 1 else 'BEARISH' if self._current_trend == -1 else 'NEUTRAL'} (SMA: {self._current_sma:.2f})")
+            except Exception as e:
+                logger.warning(f"Failed to calculate initial trend: {e}")
+
+        # 6. Sync existing position (with trend-based filtering for Hedge Mode)
         await self._sync_position()
 
         # 7. Subscribe to kline updates
@@ -1054,14 +1070,37 @@ class BollingerBot(BaseBot):
     # =========================================================================
 
     async def _sync_position(self) -> None:
-        """Sync position from exchange."""
+        """
+        Sync position from exchange (trend-aware for Hedge Mode).
+
+        In Hedge Mode, multiple positions (LONG and SHORT) can exist.
+        This method only syncs the position matching the current trend:
+        - Bullish trend (1): sync LONG position
+        - Bearish trend (-1): sync SHORT position
+        - Neutral (0): sync first available position
+        """
         try:
             positions = await self._exchange.futures.get_positions(self._config.symbol)
+
+            # Determine expected position side based on current trend
+            expected_side = None
+            if self._current_trend == 1:
+                expected_side = PositionSide.LONG
+            elif self._current_trend == -1:
+                expected_side = PositionSide.SHORT
 
             for pos in positions:
                 if pos.quantity > 0:
                     side_str = pos.side if isinstance(pos.side, str) else pos.side.value
                     local_side = PositionSide(side_str)
+
+                    # In Hedge Mode, only sync position matching current trend
+                    if expected_side and local_side != expected_side:
+                        logger.info(
+                            f"Skipping {local_side.value} position (qty={pos.quantity}) - "
+                            f"current trend expects {expected_side.value}"
+                        )
+                        continue
 
                     self._position = Position(
                         symbol=self._config.symbol,

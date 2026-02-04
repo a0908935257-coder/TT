@@ -276,8 +276,10 @@ class SupertrendBot(BaseBot):
         # Initialize indicator
         self._indicator.initialize_from_klines(klines)
         self._prev_trend = self._indicator.trend
+        self._current_trend = self._indicator.trend  # Set initial trend for position sync
+        logger.info(f"Initial trend: {'BULLISH' if self._current_trend == 1 else 'BEARISH' if self._current_trend == -1 else 'NEUTRAL'}")
 
-        # Check existing position
+        # Check existing position (with trend-based filtering for Hedge Mode)
         await self._sync_position()
 
         # Subscribe to kline updates (sync wrapper for async callback)
@@ -762,13 +764,36 @@ class SupertrendBot(BaseBot):
             return True  # Don't fail health check on transient errors
 
     async def _sync_position(self) -> None:
-        """Sync position with exchange."""
+        """
+        Sync position with exchange (trend-aware for Hedge Mode).
+
+        In Hedge Mode, multiple positions (LONG and SHORT) can exist.
+        This method only syncs the position matching the current trend:
+        - Bullish trend (1): sync LONG position
+        - Bearish trend (-1): sync SHORT position
+        - Neutral (0): sync first available position
+        """
         try:
             positions = await self._exchange.futures.get_positions(self._config.symbol)
+
+            # Determine expected position side based on current trend
+            expected_side = None
+            if self._current_trend == 1:
+                expected_side = PositionSide.LONG
+            elif self._current_trend == -1:
+                expected_side = PositionSide.SHORT
 
             for pos in positions:
                 if pos.symbol == self._config.symbol and pos.quantity != Decimal("0"):
                     side = PositionSide.LONG if pos.quantity > 0 else PositionSide.SHORT
+
+                    # In Hedge Mode, only sync position matching current trend
+                    if expected_side and side != expected_side:
+                        logger.info(
+                            f"Skipping {side.value} position (qty={abs(pos.quantity)}) - "
+                            f"current trend expects {expected_side.value}"
+                        )
+                        continue
 
                     # Calculate stop loss price (same logic as _open_position)
                     if side == PositionSide.LONG:
@@ -796,7 +821,7 @@ class SupertrendBot(BaseBot):
                     if self._config.use_exchange_stop_loss:
                         await self._place_stop_loss_order()
 
-                    break
+                    return
 
         except Exception as e:
             logger.warning(f"Failed to sync position: {e}")
