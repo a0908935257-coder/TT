@@ -2146,6 +2146,7 @@ class GridFuturesBot(BaseBot):
                 direction=GridDirection(config_data.get("direction", "neutral")),
                 trend_period=config_data.get("trend_period", 20),
                 atr_multiplier=Decimal(config_data.get("atr_multiplier", "3.0")),
+                allocated_capital=Decimal(config_data["allocated_capital"]) if config_data.get("allocated_capital") else None,
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
             )
 

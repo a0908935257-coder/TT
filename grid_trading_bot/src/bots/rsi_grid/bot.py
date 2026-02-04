@@ -2143,6 +2143,7 @@ class RSIGridBot(BaseBot):
                 grid_count=config_data.get("grid_count", 8),
                 atr_multiplier=Decimal(config_data.get("atr_multiplier", "3.0")),
                 leverage=config_data.get("leverage", 10),
+                allocated_capital=Decimal(config_data["allocated_capital"]) if config_data.get("allocated_capital") else None,
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
             )
 

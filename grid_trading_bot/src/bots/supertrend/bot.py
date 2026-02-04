@@ -2354,6 +2354,7 @@ class SupertrendBot(BaseBot):
                 atr_period=config_data.get("atr_period", 25),
                 atr_multiplier=Decimal(config_data.get("atr_multiplier", "3.0")),
                 leverage=config_data.get("leverage", 2),
+                allocated_capital=Decimal(config_data["allocated_capital"]) if config_data.get("allocated_capital") else None,
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
             )
 

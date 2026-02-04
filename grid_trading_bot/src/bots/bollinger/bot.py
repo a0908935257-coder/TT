@@ -1630,6 +1630,7 @@ class BollingerBot(BaseBot):
                 "bb_std": str(self._config.bb_std),
                 "grid_count": self._config.grid_count,
                 "leverage": self._config.leverage,
+                "allocated_capital": str(self._config.allocated_capital) if self._config.allocated_capital else None,
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 
@@ -1733,6 +1734,7 @@ class BollingerBot(BaseBot):
                 bb_std=Decimal(config_data.get("bb_std", "2.0")),
                 grid_count=config_data.get("grid_count", 10),
                 leverage=config_data.get("leverage", 2),
+                allocated_capital=Decimal(config_data["allocated_capital"]) if config_data.get("allocated_capital") else None,
                 max_capital=Decimal(config_data["max_capital"]) if config_data.get("max_capital") else None,
             )
 
