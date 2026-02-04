@@ -101,7 +101,7 @@ class BinanceWebSocket:
         # Reconnection settings
         self.reconnect_delay = 5  # Initial delay in seconds
         self.max_reconnect_delay = 60  # Maximum delay
-        self.max_reconnect_attempts = 10  # Maximum attempts
+        self.max_reconnect_attempts = 50  # Maximum attempts (increased for WSL stability)
         self._reconnect_attempts = 0
         self._current_delay = self.reconnect_delay
         self._intentional_close = False  # Flag to prevent reconnection on intentional close

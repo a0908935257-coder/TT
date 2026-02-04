@@ -3742,7 +3742,7 @@ class BaseBot(ABC):
     # =========================================================================
 
     # Default order timeout (seconds)
-    DEFAULT_ORDER_TIMEOUT_SECONDS = 30
+    DEFAULT_ORDER_TIMEOUT_SECONDS = 45
 
     # Maximum retries for timed-out orders
     MAX_ORDER_RETRIES = 2
@@ -5462,6 +5462,7 @@ class BaseBot(ABC):
         max_retries: Optional[int] = None,
         fallback_to_market: bool = True,
         reduce_only: bool = False,
+        position_side: str = "BOTH",
     ) -> tuple[bool, Optional[Any], Dict]:
         """
         Execute order with retry and fallback strategies.
@@ -5480,6 +5481,7 @@ class BaseBot(ABC):
             max_retries: Maximum retry attempts
             fallback_to_market: Fall back to MARKET if LIMIT fails
             reduce_only: Whether this is a reduce-only order
+            position_side: Position side (BOTH for one-way, LONG/SHORT for hedge mode)
 
         Returns:
             Tuple of (success, order, execution_details)
@@ -5525,6 +5527,7 @@ class BaseBot(ABC):
                         price=adjusted_price,
                         time_in_force="GTC",
                         reduce_only=reduce_only,
+                        position_side=position_side,
                         bot_id=self._bot_id,
                     )
 
@@ -5600,6 +5603,7 @@ class BaseBot(ABC):
                     order_type="MARKET",
                     quantity=quantity,
                     reduce_only=reduce_only,
+                    position_side=position_side,
                     bot_id=self._bot_id,
                 )
 
@@ -9047,6 +9051,7 @@ class BaseBot(ABC):
                 quantity=quantity,
                 stop_price=stop_price,
                 reduce_only=True,
+                position_side=side.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -9273,6 +9278,7 @@ class BaseBot(ABC):
                 order_type="MARKET",
                 quantity=quantity,
                 reduce_only=True,
+                position_side=side.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -9519,6 +9525,7 @@ class BaseBot(ABC):
                 price=limit_price,
                 stop_price=stop_price,
                 reduce_only=True,
+                position_side=side.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -9612,6 +9619,7 @@ class BaseBot(ABC):
                     order_type="MARKET",
                     quantity=qty,
                     reduce_only=True,
+                    position_side=side.upper(),
                     bot_id=self._bot_id,
                 )
 
@@ -10240,6 +10248,7 @@ class BaseBot(ABC):
                 quantity=current_quantity,
                 stop_price=new_stop_price,
                 reduce_only=True,
+                position_side=position_side.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -10466,6 +10475,7 @@ class BaseBot(ABC):
                         order_type="MARKET",
                         quantity=pos.quantity,
                         reduce_only=True,
+                        position_side=pos.side.value.upper(),
                         bot_id=self._bot_id,
                     )
 
@@ -11645,7 +11655,7 @@ class BaseBot(ABC):
     NETWORK_JITTER_THRESHOLD_MS = 500  # Jitter warning threshold
     NETWORK_JITTER_CRITICAL_MS = 2000  # Jitter critical threshold
     NETWORK_DISCONNECT_THRESHOLD = 3  # Consecutive failures before disconnect
-    NETWORK_RECONNECT_MAX_ATTEMPTS = 30  # Max reconnection attempts (increased for WSL stability)
+    NETWORK_RECONNECT_MAX_ATTEMPTS = 100  # Max reconnection attempts (increased for WSL stability)
     NETWORK_RECONNECT_BASE_DELAY = 5  # Base delay for exponential backoff (seconds)
     NETWORK_RECONNECT_MAX_DELAY = 300  # Max delay (5 minutes)
 

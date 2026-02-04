@@ -866,6 +866,7 @@ class ExchangeClient:
                 stop_price=params.get("stop_price"),
                 time_in_force=params.get("time_in_force"),
                 reduce_only=params.get("reduce_only", False),
+                position_side=params.get("position_side", "BOTH"),
                 client_order_id=params.get("client_order_id", client_order_id),
             )
         elif operation == "futures_cancel":
@@ -1231,6 +1232,7 @@ class ExchangeClient:
         stop_price: Optional[Decimal] = None,
         time_in_force: Optional[str] = None,
         reduce_only: bool = False,
+        position_side: str = "BOTH",
         bot_id: str = "unknown",
     ) -> Order:
         """
@@ -1245,6 +1247,7 @@ class ExchangeClient:
             stop_price: Stop price (for STOP orders)
             time_in_force: Time in force (GTC, IOC, etc.)
             reduce_only: Whether order is reduce-only
+            position_side: Position side (BOTH for one-way, LONG/SHORT for hedge mode)
             bot_id: ID of the bot placing the order (for tracking)
 
         Returns:
@@ -1261,6 +1264,7 @@ class ExchangeClient:
                 "stop_price": stop_price,
                 "time_in_force": time_in_force,
                 "reduce_only": reduce_only,
+                "position_side": position_side,
             },
             bot_id=bot_id,
         )

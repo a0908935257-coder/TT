@@ -1655,6 +1655,7 @@ class SupertrendBot(BaseBot):
                     side=order_side_enum.value,
                     order_type="MARKET",
                     quantity=quantity,
+                    position_side=side.value.upper(),
                     bot_id=self._bot_id,
                 )
 
@@ -1882,6 +1883,7 @@ class SupertrendBot(BaseBot):
                 quantity=self._position.quantity,
                 stop_price=self._position.stop_loss_price,
                 reduce_only=True,
+                position_side=self._position.side.value.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -1970,6 +1972,7 @@ class SupertrendBot(BaseBot):
                 order_type="MARKET",
                 quantity=self._position.quantity,
                 reduce_only=True,
+                position_side=self._position.side.value.upper(),
                 bot_id=self._bot_id,
             )
 

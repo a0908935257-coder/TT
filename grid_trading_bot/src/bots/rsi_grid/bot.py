@@ -1023,6 +1023,7 @@ class RSIGridBot(BaseBot):
                 order_type="MARKET",
                 quantity=close_qty,
                 reduce_only=True,
+                position_side=self._position.side.value.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -1199,6 +1200,7 @@ class RSIGridBot(BaseBot):
                 quantity=self._position.quantity,
                 stop_price=stop_price,
                 reduce_only=True,
+                position_side=self._position.side.value.upper(),
                 bot_id=self._bot_id,
             )
 

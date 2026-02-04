@@ -1402,6 +1402,7 @@ class BollingerBot(BaseBot):
                 quantity=self._position.quantity,
                 stop_price=self._position.stop_loss_price,
                 reduce_only=True,
+                position_side=self._position.side.value.upper(),
                 bot_id=self._bot_id,
             )
 
@@ -1468,6 +1469,7 @@ class BollingerBot(BaseBot):
                 order_type="MARKET",
                 quantity=quantity,
                 reduce_only=True,
+                position_side=side.value.upper(),
                 bot_id=self._bot_id,
             )
 
