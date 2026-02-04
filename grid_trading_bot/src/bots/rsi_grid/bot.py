@@ -449,7 +449,10 @@ class RSIGridBot(BaseBot):
             balance = await self._exchange.futures.get_balance("USDT")
             available = balance.free if balance else Decimal("0")
 
-            if self._config.max_capital:
+            # 優先順序: allocated_capital > max_capital > full balance
+            if self._config.allocated_capital:
+                self._capital = min(available, self._config.allocated_capital)
+            elif self._config.max_capital:
                 self._capital = min(available, self._config.max_capital)
             else:
                 self._capital = available
@@ -1277,7 +1280,8 @@ class RSIGridBot(BaseBot):
         if self._risk_paused:
             return True
 
-        capital = self._config.max_capital or self._capital or Decimal("1000")
+        # 優先順序: allocated_capital > max_capital > _capital > fallback
+        capital = self._config.allocated_capital or self._config.max_capital or self._capital or Decimal("1000")
 
         # Check daily loss limit
         daily_loss_pct = abs(self._daily_pnl) / capital if self._daily_pnl < 0 else Decimal("0")
@@ -2034,6 +2038,7 @@ class RSIGridBot(BaseBot):
                 "grid_count": self._config.grid_count,
                 "atr_multiplier": str(self._config.atr_multiplier),
                 "leverage": self._config.leverage,
+                "allocated_capital": str(self._config.allocated_capital) if self._config.allocated_capital else None,
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 

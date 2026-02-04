@@ -159,6 +159,7 @@ class GridFuturesConfig:
     fallback_range_pct: Decimal = field(default_factory=lambda: Decimal("0.08"))
 
     # Position sizing (optimized: 10% per trade)
+    allocated_capital: Optional[Decimal] = None  # Fund Manager 分配的資金額度 (優先)
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
@@ -206,6 +207,8 @@ class GridFuturesConfig:
 
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if self.allocated_capital is not None and not isinstance(self.allocated_capital, Decimal):
+            self.allocated_capital = Decimal(str(self.allocated_capital))
 
         # Convert direction from string if needed
         if isinstance(self.direction, str):

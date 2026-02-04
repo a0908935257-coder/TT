@@ -140,6 +140,7 @@ class RSIGridConfig:
     use_trend_filter: bool = False  # v2: 關閉
 
     # Capital allocation
+    allocated_capital: Optional[Decimal] = None  # Fund Manager 分配的資金額度 (優先)
     max_capital: Optional[Decimal] = None
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.05"))  # v4: 5%
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))
@@ -202,6 +203,8 @@ class RSIGridConfig:
 
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if self.allocated_capital is not None and not isinstance(self.allocated_capital, Decimal):
+            self.allocated_capital = Decimal(str(self.allocated_capital))
 
         self._validate()
 

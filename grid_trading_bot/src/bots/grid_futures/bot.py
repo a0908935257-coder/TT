@@ -427,7 +427,10 @@ class GridFuturesBot(BaseBot):
             balance = await self._exchange.futures.get_balance("USDT")
             available = balance.free if balance else Decimal("0")
 
-            if self._config.max_capital:
+            # 優先順序: allocated_capital > max_capital > full balance
+            if self._config.allocated_capital:
+                self._capital = min(available, self._config.allocated_capital)
+            elif self._config.max_capital:
                 self._capital = min(available, self._config.max_capital)
             else:
                 self._capital = available
@@ -2030,6 +2033,7 @@ class GridFuturesBot(BaseBot):
                 "direction": self._config.direction.value,
                 "trend_period": self._config.trend_period,
                 "atr_multiplier": str(self._config.atr_multiplier),
+                "allocated_capital": str(self._config.allocated_capital) if self._config.allocated_capital else None,
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 
