@@ -372,9 +372,12 @@ class BollingerCalculator:
         # Clear existing history
         self._bbw_history = []
 
+        # Convert to list if needed (deque doesn't support slicing)
+        klines_list = list(klines) if not isinstance(klines, list) else klines
+
         # Process klines one by one to build history
-        for i in range(self._period, len(klines)):
-            subset = klines[: i + 1]
+        for i in range(self._period, len(klines_list)):
+            subset = klines_list[: i + 1]
             bands = self.calculate(subset)
             self.calculate_bbw(bands)  # This populates _bbw_history
 
