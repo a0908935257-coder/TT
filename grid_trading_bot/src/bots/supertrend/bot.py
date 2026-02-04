@@ -303,8 +303,8 @@ class SupertrendBot(BaseBot):
                         f"Trend: {'BULLISH' if self._indicator.is_bullish else 'BEARISH'}",
             )
 
-        # Start background monitor (capital updates, risk checks)
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        # Start background monitor with auto-restart (capital updates, risk checks)
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
 
         # Start periodic state saving
         self._start_save_task()
@@ -423,8 +423,8 @@ class SupertrendBot(BaseBot):
             self._reconciliation_task.cancel()
         self._reconciliation_task = None
 
-        # Restart background monitor (risk checks, stop loss, capital updates)
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        # Restart background monitor with auto-restart (risk checks, stop loss, capital updates)
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
 
         # Restart periodic state save
         self._start_save_task()
@@ -437,6 +437,28 @@ class SupertrendBot(BaseBot):
     # =========================================================================
     # Background Monitor (資金更新、風控檢查)
     # =========================================================================
+
+    async def _background_monitor_safe(self) -> None:
+        """Auto-restart wrapper for background monitor with max retries."""
+        consecutive_failures = 0
+        max_consecutive_failures = 5
+        while self._state == BotState.RUNNING:
+            try:
+                await self._background_monitor()
+                consecutive_failures = 0  # Reset on clean exit
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                consecutive_failures += 1
+                logger.error(
+                    f"Background monitor crashed ({consecutive_failures}/{max_consecutive_failures}): {e}"
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.critical(
+                        f"Background monitor failed {max_consecutive_failures} times consecutively, stopping bot"
+                    )
+                    break
+                await asyncio.sleep(5)
 
     async def _background_monitor(self) -> None:
         """

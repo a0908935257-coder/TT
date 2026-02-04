@@ -217,8 +217,8 @@ class BollingerBot(BaseBot):
         # 7. Subscribe to kline updates
         await self._subscribe_klines()
 
-        # 8. Start background monitor
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        # 8. Start background monitor with auto-restart
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
 
         # 9. Start periodic state saving
         self._start_save_task()
@@ -348,8 +348,8 @@ class BollingerBot(BaseBot):
         # Re-subscribe to kline updates
         await self._subscribe_klines()
 
-        # Restart background monitor
-        self._monitor_task = asyncio.create_task(self._background_monitor())
+        # Restart background monitor with auto-restart
+        self._monitor_task = asyncio.create_task(self._background_monitor_safe())
 
         # Restart periodic state save task
         self._start_save_task()
@@ -603,6 +603,28 @@ class BollingerBot(BaseBot):
 
         except Exception as e:
             logger.error(f"Error processing kline: {e}")
+
+    async def _background_monitor_safe(self) -> None:
+        """Auto-restart wrapper for background monitor with max retries."""
+        consecutive_failures = 0
+        max_consecutive_failures = 5
+        while self._state == BotState.RUNNING:
+            try:
+                await self._background_monitor()
+                consecutive_failures = 0  # Reset on clean exit
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                consecutive_failures += 1
+                logger.error(
+                    f"Background monitor crashed ({consecutive_failures}/{max_consecutive_failures}): {e}"
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.critical(
+                        f"Background monitor failed {max_consecutive_failures} times consecutively, stopping bot"
+                    )
+                    break
+                await asyncio.sleep(5)
 
     async def _background_monitor(self) -> None:
         """Background monitoring for capital updates and heartbeat."""
