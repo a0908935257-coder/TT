@@ -26,6 +26,7 @@ from src.risk.concentration_monitor import (
 )
 from src.risk.drawdown_calculator import DrawdownCalculator
 from src.risk.emergency_stop import EmergencyConfig, EmergencyStop, EmergencyStopStatus
+from src.risk.liquidation_monitor import LiquidationMonitor
 from src.risk.market_anomaly_detector import (
     AnomalyCategory,
     LiquidityMetrics,
@@ -42,6 +43,7 @@ from src.risk.models import (
     DailyPnL,
     DrawdownInfo,
     GlobalRiskStatus,
+    LiquidationSnapshot,
     RiskAction,
     RiskAlert,
     RiskConfig,
@@ -92,6 +94,7 @@ __all__ = [
     "RiskAlert",
     "CircuitBreakerState",
     "GlobalRiskStatus",
+    "LiquidationSnapshot",
     # Risk components
     "CapitalMonitor",
     "DrawdownCalculator",
@@ -101,6 +104,7 @@ __all__ = [
     "EmergencyConfig",
     "EmergencyStop",
     "EmergencyStopStatus",
+    "LiquidationMonitor",
     "RiskEngine",
     # Pre-trade risk checker
     "PreTradeRiskChecker",

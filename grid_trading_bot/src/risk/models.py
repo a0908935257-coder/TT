@@ -66,6 +66,11 @@ class RiskConfig:
     # Auto resume settings
     auto_resume_enabled: bool = False  # Whether to auto-resume after cooldown
 
+    # Liquidation risk thresholds (percentage as decimal)
+    liquidation_warning_pct: Decimal = Decimal("0.10")  # 10% from liquidation = WARNING
+    liquidation_danger_pct: Decimal = Decimal("0.05")  # 5% from liquidation = DANGER
+    liquidation_critical_pct: Decimal = Decimal("0.02")  # 2% from liquidation = CIRCUIT_BREAK
+
 
 @dataclass
 class CapitalSnapshot:
@@ -243,6 +248,27 @@ class CircuitBreakerState:
             return timedelta(0)
         remaining = self.cooldown_until - datetime.now(timezone.utc)
         return remaining if remaining > timedelta(0) else timedelta(0)
+
+
+@dataclass
+class LiquidationSnapshot:
+    """
+    Snapshot of liquidation risk for a single position.
+
+    Tracks how close a futures position is to its liquidation price.
+    """
+
+    symbol: str  # Trading pair symbol
+    side: str  # Position side: "LONG" or "SHORT"
+    mark_price: Decimal  # Current mark price
+    liquidation_price: Decimal  # Liquidation price
+    entry_price: Decimal  # Entry price
+    distance_pct: Decimal  # Distance to liquidation as decimal (0.10 = 10%)
+    leverage: int  # Position leverage
+    quantity: Decimal  # Position quantity
+    unrealized_pnl: Decimal  # Unrealized P&L
+    risk_level: RiskLevel  # Calculated risk level
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass

@@ -16,12 +16,14 @@ from .capital_monitor import CapitalMonitor
 from .circuit_breaker import CircuitBreaker
 from .drawdown_calculator import DrawdownCalculator
 from .emergency_stop import EmergencyConfig, EmergencyStop
+from .liquidation_monitor import LiquidationMonitor
 from .models import (
     CapitalSnapshot,
     CircuitBreakerState,
     DailyPnL,
     DrawdownInfo,
     GlobalRiskStatus,
+    LiquidationSnapshot,
     RiskAction,
     RiskAlert,
     RiskConfig,
@@ -125,6 +127,7 @@ class RiskEngine:
         self._capital_monitor = CapitalMonitor(config, exchange)
         self._drawdown_calc = DrawdownCalculator(config)
         self._circuit_breaker = CircuitBreaker(config, commander, notifier)
+        self._liquidation_monitor = LiquidationMonitor(config, exchange)
 
         # Emergency stop config
         emergency_config = EmergencyConfig(
@@ -191,6 +194,11 @@ class RiskEngine:
     def emergency_stop(self) -> EmergencyStop:
         """Get emergency stop."""
         return self._emergency_stop
+
+    @property
+    def liquidation_monitor(self) -> LiquidationMonitor:
+        """Get liquidation monitor."""
+        return self._liquidation_monitor
 
     # =========================================================================
     # Lifecycle Methods
@@ -318,10 +326,18 @@ class RiskEngine:
         # 2. Update drawdown calculation
         drawdown = self._drawdown_calc.update(capital.total_capital)
 
-        # 3. Collect all alerts
+        # 3. Update liquidation risk monitoring
+        if self._exchange:
+            try:
+                await self._liquidation_monitor.update()
+            except Exception as e:
+                logger.error(f"Failed to update liquidation monitor: {e}")
+
+        # 4. Collect all alerts
         alerts: List[RiskAlert] = []
         alerts.extend(self._capital_monitor.check_alerts())
         alerts.extend(self._drawdown_calc.check_alerts())
+        alerts.extend(self._liquidation_monitor.check_alerts())
 
         # Add consecutive loss alert if needed
         if self._consecutive_losses >= self._config.consecutive_loss_danger:
@@ -347,16 +363,16 @@ class RiskEngine:
                 )
             )
 
-        # 4. Calculate risk level
+        # 5. Calculate risk level
         level = self._calculate_risk_level(alerts)
 
-        # 5. Check circuit breaker
+        # 6. Check circuit breaker
         if level.value >= RiskLevel.DANGER.value:
             triggered = await self._circuit_breaker.check_and_trigger(alerts)
             if triggered:
                 level = RiskLevel.CIRCUIT_BREAK
 
-        # 6. Build status
+        # 7. Build status
         status = GlobalRiskStatus(
             level=level,
             capital=capital,
@@ -367,17 +383,17 @@ class RiskEngine:
             last_updated=datetime.now(timezone.utc),
         )
 
-        # 7. Check emergency stop
+        # 8. Check emergency stop
         emergency_reason = self._emergency_stop.check_auto_trigger(status)
         if emergency_reason:
             await self._emergency_stop.activate(emergency_reason)
             level = RiskLevel.CIRCUIT_BREAK
             status.level = level
 
-        # 8. Execute risk actions
+        # 9. Execute risk actions
         await self._execute_risk_action(level, alerts)
 
-        # 9. Check for level change and save status
+        # 10. Check for level change and save status
         # Important: Save status BEFORE triggering callback so callback sees current state
         old_level = self._last_status.level if self._last_status else None
         level_changed = old_level is not None and old_level != level
