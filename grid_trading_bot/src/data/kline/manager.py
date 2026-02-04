@@ -272,12 +272,8 @@ class KlineManager:
             self._subscriptions[key] = []
 
             # Subscribe to WebSocket kline stream
-            async def on_kline(data: dict):
-                kline = Kline.from_binance_ws(
-                    data["k"],
-                    symbol,
-                    KlineInterval(interval_str),
-                )
+            # Note: WebSocket.subscribe_kline already converts data to Kline object
+            async def on_kline(kline: Kline):
                 # Update cache
                 await self._market_cache.set_kline(
                     symbol, interval_str, self._kline_to_dict(kline)
