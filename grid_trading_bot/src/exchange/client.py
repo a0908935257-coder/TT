@@ -1353,6 +1353,7 @@ class ExchangeClient:
         symbol: str,
         quantity: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        position_side: str = "BOTH",
         bot_id: str = "unknown",
     ) -> Order:
         """
@@ -1362,6 +1363,7 @@ class ExchangeClient:
             symbol: Trading pair
             quantity: Quantity to buy
             market: SPOT or FUTURES
+            position_side: Position side (BOTH for one-way, LONG/SHORT for hedge mode)
             bot_id: ID of the bot placing the order
 
         Returns:
@@ -1374,6 +1376,7 @@ class ExchangeClient:
             quantity=quantity,
             market=market,
             bot_id=bot_id,
+            position_side=position_side,
         )
 
     async def market_sell(
@@ -1381,6 +1384,7 @@ class ExchangeClient:
         symbol: str,
         quantity: Decimal | str,
         market: MarketType = MarketType.SPOT,
+        position_side: str = "BOTH",
         bot_id: str = "unknown",
     ) -> Order:
         """
@@ -1390,6 +1394,7 @@ class ExchangeClient:
             symbol: Trading pair
             quantity: Quantity to sell
             market: SPOT or FUTURES
+            position_side: Position side (BOTH for one-way, LONG/SHORT for hedge mode)
             bot_id: ID of the bot placing the order
 
         Returns:
@@ -1402,6 +1407,7 @@ class ExchangeClient:
             quantity=quantity,
             market=market,
             bot_id=bot_id,
+            position_side=position_side,
         )
 
     async def limit_buy(

@@ -1190,6 +1190,7 @@ class BollingerBot(BaseBot):
                         symbol=self._config.symbol,
                         quantity=quantity,
                         market=MarketType.FUTURES,
+                        position_side=side.value.upper(),
                         bot_id=self._bot_id,
                     )
                 else:
@@ -1197,6 +1198,7 @@ class BollingerBot(BaseBot):
                         symbol=self._config.symbol,
                         quantity=quantity,
                         market=MarketType.FUTURES,
+                        position_side=side.value.upper(),
                         bot_id=self._bot_id,
                     )
 
