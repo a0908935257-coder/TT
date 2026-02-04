@@ -162,7 +162,7 @@ bots:
     # 完整回測: Sharpe 7.16, 報酬 302.05%, 年化 100.52%, 回撤 1.91%
     # 交易數: 3570/2年, Monte Carlo ROBUST
     strategy_params:
-      symbol: BTCUSDT
+      symbol: ETHUSDT
       timeframe: 1h
       leverage: 10
       margin_type: ISOLATED
@@ -219,7 +219,7 @@ bots:
     # --- 策略參數 (Optuna 300 trials, fixed Sharpe MTM 2026-02-01) ---
     # IS: +7222%, OOS: +188.2%, OOS Sharpe: 5.57, WF 100% (9/9)
     strategy_params:
-      symbol: BTCUSDT
+      symbol: SOLUSDT
       timeframe: 1h
       leverage: 7                        # 7x (equity-based margin)
       margin_type: ISOLATED
@@ -277,7 +277,7 @@ bots:
     # --- 策略參數 (Optuna 300 trials, 10x, fixed sizing 2%, 2026-02-01) ---
     # IS: +61.6%, OOS: +25.8%, OOS Sharpe: 5.60, OOS 回撤: 3.61%
     strategy_params:
-      symbol: BTCUSDT
+      symbol: BNBUSDT
       timeframe: 1h
       leverage: 10                       # 10x (Optuna 優化 2026-02-01)
       margin_type: ISOLATED
@@ -358,6 +358,9 @@ signal_coordinator:
   # 允許對沖的交易對 - 這些交易對可以同時持有多空倉位
   allowed_hedge_symbols:
     - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+    - BNBUSDT
 
   # Bot priorities (higher = more important, used with priority_based resolution)
   bot_priorities:
