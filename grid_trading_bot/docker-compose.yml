@@ -1,0 +1,119 @@
+# Grid Trading Bot - Docker Compose Configuration
+# Version: Docker Compose v2 (no version key needed)
+#
+# Services:
+#   - trading: Main trading application
+#   - postgres: PostgreSQL database for trade history
+#   - redis: Redis cache for real-time data
+#
+# Usage:
+#   docker compose up -d --build    # Build and start all services
+#   docker compose logs -f trading  # Follow trading logs
+#   docker compose down             # Stop all services
+#   docker compose ps               # Check service status
+
+services:
+  # ==========================================================================
+  # Trading Application
+  # ==========================================================================
+  trading:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trading-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override localhost to use Docker service names
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-net
+    volumes:
+      # Persist logs
+      - ./logs:/app/logs
+      # Mount config for easy updates (read-only)
+      - ./src/fund_manager/config:/app/src/fund_manager/config:ro
+    # Graceful shutdown timeout (allow bots to close positions)
+    stop_grace_period: 60s
+    # Resource limits (adjust based on your VPS)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-trading_bot}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      # Persist database data
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: initialization scripts
+      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - trading-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-trading_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Only expose port locally if needed for debugging
+    # ports:
+    #   - "5432:5432"
+
+  # ==========================================================================
+  # Redis Cache
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: trading-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      # Persist Redis data
+      - redis_data:/data
+    networks:
+      - trading-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Only expose port locally if needed for debugging
+    # ports:
+    #   - "6379:6379"
+
+# ==========================================================================
+# Persistent Volumes
+# ==========================================================================
+volumes:
+  postgres_data:
+    name: trading-postgres-data
+  redis_data:
+    name: trading-redis-data
+
+# ==========================================================================
+# Network
+# ==========================================================================
+networks:
+  trading-net:
+    name: trading-network
+    driver: bridge
