@@ -11637,7 +11637,7 @@ class BaseBot(ABC):
     NETWORK_JITTER_THRESHOLD_MS = 500  # Jitter warning threshold
     NETWORK_JITTER_CRITICAL_MS = 2000  # Jitter critical threshold
     NETWORK_DISCONNECT_THRESHOLD = 3  # Consecutive failures before disconnect
-    NETWORK_RECONNECT_MAX_ATTEMPTS = 10  # Max reconnection attempts
+    NETWORK_RECONNECT_MAX_ATTEMPTS = 30  # Max reconnection attempts (increased for WSL stability)
     NETWORK_RECONNECT_BASE_DELAY = 5  # Base delay for exponential backoff (seconds)
     NETWORK_RECONNECT_MAX_DELAY = 300  # Max delay (5 minutes)
 

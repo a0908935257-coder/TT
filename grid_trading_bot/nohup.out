@@ -1,0 +1,831 @@
+
+============================================================
+       整合交易系統 - Integrated Trading System
+============================================================
+
+啟動項目:
+  ✓ Master 主控台
+  ✓ Fund Manager (中央資金分配系統)
+  ✓ Bollinger Bot (合約 18x) - BB_NEUTRAL_GRID 策略
+  ✓ RSI-Grid Bot (合約 10x) - RSI 區域 + 網格進場
+  ✓ Grid Futures Bot (合約 7x) - NEUTRAL 雙向網格
+  ✓ Supertrend Bot (合約 10x) - HYBRID_GRID + RSI 過濾
+  ✓ Discord Bot (遠端管理)
+
+Walk-Forward 驗證通過的策略:
+  Bollinger: BB(11,2.0)+Grid, 18x (100% 一致性, Sharpe 13.10)
+  RSI-Grid: RSI(5)+Grid(6), 10x (Sharpe 7.47)
+  Grid Futures: NEUTRAL 7x, hysteresis (100% 一致性, Sharpe 5.57)
+  Supertrend: HYBRID_GRID+RSI filter, 10x (Sharpe 5.60)
+
+資金分配 (Sharpe 加權, 加權槓桿 11.75x):
+  Bollinger: 40%     |  RSI-Grid: 20%
+  Grid Futures: 15%  |  Supertrend: 15%
+  保留金: 10%
+
+Discord 指令:
+  /bot list     - 列出所有機器人
+  /bot stop     - 停止機器人
+  /bot start    - 啟動機器人
+  /status       - 系統狀態
+  /balance      - 帳戶餘額
+
+============================================================
+
+正在連接交易所...
+[92m2026-02-04 13:26:43 - src.exchange.binance.spot_api - INFO - Time synced, offset: -838ms (latency: 172ms)[0m
+[92m2026-02-04 13:26:43 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -867ms (latency: 139ms)[0m
+[92m2026-02-04 13:26:43 - src.exchange.client - INFO - Initial time sync: spot_offset=-838ms, futures_offset=-867ms[0m
+[92m2026-02-04 13:26:43 - src.exchange.binance.websocket - INFO - Connecting to wss://testnet.binance.vision/ws[0m
+[91m2026-02-04 13:26:43 - src.exchange.binance.websocket - ERROR - Connection failed: server rejected WebSocket connection: HTTP 404[0m
+[92m2026-02-04 13:26:43 - src.exchange.binance.websocket - INFO - Connecting to wss://stream.binancefuture.com/ws[0m
+[92m2026-02-04 13:26:43 - src.exchange.binance.websocket - INFO - WebSocket connected[0m
+[92m2026-02-04 13:26:43 - src.exchange.client - INFO - Order queue processor started[0m
+[92m2026-02-04 13:26:43 - src.exchange.client - INFO - Time sync task started[0m
+[92m2026-02-04 13:26:43 - src.exchange.client - INFO - ExchangeClient connected (with order queue and time sync)[0m
+  ✓ 交易所連接成功
+正在檢查倉位模式...
+[92m2026-02-04 13:26:43 - __main__ - INFO - Position mode: Hedge Mode (已啟用雙向持倉)[0m
+  ✓ 雙向持倉模式已啟用 (Hedge Mode)
+正在連接數據庫...
+[92m2026-02-04 13:26:43 - src.data.manager - INFO - Connecting to data sources...[0m
+[92m2026-02-04 13:26:43 - src.data.database.connection - INFO - Connecting to PostgreSQL at localhost:5432/trading_bot[0m
+[92m2026-02-04 13:26:43 - src.data.database.connection - INFO - Database connection established[0m
+[92m2026-02-04 13:26:43 - src.data.cache.redis_client - INFO - Connecting to Redis at localhost:6379[0m
+[92m2026-02-04 13:26:43 - src.data.cache.redis_client - INFO - Redis connection established[0m
+[92m2026-02-04 13:26:43 - src.data.manager - INFO - All data sources connected[0m
+  ✓ 數據庫連接成功
+正在設定通知...
+  ✓ 通知設定完成
+正在初始化 Master...
+[92m2026-02-04 13:26:43 - src.master.master - INFO - Master Control Console initialized[0m
+[92m2026-02-04 13:26:43 - src.master.master - INFO - Starting Master Control Console...[0m
+[92m2026-02-04 13:26:43 - src.master.heartbeat - INFO - HeartbeatMonitor started (interval=10s, timeout=60s)[0m
+[92m2026-02-04 13:26:43 - src.master.dashboard - INFO - Started snapshot loop with 3600s interval[0m
+[92m2026-02-04 13:26:44 - src.master.master - INFO - Master Control Console started successfully[0m
+  ✓ Master 啟動成功
+正在初始化資金管理系統...
+[92m2026-02-04 13:26:44 - src.fund_manager.manager - INFO - FundManager initialized[0m
+[92m2026-02-04 13:26:44 - src.fund_manager.manager - INFO - Starting FundManager...[0m
+[92m2026-02-04 13:26:44 - src.fund_manager.manager - INFO - FundManager started successfully[0m
+  ✓ 資金管理系統啟動成功
+正在初始化訊號協調器...
+[92m2026-02-04 13:26:44 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator initialized with resolution=allow_hedge[0m
+[92m2026-02-04 13:26:44 - __main__ - INFO - SignalCoordinator initialized: resolution=allow_hedge, hedge_symbols={'BTCUSDT'}[0m
+[92m2026-02-04 13:26:44 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator started[0m
+  ✓ 訊號協調器啟動成功 (對沖模式: BTCUSDT)
+
+正在創建機器人...
+  創建 Bollinger Bot...
+[92m2026-02-04 13:26:44 - src.master.registry - INFO - Bot registered: bollinger_20260204052644_2f9b3382 (bollinger) for BTCUSDT[0m
+[92m2026-02-04 13:26:44 - src.master.factory - INFO - Created bot instance: bollinger_20260204052644_2f9b3382 (bollinger)[0m
+[92m2026-02-04 13:26:45 - src.master.commander - INFO - Bot created: bollinger_20260204052644_2f9b3382[0m
+    ✓ 已創建: bollinger_20260204052644_2f9b3382
+[92m2026-02-04 13:26:45 - src.master.registry - INFO - Bot bollinger_20260204052644_2f9b3382 state changed: registered -> initializing[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - Starting bot: bollinger_20260204052644_2f9b3382[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Ensuring time synchronization...[0m
+[92m2026-02-04 13:26:45 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1105ms (latency: 47ms)[0m
+[92m2026-02-04 13:26:45 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1109ms (latency: 51ms)[0m
+[93m2026-02-04 13:26:45 - src.exchange.client - WARNING - High time drift detected (1109ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:26:45 - src.exchange.client - WARNING - Spot time offset is -1105ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:26:45 - src.exchange.client - WARNING - Futures time offset is -1109ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Time sync result: spot=-1105ms, futures=-1109ms[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Time synchronization OK (offset=1109ms <= 3000ms)[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Validating configuration...[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Config checksum: a01f6b281b4737e8 (use for sync verification)[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Configuration validation passed[0m
+[92m2026-02-04 13:26:45 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Leverage verified/set: 18x[0m
+[93m2026-02-04 13:26:45 - src.bots.base - WARNING - [bollinger_20260204052644_2f9b3382] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:26:45 - src.bots.bollinger.bot - INFO - Starting Bollinger BB_TREND_GRID Bot for BTCUSDT[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Set leverage to 18x[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:26:46 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:26:46 - src.bots.base - INFO - Bot bollinger_20260204052644_2f9b3382 registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Loaded 200 historical klines[0m
+[93m2026-02-04 13:26:46 - src.bots.bollinger.indicators - WARNING - Insufficient data for full BBW history initialization: need 211, got 200[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.indicators - INFO - BBW history initialized with 189 entries[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Grid initialized: center=76445.30, range=±2.0%, levels=13, v1[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Subscribed to BTCUSDT 1h klines[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Bollinger BB_TREND_GRID Bot started successfully[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   BB Period: 11[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   BB Std: 2.0[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   Grid Count: 12[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO -   Leverage: 18x[0m
+[92m2026-02-04 13:26:46 - src.bots.base - INFO - Bot bollinger_20260204052644_2f9b3382 started successfully[0m
+[92m2026-02-04 13:26:46 - src.bots.bollinger.bot - INFO - Starting background monitor[0m
+[92m2026-02-04 13:26:46 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:26:46 - src.master.registry - INFO - Bot bollinger_20260204052644_2f9b3382 state changed: initializing -> running[0m
+[92m2026-02-04 13:26:46 - src.master.commander - INFO - Bot started: bollinger_20260204052644_2f9b3382[0m
+    ✓ 已啟動: bollinger_20260204052644_2f9b3382
+  創建 RSI-Grid Hybrid Bot...
+[92m2026-02-04 13:26:47 - src.master.registry - INFO - Bot registered: rsi_grid_20260204052646_3b532000 (rsi_grid) for BTCUSDT[0m
+[92m2026-02-04 13:26:47 - src.master.factory - INFO - Created bot instance: rsi_grid_20260204052646_3b532000 (rsi_grid)[0m
+[92m2026-02-04 13:26:47 - src.master.commander - INFO - Bot created: rsi_grid_20260204052646_3b532000[0m
+    ✓ 已創建: rsi_grid_20260204052646_3b532000
+[92m2026-02-04 13:26:48 - src.master.registry - INFO - Bot rsi_grid_20260204052646_3b532000 state changed: registered -> initializing[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - Starting bot: rsi_grid_20260204052646_3b532000[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Ensuring time synchronization...[0m
+[92m2026-02-04 13:26:48 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1288ms (latency: 49ms)[0m
+[92m2026-02-04 13:26:48 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1293ms (latency: 45ms)[0m
+[93m2026-02-04 13:26:48 - src.exchange.client - WARNING - High time drift detected (1293ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:26:48 - src.exchange.client - WARNING - Spot time offset is -1288ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:26:48 - src.exchange.client - WARNING - Futures time offset is -1293ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Time sync result: spot=-1288ms, futures=-1293ms[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Time synchronization OK (offset=1293ms <= 3000ms)[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Validating configuration...[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Config checksum: 401f38493e99015e (use for sync verification)[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Configuration validation passed[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Leverage verified/set: 10x[0m
+[93m2026-02-04 13:26:48 - src.bots.base - WARNING - [rsi_grid_20260204052646_3b532000] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Starting RSI-Grid Bot for BTCUSDT[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Set leverage to 10x[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - [rsi_grid_20260204052646_3b532000] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - Bot rsi_grid_20260204052646_3b532000 registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Loaded 200 historical klines[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.indicators - INFO - RSI initialized: 18.43, period=5[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - RSI initialized: 18.43, zone=oversold[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.indicators - INFO - ATR initialized: 413.60, period=21[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - ATR initialized: 413.60[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Grid initialized: center=76435.30, range=±2.2%, levels=7, v1[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - RSI-Grid Bot started successfully[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   RSI: period=5, oversold=33, overbought=66[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   Grid: count=6, ATR mult=4.0[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   Trend SMA: 39[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO -   Subscribed to BTCUSDT 1h klines (WebSocket)[0m
+[92m2026-02-04 13:26:48 - src.bots.base - INFO - Bot rsi_grid_20260204052646_3b532000 started successfully[0m
+[92m2026-02-04 13:26:48 - src.bots.rsi_grid.bot - INFO - Starting RSI-Grid background monitor[0m
+[92m2026-02-04 13:26:48 - src.master.registry - INFO - Bot rsi_grid_20260204052646_3b532000 state changed: initializing -> running[0m
+[92m2026-02-04 13:26:49 - src.master.commander - INFO - Bot started: rsi_grid_20260204052646_3b532000[0m
+    ✓ 已啟動: rsi_grid_20260204052646_3b532000
+  創建 Grid Futures Bot...
+[93m2026-02-04 13:26:49 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 11, 'total_rate_limited': 0, 'total_burst_limited': 1, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:49 - src.master.registry - INFO - Bot registered: grid_futures_20260204052649_d0978e37 (grid_futures) for BTCUSDT[0m
+[92m2026-02-04 13:26:49 - src.master.factory - INFO - Created bot instance: grid_futures_20260204052649_d0978e37 (grid_futures)[0m
+[93m2026-02-04 13:26:49 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 11, 'total_rate_limited': 0, 'total_burst_limited': 2, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:49 - src.master.commander - INFO - Bot created: grid_futures_20260204052649_d0978e37[0m
+    ✓ 已創建: grid_futures_20260204052649_d0978e37
+[93m2026-02-04 13:26:49 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 11, 'total_rate_limited': 0, 'total_burst_limited': 3, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:49 - src.master.registry - INFO - Bot grid_futures_20260204052649_d0978e37 state changed: registered -> initializing[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - Starting bot: grid_futures_20260204052649_d0978e37[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Ensuring time synchronization...[0m
+[92m2026-02-04 13:26:49 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1380ms (latency: 50ms)[0m
+[92m2026-02-04 13:26:49 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1384ms (latency: 53ms)[0m
+[93m2026-02-04 13:26:49 - src.exchange.client - WARNING - High time drift detected (1384ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:26:49 - src.exchange.client - WARNING - Spot time offset is -1380ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:26:49 - src.exchange.client - WARNING - Futures time offset is -1384ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Time sync result: spot=-1380ms, futures=-1384ms[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Time synchronization OK (offset=1384ms <= 3000ms)[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Validating configuration...[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Config checksum: 523c13c958ef472d (use for sync verification)[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Configuration validation passed[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Leverage verified/set: 7x[0m
+[93m2026-02-04 13:26:49 - src.bots.base - WARNING - [grid_futures_20260204052649_d0978e37] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Starting Grid Futures Bot for BTCUSDT[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Set leverage to 7x[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - [grid_futures_20260204052649_d0978e37] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - Bot grid_futures_20260204052649_d0978e37 registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Loaded 200 historical klines[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Grid initialized: center=76434.50, range=±3.4%, levels=9, v1[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Grid Futures Bot started successfully[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO -   Subscribed to BTCUSDT 1h klines[0m
+[92m2026-02-04 13:26:49 - src.bots.base - INFO - Bot grid_futures_20260204052649_d0978e37 started successfully[0m
+[92m2026-02-04 13:26:49 - src.bots.grid_futures.bot - INFO - Starting background monitor[0m
+[92m2026-02-04 13:26:50 - src.master.registry - INFO - Bot grid_futures_20260204052649_d0978e37 state changed: initializing -> running[0m
+[92m2026-02-04 13:26:50 - src.master.commander - INFO - Bot started: grid_futures_20260204052649_d0978e37[0m
+    ✓ 已啟動: grid_futures_20260204052649_d0978e37
+  創建 Supertrend Bot...
+[92m2026-02-04 13:26:51 - src.master.registry - INFO - Bot registered: supertrend_20260204052650_1d563c56 (supertrend) for BTCUSDT[0m
+[92m2026-02-04 13:26:51 - src.master.factory - INFO - Created bot instance: supertrend_20260204052650_1d563c56 (supertrend)[0m
+[92m2026-02-04 13:26:51 - src.master.commander - INFO - Bot created: supertrend_20260204052650_1d563c56[0m
+    ✓ 已創建: supertrend_20260204052650_1d563c56
+[93m2026-02-04 13:26:51 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 15, 'total_rate_limited': 0, 'total_burst_limited': 4, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:51 - src.master.registry - INFO - Bot supertrend_20260204052650_1d563c56 state changed: registered -> initializing[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - Starting bot: supertrend_20260204052650_1d563c56[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Ensuring time synchronization...[0m
+[92m2026-02-04 13:26:51 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1555ms (latency: 45ms)[0m
+[92m2026-02-04 13:26:51 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1557ms (latency: 52ms)[0m
+[93m2026-02-04 13:26:51 - src.exchange.client - WARNING - High time drift detected (1557ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:26:51 - src.exchange.client - WARNING - Spot time offset is -1555ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:26:51 - src.exchange.client - WARNING - Futures time offset is -1557ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Time sync result: spot=-1555ms, futures=-1557ms[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Time synchronization OK (offset=1557ms <= 3000ms)[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Validating configuration...[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Config checksum: 2df5336c021fc1a2 (use for sync verification)[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Configuration validation passed[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Leverage verified/set: 10x[0m
+[93m2026-02-04 13:26:51 - src.bots.base - WARNING - [supertrend_20260204052650_1d563c56] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:26:51 - src.bots.supertrend.bot - INFO - Initializing Supertrend Bot for BTCUSDT[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - [supertrend_20260204052650_1d563c56] Strategy initial capital set: 1000[0m
+[92m2026-02-04 13:26:51 - src.bots.base - INFO - Bot supertrend_20260204052650_1d563c56 registered for global risk tracking, Total capital: 1000[0m
+[92m2026-02-04 13:26:51 - src.bots.supertrend.bot - INFO - Strategy initial capital set: 1000 USDT[0m
+[92m2026-02-04 13:26:51 - src.bots.supertrend.indicators - INFO - Supertrend initialized: trend=BEAR, value=81371.82, ATR=1130.85[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO - Supertrend Bot initialized successfully[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Mode: HYBRID_GRID[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   ATR Period: 18[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   ATR Multiplier: 6.0[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Leverage: 10x[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Initial Trend: BEARISH[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Hybrid Bias: 0.55[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Hybrid TP Trend/Counter: 1.0/0.75[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Hybrid SL Counter: 0.8[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO -   Hybrid RSI Asymmetric: False[0m
+[92m2026-02-04 13:26:52 - src.bots.base - INFO - Bot supertrend_20260204052650_1d563c56 started successfully[0m
+[92m2026-02-04 13:26:52 - src.bots.supertrend.bot - INFO - Starting Supertrend background monitor[0m
+[92m2026-02-04 13:26:52 - src.master.registry - INFO - Bot supertrend_20260204052650_1d563c56 state changed: initializing -> running[0m
+[92m2026-02-04 13:26:53 - src.master.commander - INFO - Bot started: supertrend_20260204052650_1d563c56[0m
+    ✓ 已啟動: supertrend_20260204052650_1d563c56
+  ✓ WebSocket 重連回調已註冊（自動同步持倉）
+
+正在分配資金...
+[92m2026-02-04 13:26:53 - src.bots.base - INFO - Bot bollinger_20260204052644_2f9b3382 capital updated: None -> 2027.488894056[0m
+[92m2026-02-04 13:26:53 - src.fund_manager.manager - INFO - Allocated 2027.488894056 to bollinger_20260204052644_2f9b3382 (previous: 0, new: 2027.488894056)[0m
+[92m2026-02-04 13:26:53 - src.bots.base - INFO - Bot rsi_grid_20260204052646_3b532000 capital updated: None -> 1013.744447028[0m
+[92m2026-02-04 13:26:53 - src.bots.rsi_grid.bot - INFO - [FundManager] Capital updated for rsi_grid_20260204052646_3b532000: max_capital=1013.744447028, actual_capital: 5068.72223514 -> 1013.744447028[0m
+[93m2026-02-04 13:26:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 19, 'total_rate_limited': 0, 'total_burst_limited': 5, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:53 - src.fund_manager.manager - INFO - Allocated 1013.744447028 to rsi_grid_20260204052646_3b532000 (previous: 0, new: 1013.744447028)[0m
+[92m2026-02-04 13:26:53 - src.bots.base - INFO - Bot grid_futures_20260204052649_d0978e37 capital updated: None -> 760.3083352710[0m
+[92m2026-02-04 13:26:53 - src.bots.grid_futures.bot - INFO - [FundManager] Capital updated for grid_futures_20260204052649_d0978e37: max_capital=760.3083352710, actual_capital: 5068.72223514 -> 760.3083352710[0m
+[93m2026-02-04 13:26:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 19, 'total_rate_limited': 0, 'total_burst_limited': 6, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:53 - src.fund_manager.manager - INFO - Allocated 760.3083352710 to grid_futures_20260204052649_d0978e37 (previous: 0, new: 760.3083352710)[0m
+[92m2026-02-04 13:26:53 - src.bots.base - INFO - Bot supertrend_20260204052650_1d563c56 capital updated: None -> 760.3083352710[0m
+[92m2026-02-04 13:26:53 - src.bots.supertrend.bot - INFO - [FundManager] Capital updated for supertrend_20260204052650_1d563c56: 760.3083352710 -> 760.3083352710[0m
+[93m2026-02-04 13:26:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 19, 'total_rate_limited': 0, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:26:53 - src.fund_manager.manager - INFO - Allocated 760.3083352710 to supertrend_20260204052650_1d563c56 (previous: 0, new: 760.3083352710)[0m
+[92m2026-02-04 13:26:53 - src.fund_manager.manager - INFO - Dispatch complete: 4 successful, 0 failed, total dispatched: 4561.8500116260[0m
+[93m2026-02-04 13:26:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 19, 'total_rate_limited': 0, 'total_burst_limited': 8, 'critical_bypassed': 0}[0m
+  ✓ 資金分配成功
+    • bollinger_20260204052644_2f9b3382: 2027.49 USDT
+    • rsi_grid_20260204052646_3b532000: 1013.74 USDT
+    • grid_futures_20260204052649_d0978e37: 760.31 USDT
+    • supertrend_20260204052650_1d563c56: 760.31 USDT
+
+正在啟動 Discord Bot...
+  ✓ Discord Bot 啟動中...
+[92m2026-02-04 13:26:54 - src.discord_bot.bot - INFO - Starting Discord bot...[0m
+[92m2026-02-04 13:26:55 - src.discord_bot.bot - INFO - Setting up Discord bot...[0m
+[92m2026-02-04 13:26:55 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.bot_commands[0m
+[92m2026-02-04 13:26:55 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.status_commands[0m
+[92m2026-02-04 13:26:55 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.risk_commands[0m
+[92m2026-02-04 13:26:55 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.admin_commands[0m
+
+============================================================
+       系統啟動完成！
+============================================================
+
+運行中的機器人: 4
+  • bollinger_20260204052644_2f9b3382 [bollinger] - running
+  • rsi_grid_20260204052646_3b532000 [rsi_grid] - running
+  • grid_futures_20260204052649_d0978e37 [grid_futures] - running
+  • supertrend_20260204052650_1d563c56 [supertrend] - running
+
+Discord 指令:
+  /bot list     - 列出機器人
+  /bot stop     - 停止機器人
+  /status       - 系統狀態
+
+按 Ctrl+C 停止系統
+
+============================================================
+[92m2026-02-04 13:27:11 - src.exchange.binance.spot_api - INFO - Time synced, offset: -753ms (latency: 67ms)[0m
+[92m2026-02-04 13:27:11 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -728ms (latency: 141ms)[0m
+[93m2026-02-04 13:27:11 - src.exchange.client - WARNING - High time drift detected (753ms), reducing sync interval to 10s[0m
+[92m2026-02-04 13:27:13 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:27:21 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1548ms (latency: 49ms)[0m
+[92m2026-02-04 13:27:21 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1551ms (latency: 50ms)[0m
+[93m2026-02-04 13:27:21 - src.exchange.client - WARNING - High time drift detected (1551ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:27:21 - src.exchange.client - WARNING - Spot time offset is -1548ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:27:21 - src.exchange.client - WARNING - Futures time offset is -1551ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:27:31 - src.exchange.binance.spot_api - INFO - Time synced, offset: -2325ms (latency: 51ms)[0m
+[92m2026-02-04 13:27:31 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -2332ms (latency: 53ms)[0m
+[93m2026-02-04 13:27:31 - src.exchange.client - WARNING - High time drift detected (2332ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:27:31 - src.exchange.client - WARNING - Spot time offset is -2325ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:27:31 - src.exchange.client - WARNING - Futures time offset is -2332ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:27:38 - src.discord_bot.bot - INFO - Synced 10 slash commands to guild 1458126857848357090[0m
+[92m2026-02-04 13:27:39 - src.exchange.binance.spot_api - INFO - Time synced, offset: -603ms (latency: 45ms)[0m
+[92m2026-02-04 13:27:39 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -606ms (latency: 52ms)[0m
+[93m2026-02-04 13:27:39 - src.exchange.client - WARNING - High time drift detected (606ms), reducing sync interval to 10s[0m
+[92m2026-02-04 13:27:41 - src.discord_bot.bot - INFO - Discord Bot logged in as 主控台BOT#1725[0m
+[92m2026-02-04 13:27:41 - src.discord_bot.bot - INFO - Connected to guild: BTC coin bot[0m
+[91m2026-02-04 13:27:41 - src.bots.base - ERROR - [bollinger_20260204052644_2f9b3382] Network disconnected (failures: 3)[0m
+[92m2026-02-04 13:27:41 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=reconnect, retry=False[0m
+[92m2026-02-04 13:27:41 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Reconnection attempt 1/10 in 5.3s[0m
+[92m2026-02-04 13:27:46 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network connection restored after 5.4s[0m
+[92m2026-02-04 13:27:46 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Reconnection successful (latency: 51ms)[0m
+[92m2026-02-04 13:27:49 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1380ms (latency: 51ms)[0m
+[92m2026-02-04 13:27:49 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1385ms (latency: 49ms)[0m
+[93m2026-02-04 13:27:49 - src.exchange.client - WARNING - High time drift detected (1385ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:27:49 - src.exchange.client - WARNING - Spot time offset is -1380ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:27:49 - src.exchange.client - WARNING - Futures time offset is -1385ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:27:59 - src.exchange.binance.spot_api - INFO - Time synced, offset: -2149ms (latency: 68ms)[0m
+[92m2026-02-04 13:27:59 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -2164ms (latency: 50ms)[0m
+[93m2026-02-04 13:27:59 - src.exchange.client - WARNING - High time drift detected (2164ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:27:59 - src.exchange.client - WARNING - Spot time offset is -2149ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:27:59 - src.exchange.client - WARNING - Futures time offset is -2164ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:28:07 - src.exchange.binance.spot_api - INFO - Time synced, offset: -432ms (latency: 50ms)[0m
+[92m2026-02-04 13:28:07 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -435ms (latency: 55ms)[0m
+[92m2026-02-04 13:28:14 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:28:17 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1210ms (latency: 46ms)[0m
+[92m2026-02-04 13:28:17 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1214ms (latency: 51ms)[0m
+[93m2026-02-04 13:28:17 - src.exchange.client - WARNING - High time drift detected (1214ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:28:17 - src.exchange.client - WARNING - Spot time offset is -1210ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:17 - src.exchange.client - WARNING - Futures time offset is -1214ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:28:27 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1989ms (latency: 48ms)[0m
+[92m2026-02-04 13:28:27 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1992ms (latency: 50ms)[0m
+[93m2026-02-04 13:28:27 - src.exchange.client - WARNING - High time drift detected (1992ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:28:27 - src.exchange.client - WARNING - Spot time offset is -1989ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:27 - src.exchange.client - WARNING - Futures time offset is -1992ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:28:34 - src.exchange.binance.spot_api - INFO - Time synced, offset: -258ms (latency: 45ms)[0m
+[92m2026-02-04 13:28:34 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -262ms (latency: 49ms)[0m
+[92m2026-02-04 13:28:42 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:28:45 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1035ms (latency: 45ms)[0m
+[92m2026-02-04 13:28:45 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1039ms (latency: 48ms)[0m
+[93m2026-02-04 13:28:45 - src.exchange.client - WARNING - High time drift detected (1039ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:28:45 - src.exchange.client - WARNING - Spot time offset is -1035ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:45 - src.exchange.client - WARNING - Futures time offset is -1039ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:28:55 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1812ms (latency: 49ms)[0m
+[92m2026-02-04 13:28:55 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1816ms (latency: 49ms)[0m
+[93m2026-02-04 13:28:55 - src.exchange.client - WARNING - High time drift detected (1816ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:28:55 - src.exchange.client - WARNING - Spot time offset is -1812ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:55 - src.exchange.client - WARNING - Futures time offset is -1816ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:55 - src.exchange.binance.websocket - WARNING - Message timeout (4x), checking connection[0m
+
+============================================================
+       整合交易系統 - Integrated Trading System
+============================================================
+
+啟動項目:
+  ✓ Master 主控台
+  ✓ Fund Manager (中央資金分配系統)
+  ✓ Bollinger Bot (合約 18x) - BB_NEUTRAL_GRID 策略
+  ✓ RSI-Grid Bot (合約 10x) - RSI 區域 + 網格進場
+  ✓ Grid Futures Bot (合約 7x) - NEUTRAL 雙向網格
+  ✓ Supertrend Bot (合約 10x) - HYBRID_GRID + RSI 過濾
+  ✓ Discord Bot (遠端管理)
+
+Walk-Forward 驗證通過的策略:
+  Bollinger: BB(11,2.0)+Grid, 18x (100% 一致性, Sharpe 13.10)
+  RSI-Grid: RSI(5)+Grid(6), 10x (Sharpe 7.47)
+  Grid Futures: NEUTRAL 7x, hysteresis (100% 一致性, Sharpe 5.57)
+  Supertrend: HYBRID_GRID+RSI filter, 10x (Sharpe 5.60)
+
+資金分配 (Sharpe 加權, 加權槓桿 11.75x):
+  Bollinger: 40%     |  RSI-Grid: 20%
+  Grid Futures: 15%  |  Supertrend: 15%
+  保留金: 10%
+
+Discord 指令:
+  /bot list     - 列出所有機器人
+  /bot stop     - 停止機器人
+  /bot start    - 啟動機器人
+  /status       - 系統狀態
+  /balance      - 帳戶餘額
+
+============================================================
+
+正在連接交易所...
+[92m2026-02-04 13:28:55 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1793ms (latency: 127ms)[0m
+[92m2026-02-04 13:28:55 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1762ms (latency: 221ms)[0m
+[92m2026-02-04 13:28:55 - src.exchange.client - INFO - Initial time sync: spot_offset=-1793ms, futures_offset=-1762ms[0m
+[93m2026-02-04 13:28:55 - src.exchange.client - WARNING - System time offset is 1793ms (threshold: 1000ms). Consider syncing your system clock.[0m
+[92m2026-02-04 13:28:55 - src.exchange.binance.websocket - INFO - Connecting to wss://testnet.binance.vision/ws[0m
+[91m2026-02-04 13:28:55 - src.exchange.binance.websocket - ERROR - Connection failed: server rejected WebSocket connection: HTTP 404[0m
+[92m2026-02-04 13:28:55 - src.exchange.binance.websocket - INFO - Connecting to wss://stream.binancefuture.com/ws[0m
+[92m2026-02-04 13:28:56 - src.exchange.binance.websocket - INFO - WebSocket connected[0m
+[92m2026-02-04 13:28:56 - src.exchange.client - INFO - Order queue processor started[0m
+[92m2026-02-04 13:28:56 - src.exchange.client - INFO - Time sync task started[0m
+[92m2026-02-04 13:28:56 - src.exchange.client - INFO - ExchangeClient connected (with order queue and time sync)[0m
+  ✓ 交易所連接成功
+正在檢查倉位模式...
+[92m2026-02-04 13:28:56 - __main__ - INFO - Position mode: Hedge Mode (已啟用雙向持倉)[0m
+  ✓ 雙向持倉模式已啟用 (Hedge Mode)
+正在連接數據庫...
+[92m2026-02-04 13:28:56 - src.data.manager - INFO - Connecting to data sources...[0m
+[92m2026-02-04 13:28:56 - src.data.database.connection - INFO - Connecting to PostgreSQL at localhost:5432/trading_bot[0m
+[92m2026-02-04 13:28:56 - src.data.database.connection - INFO - Database connection established[0m
+[92m2026-02-04 13:28:56 - src.data.cache.redis_client - INFO - Connecting to Redis at localhost:6379[0m
+[92m2026-02-04 13:28:56 - src.data.cache.redis_client - INFO - Redis connection established[0m
+[92m2026-02-04 13:28:56 - src.data.manager - INFO - All data sources connected[0m
+  ✓ 數據庫連接成功
+正在設定通知...
+  ✓ 通知設定完成
+正在初始化 Master...
+[92m2026-02-04 13:28:56 - src.master.master - INFO - Master Control Console initialized[0m
+[92m2026-02-04 13:28:56 - src.master.master - INFO - Starting Master Control Console...[0m
+[92m2026-02-04 13:28:56 - src.master.heartbeat - INFO - HeartbeatMonitor started (interval=10s, timeout=60s)[0m
+[92m2026-02-04 13:28:56 - src.master.dashboard - INFO - Started snapshot loop with 3600s interval[0m
+[92m2026-02-04 13:28:56 - src.master.master - INFO - Master Control Console started successfully[0m
+  ✓ Master 啟動成功
+正在初始化資金管理系統...
+[92m2026-02-04 13:28:56 - src.fund_manager.manager - INFO - FundManager initialized[0m
+[92m2026-02-04 13:28:56 - src.fund_manager.manager - INFO - Starting FundManager...[0m
+[92m2026-02-04 13:28:56 - src.fund_manager.manager - INFO - FundManager started successfully[0m
+  ✓ 資金管理系統啟動成功
+正在初始化訊號協調器...
+[92m2026-02-04 13:28:56 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator initialized with resolution=allow_hedge[0m
+[92m2026-02-04 13:28:56 - __main__ - INFO - SignalCoordinator initialized: resolution=allow_hedge, hedge_symbols={'BTCUSDT'}[0m
+[92m2026-02-04 13:28:56 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator started[0m
+  ✓ 訊號協調器啟動成功 (對沖模式: BTCUSDT)
+
+正在創建機器人...
+  創建 Bollinger Bot...
+[92m2026-02-04 13:28:57 - src.master.registry - INFO - Bot registered: bollinger_20260204052856_72749049 (bollinger) for BTCUSDT[0m
+[92m2026-02-04 13:28:57 - src.master.factory - INFO - Created bot instance: bollinger_20260204052856_72749049 (bollinger)[0m
+[92m2026-02-04 13:28:57 - src.master.commander - INFO - Bot created: bollinger_20260204052856_72749049[0m
+    ✓ 已創建: bollinger_20260204052856_72749049
+[92m2026-02-04 13:28:58 - src.master.registry - INFO - Bot bollinger_20260204052856_72749049 state changed: registered -> initializing[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - Starting bot: bollinger_20260204052856_72749049[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Ensuring time synchronization...[0m
+[92m2026-02-04 13:28:58 - src.exchange.binance.spot_api - INFO - Time synced, offset: -2040ms (latency: 52ms)[0m
+[92m2026-02-04 13:28:58 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -2046ms (latency: 46ms)[0m
+[93m2026-02-04 13:28:58 - src.exchange.client - WARNING - High time drift detected (2046ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:28:58 - src.exchange.client - WARNING - Spot time offset is -2040ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:28:58 - src.exchange.client - WARNING - Futures time offset is -2046ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Time sync result: spot=-2040ms, futures=-2046ms[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Time synchronization OK (offset=2046ms <= 3000ms)[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Validating configuration...[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Config checksum: a01f6b281b4737e8 (use for sync verification)[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Configuration validation passed[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Leverage verified/set: 18x[0m
+[93m2026-02-04 13:28:58 - src.bots.base - WARNING - [bollinger_20260204052856_72749049] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Starting Bollinger BB_TREND_GRID Bot for BTCUSDT[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Set leverage to 18x[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - Bot bollinger_20260204052856_72749049 registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Loaded 200 historical klines[0m
+[93m2026-02-04 13:28:58 - src.bots.bollinger.indicators - WARNING - Insufficient data for full BBW history initialization: need 211, got 200[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.indicators - INFO - BBW history initialized with 189 entries[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Grid initialized: center=76433.70, range=±2.0%, levels=13, v1[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Subscribed to BTCUSDT 1h klines[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Bollinger BB_TREND_GRID Bot started successfully[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   BB Period: 11[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   BB Std: 2.0[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   Grid Count: 12[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO -   Leverage: 18x[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - Bot bollinger_20260204052856_72749049 started successfully[0m
+[92m2026-02-04 13:28:58 - src.bots.bollinger.bot - INFO - Starting background monitor[0m
+[92m2026-02-04 13:28:58 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Network error handled: type=other, action=none, retry=True[0m
+[93m2026-02-04 13:28:58 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:29:00 - src.master.registry - INFO - Bot bollinger_20260204052856_72749049 state changed: initializing -> running[0m
+[92m2026-02-04 13:29:00 - src.master.commander - INFO - Bot started: bollinger_20260204052856_72749049[0m
+    ✓ 已啟動: bollinger_20260204052856_72749049
+  創建 RSI-Grid Hybrid Bot...
+[92m2026-02-04 13:29:00 - src.master.registry - INFO - Bot registered: rsi_grid_20260204052900_36ed923c (rsi_grid) for BTCUSDT[0m
+[92m2026-02-04 13:29:00 - src.master.factory - INFO - Created bot instance: rsi_grid_20260204052900_36ed923c (rsi_grid)[0m
+[92m2026-02-04 13:29:01 - src.master.commander - INFO - Bot created: rsi_grid_20260204052900_36ed923c[0m
+    ✓ 已創建: rsi_grid_20260204052900_36ed923c
+[92m2026-02-04 13:29:01 - src.master.registry - INFO - Bot rsi_grid_20260204052900_36ed923c state changed: registered -> initializing[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - Starting bot: rsi_grid_20260204052900_36ed923c[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Ensuring time synchronization...[0m
+[92m2026-02-04 13:29:01 - src.exchange.binance.spot_api - INFO - Time synced, offset: -2307ms (latency: 51ms)[0m
+[92m2026-02-04 13:29:01 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -2311ms (latency: 51ms)[0m
+[93m2026-02-04 13:29:01 - src.exchange.client - WARNING - High time drift detected (2311ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:01 - src.exchange.client - WARNING - Spot time offset is -2307ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:01 - src.exchange.client - WARNING - Futures time offset is -2311ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Time sync result: spot=-2307ms, futures=-2311ms[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Time synchronization OK (offset=2311ms <= 3000ms)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Validating configuration...[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Config checksum: 401f38493e99015e (use for sync verification)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Configuration validation passed[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Leverage verified/set: 10x[0m
+[93m2026-02-04 13:29:01 - src.bots.base - WARNING - [rsi_grid_20260204052900_36ed923c] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Starting RSI-Grid Bot for BTCUSDT[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Set leverage to 10x[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [rsi_grid_20260204052900_36ed923c] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - Bot rsi_grid_20260204052900_36ed923c registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Loaded 200 historical klines[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.indicators - INFO - RSI initialized: 18.43, period=5[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - RSI initialized: 18.43, zone=oversold[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.indicators - INFO - ATR initialized: 413.60, period=21[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - ATR initialized: 413.60[0m
+[92m2026-02-04 13:29:01 - src.bots.rsi_grid.bot - INFO - Grid initialized: center=76453.90, range=±2.2%, levels=7, v1[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO - RSI-Grid Bot started successfully[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   RSI: period=5, oversold=33, overbought=66[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   Grid: count=6, ATR mult=4.0[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   Trend SMA: 39[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO -   Subscribed to BTCUSDT 1h klines (WebSocket)[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - Bot rsi_grid_20260204052900_36ed923c started successfully[0m
+[92m2026-02-04 13:29:02 - src.bots.rsi_grid.bot - INFO - Starting RSI-Grid background monitor[0m
+[92m2026-02-04 13:29:02 - src.master.registry - INFO - Bot rsi_grid_20260204052900_36ed923c state changed: initializing -> running[0m
+[92m2026-02-04 13:29:03 - src.master.commander - INFO - Bot started: rsi_grid_20260204052900_36ed923c[0m
+    ✓ 已啟動: rsi_grid_20260204052900_36ed923c
+  創建 Grid Futures Bot...
+[92m2026-02-04 13:29:03 - src.master.registry - INFO - Bot registered: grid_futures_20260204052903_6767fb3a (grid_futures) for BTCUSDT[0m
+[92m2026-02-04 13:29:01 - src.master.factory - INFO - Created bot instance: grid_futures_20260204052903_6767fb3a (grid_futures)[0m
+[93m2026-02-04 13:29:01 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 1, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:01 - src.master.commander - INFO - Bot created: grid_futures_20260204052903_6767fb3a[0m
+    ✓ 已創建: grid_futures_20260204052903_6767fb3a
+[93m2026-02-04 13:29:01 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 2, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:01 - src.master.registry - INFO - Bot grid_futures_20260204052903_6767fb3a state changed: registered -> initializing[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - Starting bot: grid_futures_20260204052903_6767fb3a[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Ensuring time synchronization...[0m
+[92m2026-02-04 13:29:01 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1ms (latency: 52ms)[0m
+[92m2026-02-04 13:29:01 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -7ms (latency: 49ms)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Time sync result: spot=-1ms, futures=-7ms[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Time synchronization OK (offset=7ms <= 3000ms)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Validating configuration...[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Config checksum: 523c13c958ef472d (use for sync verification)[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Configuration validation passed[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Leverage verified/set: 7x[0m
+[93m2026-02-04 13:29:01 - src.bots.base - WARNING - [grid_futures_20260204052903_6767fb3a] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Starting Grid Futures Bot for BTCUSDT[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Set leverage to 7x[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Set margin type to ISOLATED[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - [grid_futures_20260204052903_6767fb3a] Strategy initial capital set: 5068.72223514[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - Bot grid_futures_20260204052903_6767fb3a registered for global risk tracking, Total capital: 5068.72223514[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Initial capital: 5068.72223514 USDT[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Loaded 200 historical klines[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Grid initialized: center=76453.90, range=±3.4%, levels=9, v1[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO - Grid Futures Bot started successfully[0m
+[92m2026-02-04 13:29:01 - src.bots.grid_futures.bot - INFO -   Subscribed to BTCUSDT 1h klines[0m
+[92m2026-02-04 13:29:01 - src.bots.base - INFO - Bot grid_futures_20260204052903_6767fb3a started successfully[0m
+[93m2026-02-04 13:29:01 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 3, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:01 - src.master.registry - INFO - Bot grid_futures_20260204052903_6767fb3a state changed: initializing -> running[0m
+[93m2026-02-04 13:29:01 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 4, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:01 - src.master.commander - INFO - Bot started: grid_futures_20260204052903_6767fb3a[0m
+    ✓ 已啟動: grid_futures_20260204052903_6767fb3a
+  創建 Supertrend Bot...
+[93m2026-02-04 13:29:01 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 5, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:01 - src.master.registry - INFO - Bot registered: supertrend_20260204052901_ecff51ec (supertrend) for BTCUSDT[0m
+[92m2026-02-04 13:29:02 - src.master.factory - INFO - Created bot instance: supertrend_20260204052901_ecff51ec (supertrend)[0m
+[93m2026-02-04 13:29:02 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 6, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:02 - src.master.commander - INFO - Bot created: supertrend_20260204052901_ecff51ec[0m
+    ✓ 已創建: supertrend_20260204052901_ecff51ec
+[93m2026-02-04 13:29:02 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 12, 'total_rate_limited': 0, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:02 - src.master.registry - INFO - Bot supertrend_20260204052901_ecff51ec state changed: registered -> initializing[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - Starting bot: supertrend_20260204052901_ecff51ec[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Ensuring time synchronization...[0m
+[92m2026-02-04 13:29:02 - src.bots.grid_futures.bot - INFO - Starting background monitor[0m
+[92m2026-02-04 13:29:02 - src.exchange.binance.spot_api - INFO - Time synced, offset: -19ms (latency: 119ms)[0m
+[92m2026-02-04 13:29:02 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -59ms (latency: 47ms)[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Time sync result: spot=-19ms, futures=-59ms[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Time synchronization OK (offset=59ms <= 3000ms)[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Validating configuration...[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Config checksum: 2df5336c021fc1a2 (use for sync verification)[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Configuration validation passed[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Leverage verified/set: 10x[0m
+[93m2026-02-04 13:29:02 - src.bots.base - WARNING - [supertrend_20260204052901_ecff51ec] Orphan order cleanup failed (non-fatal): [-2015] Invalid API-key, IP, or permissions for action. [-2015][0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO - Initializing Supertrend Bot for BTCUSDT[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - [supertrend_20260204052901_ecff51ec] Strategy initial capital set: 1000[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - Bot supertrend_20260204052901_ecff51ec registered for global risk tracking, Total capital: 1000[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO - Strategy initial capital set: 1000 USDT[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.indicators - INFO - Supertrend initialized: trend=BEAR, value=81371.82, ATR=1130.85[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO - Supertrend Bot initialized successfully[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Mode: HYBRID_GRID[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Symbol: BTCUSDT[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Timeframe: 1h[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   ATR Period: 18[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   ATR Multiplier: 6.0[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Leverage: 10x[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Initial Trend: BEARISH[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Hybrid Bias: 0.55[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Hybrid TP Trend/Counter: 1.0/0.75[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Hybrid SL Counter: 0.8[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO -   Hybrid RSI Asymmetric: False[0m
+[93m2026-02-04 13:29:02 - src.exchange.binance.websocket - WARNING - Message timeout (5x), checking connection[0m
+[92m2026-02-04 13:29:02 - src.exchange.binance.spot_api - INFO - Time synced, offset: -97ms (latency: 45ms)[0m
+[92m2026-02-04 13:29:02 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -99ms (latency: 50ms)[0m
+[92m2026-02-04 13:29:02 - src.bots.base - INFO - Bot supertrend_20260204052901_ecff51ec started successfully[0m
+[92m2026-02-04 13:29:02 - src.bots.supertrend.bot - INFO - Starting Supertrend background monitor[0m
+[93m2026-02-04 13:29:03 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.331s[0m
+[92m2026-02-04 13:29:04 - src.master.registry - INFO - Bot supertrend_20260204052901_ecff51ec state changed: initializing -> running[0m
+[93m2026-02-04 13:29:05 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.539s[0m
+[93m2026-02-04 13:29:07 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.793s[0m
+[92m2026-02-04 13:29:09 - src.master.commander - INFO - Bot started: supertrend_20260204052901_ecff51ec[0m
+    ✓ 已啟動: supertrend_20260204052901_ecff51ec
+  ✓ WebSocket 重連回調已註冊（自動同步持倉）
+
+正在分配資金...
+[92m2026-02-04 13:29:09 - src.bots.base - INFO - Bot bollinger_20260204052856_72749049 capital updated: None -> 2027.488894056[0m
+[93m2026-02-04 13:29:09 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.554s[0m
+[91m2026-02-04 13:29:09 - src.bots.base - ERROR - [bollinger_20260204052644_2f9b3382] Network disconnected (failures: 3)[0m
+[92m2026-02-04 13:29:09 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=reconnect, retry=False[0m
+[92m2026-02-04 13:29:09 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Reconnection attempt 2/10 in 7.4s[0m
+[93m2026-02-04 13:29:09 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.185s[0m
+[92m2026-02-04 13:29:11 - src.fund_manager.manager - INFO - Allocated 2027.488894056 to bollinger_20260204052856_72749049 (previous: 0, new: 2027.488894056)[0m
+[92m2026-02-04 13:29:11 - src.bots.base - INFO - Bot rsi_grid_20260204052900_36ed923c capital updated: None -> 1013.744447028[0m
+[93m2026-02-04 13:29:11 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.809s[0m
+[92m2026-02-04 13:29:11 - src.bots.rsi_grid.bot - INFO - [FundManager] Capital updated for rsi_grid_20260204052900_36ed923c: max_capital=1013.744447028, actual_capital: 5068.72223514 -> 1013.744447028[0m
+[93m2026-02-04 13:29:11 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.498s[0m
+[93m2026-02-04 13:29:13 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.868s[0m
+[92m2026-02-04 13:29:15 - src.fund_manager.manager - INFO - Allocated 1013.744447028 to rsi_grid_20260204052900_36ed923c (previous: 0, new: 1013.744447028)[0m
+[92m2026-02-04 13:29:15 - src.bots.base - INFO - Bot grid_futures_20260204052903_6767fb3a capital updated: None -> 760.3083352710[0m
+[93m2026-02-04 13:29:15 - src.exchange.binance.futures_api - WARNING - Timestamp error on /fapi/v2/balance: Signature/timestamp error: [-1021] Timestamp for this request was 1000ms ahead of the server's time. [-1021]. Re-syncing time and retrying (attempt 1/3)[0m
+[92m2026-02-04 13:29:15 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1114ms (latency: 48ms)[0m
+[92m2026-02-04 13:29:16 - src.bots.grid_futures.bot - INFO - [FundManager] Capital updated for grid_futures_20260204052903_6767fb3a: max_capital=760.3083352710, actual_capital: 5068.72223514 -> 760.3083352710[0m
+[93m2026-02-04 13:29:16 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.227s[0m
+[92m2026-02-04 13:29:17 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network connection restored after 7.4s[0m
+[92m2026-02-04 13:29:17 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Reconnection successful (latency: 51ms)[0m
+[93m2026-02-04 13:29:17 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:29:17 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1259ms (latency: 49ms)[0m
+[92m2026-02-04 13:29:17 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1263ms (latency: 51ms)[0m
+[93m2026-02-04 13:29:17 - src.exchange.client - WARNING - High time drift detected (1263ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:17 - src.exchange.client - WARNING - Spot time offset is -1259ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:17 - src.exchange.client - WARNING - Futures time offset is -1263ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:29:18 - src.fund_manager.manager - INFO - Allocated 760.3083352710 to grid_futures_20260204052903_6767fb3a (previous: 0, new: 760.3083352710)[0m
+[92m2026-02-04 13:29:18 - src.bots.base - INFO - Bot supertrend_20260204052901_ecff51ec capital updated: None -> 760.3083352710[0m
+[92m2026-02-04 13:29:18 - src.bots.supertrend.bot - INFO - [FundManager] Capital updated for supertrend_20260204052901_ecff51ec: 760.3083352710 -> 760.3083352710[0m
+[93m2026-02-04 13:29:18 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.247s[0m
+[93m2026-02-04 13:29:18 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.195s[0m
+[93m2026-02-04 13:29:20 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.803s[0m
+[92m2026-02-04 13:29:22 - src.fund_manager.manager - INFO - Allocated 760.3083352710 to supertrend_20260204052901_ecff51ec (previous: 0, new: 760.3083352710)[0m
+[92m2026-02-04 13:29:22 - src.fund_manager.manager - INFO - Dispatch complete: 4 successful, 0 failed, total dispatched: 4561.8500116260[0m
+[93m2026-02-04 13:29:22 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.48s[0m
+[92m2026-02-04 13:29:23 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1709ms (latency: 68ms)[0m
+[92m2026-02-04 13:29:23 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1724ms (latency: 51ms)[0m
+[93m2026-02-04 13:29:23 - src.exchange.client - WARNING - High time drift detected (1724ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:23 - src.exchange.client - WARNING - Spot time offset is -1709ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:23 - src.exchange.client - WARNING - Futures time offset is -1724ms (threshold: 1000ms)[0m
+  ✓ 資金分配成功
+    • bollinger_20260204052856_72749049: 2027.49 USDT
+    • rsi_grid_20260204052900_36ed923c: 1013.74 USDT
+    • grid_futures_20260204052903_6767fb3a: 760.31 USDT
+    • supertrend_20260204052901_ecff51ec: 760.31 USDT
+
+正在啟動 Discord Bot...
+  ✓ Discord Bot 啟動中...
+[92m2026-02-04 13:29:25 - src.discord_bot.bot - INFO - Starting Discord bot...[0m
+[92m2026-02-04 13:29:26 - src.bots.base - INFO - [bollinger_20260204052856_72749049] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:29:26 - src.discord_bot.bot - INFO - Setting up Discord bot...[0m
+[92m2026-02-04 13:29:26 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.bot_commands[0m
+[92m2026-02-04 13:29:26 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.status_commands[0m
+[92m2026-02-04 13:29:26 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.risk_commands[0m
+[92m2026-02-04 13:29:26 - src.discord_bot.bot - INFO - Loaded cog: src.discord_bot.cogs.admin_commands[0m
+[92m2026-02-04 13:29:27 - src.exchange.binance.spot_api - INFO - Time synced, offset: -2037ms (latency: 50ms)[0m
+[92m2026-02-04 13:29:27 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -2042ms (latency: 52ms)[0m
+[93m2026-02-04 13:29:27 - src.exchange.client - WARNING - High time drift detected (2042ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:27 - src.exchange.client - WARNING - Spot time offset is -2037ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:27 - src.exchange.client - WARNING - Futures time offset is -2042ms (threshold: 1000ms)[0m
+
+============================================================
+       系統啟動完成！
+============================================================
+
+運行中的機器人: 4
+  • bollinger_20260204052856_72749049 [bollinger] - running
+  • rsi_grid_20260204052900_36ed923c [rsi_grid] - running
+  • grid_futures_20260204052903_6767fb3a [grid_futures] - running
+  • supertrend_20260204052901_ecff51ec [supertrend] - running
+
+Discord 指令:
+  /bot list     - 列出機器人
+  /bot stop     - 停止機器人
+  /status       - 系統狀態
+
+按 Ctrl+C 停止系統
+
+============================================================
+[92m2026-02-04 13:29:31 - src.exchange.binance.spot_api - INFO - Time synced, offset: 3ms (latency: 48ms)[0m
+[92m2026-02-04 13:29:31 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1ms (latency: 47ms)[0m
+[92m2026-02-04 13:29:35 - src.exchange.binance.spot_api - INFO - Time synced, offset: -313ms (latency: 50ms)[0m
+[92m2026-02-04 13:29:35 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -260ms (latency: 187ms)[0m
+[92m2026-02-04 13:29:44 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+[92m2026-02-04 13:29:45 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1104ms (latency: 50ms)[0m
+[92m2026-02-04 13:29:45 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1107ms (latency: 51ms)[0m
+[93m2026-02-04 13:29:45 - src.exchange.client - WARNING - High time drift detected (1107ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:45 - src.exchange.client - WARNING - Spot time offset is -1104ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:45 - src.exchange.client - WARNING - Futures time offset is -1107ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:29:46 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1144ms (latency: 80ms)[0m
+[92m2026-02-04 13:29:46 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1157ms (latency: 72ms)[0m
+[93m2026-02-04 13:29:46 - src.exchange.client - WARNING - High time drift detected (1157ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:46 - src.exchange.client - WARNING - Spot time offset is -1144ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:46 - src.exchange.client - WARNING - Futures time offset is -1157ms (threshold: 1000ms)[0m
+
+收到信號 SIGINT...
+
+正在關閉系統...
+[92m2026-02-04 13:29:51 - src.discord_bot.bot - INFO - Stopping Discord bot...[0m
+  ✓ Discord Bot 已關閉
+[92m2026-02-04 13:29:51 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator stopped[0m
+  ✓ 訊號協調器已關閉
+[92m2026-02-04 13:29:51 - src.fund_manager.manager - INFO - Stopping FundManager...[0m
+[92m2026-02-04 13:29:51 - src.fund_manager.manager - INFO - FundManager stopped[0m
+  ✓ 資金管理系統已關閉
+[92m2026-02-04 13:29:51 - src.master.master - INFO - Stopping Master Control Console...[0m
+[92m2026-02-04 13:29:51 - src.master.registry - INFO - Bot bollinger_20260204052856_72749049 state changed: running -> stopping[0m
+[92m2026-02-04 13:29:51 - src.bots.base - INFO - Stopping bot bollinger_20260204052856_72749049: Manual stop[0m
+[92m2026-02-04 13:29:51 - src.bots.bollinger.bot - INFO - Stopping Bollinger BB_TREND_GRID Bot[0m
+[92m2026-02-04 13:29:51 - src.bots.bollinger.bot - INFO - Bollinger BB_TREND_GRID Bot stopped[0m
+[92m2026-02-04 13:29:51 - src.bots.base - INFO - Bot bollinger_20260204052856_72749049 stopped[0m
+[92m2026-02-04 13:29:52 - src.master.registry - INFO - Bot bollinger_20260204052856_72749049 state changed: stopping -> stopped[0m
+[92m2026-02-04 13:29:52 - src.master.commander - INFO - Bot stopped: bollinger_20260204052856_72749049[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot rsi_grid_20260204052900_36ed923c state changed: running -> stopping[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Stopping bot rsi_grid_20260204052900_36ed923c: Manual stop[0m
+[92m2026-02-04 13:29:53 - src.bots.rsi_grid.bot - INFO - Stopping RSI-Grid Bot[0m
+[92m2026-02-04 13:29:53 - src.bots.rsi_grid.bot - INFO - Background monitor stopped[0m
+[92m2026-02-04 13:29:53 - src.bots.rsi_grid.bot - INFO - RSI-Grid Bot stopped[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Bot rsi_grid_20260204052900_36ed923c stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 1, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot rsi_grid_20260204052900_36ed923c state changed: stopping -> stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 2, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.commander - INFO - Bot stopped: rsi_grid_20260204052900_36ed923c[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 3, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot grid_futures_20260204052903_6767fb3a state changed: running -> stopping[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Stopping bot grid_futures_20260204052903_6767fb3a: Manual stop[0m
+[92m2026-02-04 13:29:53 - src.bots.grid_futures.bot - INFO - Stopping Grid Futures Bot[0m
+[92m2026-02-04 13:29:53 - src.bots.grid_futures.bot - INFO - Background monitor stopped[0m
+[92m2026-02-04 13:29:53 - src.bots.grid_futures.bot - INFO - Grid Futures Bot stopped[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Bot grid_futures_20260204052903_6767fb3a stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 4, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot grid_futures_20260204052903_6767fb3a state changed: stopping -> stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 5, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.commander - INFO - Bot stopped: grid_futures_20260204052903_6767fb3a[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 6, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot supertrend_20260204052901_ecff51ec state changed: running -> stopping[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Stopping bot supertrend_20260204052901_ecff51ec: Manual stop[0m
+[92m2026-02-04 13:29:53 - src.bots.supertrend.bot - INFO - Stopping Supertrend Bot...[0m
+[92m2026-02-04 13:29:53 - src.bots.supertrend.bot - INFO - Supertrend background monitor stopped[0m
+[92m2026-02-04 13:29:53 - src.bots.supertrend.bot - INFO - Supertrend Bot stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 7, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.bots.base - INFO - Bot supertrend_20260204052901_ecff51ec stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 8, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.registry - INFO - Bot supertrend_20260204052901_ecff51ec state changed: stopping -> stopped[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 9, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.commander - INFO - Bot stopped: supertrend_20260204052901_ecff51ec[0m
+[92m2026-02-04 13:29:53 - src.master.commander - INFO - Stopped 4/4 bots[0m
+[92m2026-02-04 13:29:53 - src.master.heartbeat - INFO - HeartbeatMonitor stopped[0m
+[92m2026-02-04 13:29:53 - src.master.dashboard - INFO - Stopped snapshot loop[0m
+[93m2026-02-04 13:29:53 - src.notification.manager - WARNING - Notification rate limited (level=info). Stats: {'total_allowed': 25, 'total_rate_limited': 10, 'total_burst_limited': 7, 'critical_bypassed': 0}[0m
+[92m2026-02-04 13:29:53 - src.master.master - INFO - Master Control Console stopped successfully[0m
+  ✓ Master 已關閉
+[92m2026-02-04 13:29:53 - src.exchange.client - INFO - Closing ExchangeClient[0m
+[92m2026-02-04 13:29:53 - src.exchange.client - INFO - Order queue processor stopped[0m
+[92m2026-02-04 13:29:55 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1880ms (latency: 48ms)[0m
+[92m2026-02-04 13:29:55 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1885ms (latency: 51ms)[0m
+[93m2026-02-04 13:29:55 - src.exchange.client - WARNING - High time drift detected (1885ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:29:55 - src.exchange.client - WARNING - Spot time offset is -1880ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:29:55 - src.exchange.client - WARNING - Futures time offset is -1885ms (threshold: 1000ms)[0m
+[92m2026-02-04 13:29:58 - src.discord_bot.bot - INFO - Synced 10 slash commands to guild 1458126857848357090[0m
+[92m2026-02-04 13:29:59 - src.exchange.client - INFO - ExchangeClient closed[0m
+  ✓ 交易所連接已關閉
+
+系統已完全關閉
+[92m2026-02-04 13:30:03 - src.exchange.binance.spot_api - INFO - Time synced, offset: -157ms (latency: 51ms)[0m
+[92m2026-02-04 13:30:03 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -162ms (latency: 47ms)[0m
+[92m2026-02-04 13:30:12 - src.bots.base - INFO - [bollinger_20260204052644_2f9b3382] Network error handled: type=other, action=none, retry=True[0m
+
+收到信號 SIGTERM...
+
+正在關閉系統...
+[92m2026-02-04 13:30:13 - src.discord_bot.bot - INFO - Stopping Discord bot...[0m
+[92m2026-02-04 13:30:13 - src.fund_manager.core.signal_coordinator - INFO - SignalCoordinator stopped[0m
+  ✓ 訊號協調器已關閉
+[92m2026-02-04 13:30:13 - src.fund_manager.manager - INFO - Stopping FundManager...[0m
+[92m2026-02-04 13:30:13 - src.fund_manager.manager - INFO - FundManager stopped[0m
+  ✓ 資金管理系統已關閉
+[92m2026-02-04 13:30:13 - src.master.master - INFO - Stopping Master Control Console...[0m
+[92m2026-02-04 13:30:13 - src.master.registry - INFO - Bot bollinger_20260204052644_2f9b3382 state changed: running -> stopping[0m
+[92m2026-02-04 13:30:13 - src.bots.base - INFO - Stopping bot bollinger_20260204052644_2f9b3382: Manual stop[0m
+[92m2026-02-04 13:30:13 - src.bots.bollinger.bot - INFO - Stopping Bollinger BB_TREND_GRID Bot[0m
+[92m2026-02-04 13:30:13 - src.bots.bollinger.bot - INFO - Bollinger BB_TREND_GRID Bot stopped[0m
+[92m2026-02-04 13:30:13 - src.bots.base - INFO - Bot bollinger_20260204052644_2f9b3382 stopped[0m
+[93m2026-02-04 13:30:13 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:15 - src.master.registry - INFO - Bot bollinger_20260204052644_2f9b3382 state changed: stopping -> stopped[0m
+[93m2026-02-04 13:30:15 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:16 - src.master.commander - INFO - Bot stopped: bollinger_20260204052644_2f9b3382[0m
+[92m2026-02-04 13:30:17 - src.master.registry - INFO - Bot rsi_grid_20260204052646_3b532000 state changed: running -> stopping[0m
+[92m2026-02-04 13:30:17 - src.bots.base - INFO - Stopping bot rsi_grid_20260204052646_3b532000: Manual stop[0m
+[92m2026-02-04 13:30:17 - src.bots.rsi_grid.bot - INFO - Stopping RSI-Grid Bot[0m
+[92m2026-02-04 13:30:17 - src.bots.rsi_grid.bot - INFO - Background monitor stopped[0m
+[92m2026-02-04 13:30:17 - src.bots.rsi_grid.bot - INFO - RSI-Grid Bot stopped[0m
+[92m2026-02-04 13:30:17 - src.bots.base - INFO - Bot rsi_grid_20260204052646_3b532000 stopped[0m
+[92m2026-02-04 13:30:17 - src.master.registry - INFO - Bot rsi_grid_20260204052646_3b532000 state changed: stopping -> stopped[0m
+[93m2026-02-04 13:30:17 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:18 - src.exchange.binance.spot_api - INFO - Time synced, offset: -1288ms (latency: 128ms)[0m
+[92m2026-02-04 13:30:18 - src.exchange.binance.futures_api - INFO - Futures time synced, offset: -1330ms (latency: 48ms)[0m
+[93m2026-02-04 13:30:18 - src.exchange.client - WARNING - High time drift detected (1330ms), reducing sync interval to 10s[0m
+[93m2026-02-04 13:30:18 - src.exchange.client - WARNING - Spot time offset is -1288ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:30:18 - src.exchange.client - WARNING - Futures time offset is -1330ms (threshold: 1000ms)[0m
+[93m2026-02-04 13:30:19 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[93m2026-02-04 13:30:20 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:21 - src.master.commander - INFO - Bot stopped: rsi_grid_20260204052646_3b532000[0m
+[93m2026-02-04 13:30:21 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[93m2026-02-04 13:30:22 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[93m2026-02-04 13:30:24 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:25 - src.master.registry - INFO - Bot grid_futures_20260204052649_d0978e37 state changed: running -> stopping[0m
+[92m2026-02-04 13:30:25 - src.bots.base - INFO - Stopping bot grid_futures_20260204052649_d0978e37: Manual stop[0m
+[92m2026-02-04 13:30:25 - src.bots.grid_futures.bot - INFO - Stopping Grid Futures Bot[0m
+[92m2026-02-04 13:30:25 - src.bots.grid_futures.bot - INFO - Background monitor stopped[0m
+[92m2026-02-04 13:30:25 - src.bots.grid_futures.bot - INFO - Grid Futures Bot stopped[0m
+[92m2026-02-04 13:30:25 - src.bots.base - INFO - Bot grid_futures_20260204052649_d0978e37 stopped[0m
+[93m2026-02-04 13:30:25 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.0s[0m
+[92m2026-02-04 13:30:26 - src.master.registry - INFO - Bot grid_futures_20260204052649_d0978e37 state changed: stopping -> stopped[0m
+[93m2026-02-04 13:30:27 - src.notification.discord.client - WARNING - Discord rate limited, retry after 1.223s[0m
