@@ -24,14 +24,79 @@ Formulas:
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
-from typing import List, Optional, Protocol, Tuple
+from decimal import Decimal, InvalidOperation
+from typing import List, Optional, Protocol, Tuple, Union
 
 from src.core import get_logger
 
 from .models import BBWData, BollingerBands
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# Helper Functions (NaN/Inf Protection)
+# =============================================================================
+
+
+def is_valid_number(value: Union[Decimal, float, None]) -> bool:
+    """
+    Check if a value is a valid number (not NaN, Inf, or None).
+
+    Args:
+        value: Value to check (Decimal, float, or None)
+
+    Returns:
+        True if value is a valid finite number, False otherwise
+    """
+    if value is None:
+        return False
+
+    try:
+        if isinstance(value, Decimal):
+            # Decimal NaN/Inf checks
+            if value.is_nan() or value.is_infinite():
+                return False
+            return True
+        elif isinstance(value, (int, float)):
+            # Float NaN/Inf checks
+            if math.isnan(value) or math.isinf(value):
+                return False
+            return True
+        return False
+    except (TypeError, InvalidOperation):
+        return False
+
+
+def safe_decimal(value: Union[Decimal, float, str, None], default: Decimal = Decimal("0")) -> Decimal:
+    """
+    Safely convert a value to Decimal, returning default on failure.
+
+    Args:
+        value: Value to convert
+        default: Default value if conversion fails
+
+    Returns:
+        Decimal value or default
+    """
+    if value is None:
+        return default
+
+    try:
+        if isinstance(value, Decimal):
+            if value.is_nan() or value.is_infinite():
+                logger.warning(f"Invalid Decimal value detected: {value}, using default {default}")
+                return default
+            return value
+
+        result = Decimal(str(value))
+        if result.is_nan() or result.is_infinite():
+            logger.warning(f"Converted to invalid Decimal: {value}, using default {default}")
+            return default
+        return result
+    except (InvalidOperation, TypeError, ValueError) as e:
+        logger.warning(f"Failed to convert {value} to Decimal: {e}, using default {default}")
+        return default
 
 
 # =============================================================================
@@ -549,5 +614,214 @@ class BollingerCalculator:
             "current": str(self._bbw_history[-1]) if self._bbw_history else None,
             "count": len(self._bbw_history),
         }
+
+
+# =============================================================================
+# ATR Calculator (for Dynamic Grid Range)
+# =============================================================================
+
+
+@dataclass
+class ATRResult:
+    """ATR calculation result."""
+    timestamp: datetime
+    atr: Decimal
+    tr: Decimal  # Current True Range
+
+
+class ATRCalculator:
+    """
+    ATR (Average True Range) Calculator.
+
+    Uses Wilder's smoothing method for ATR calculation.
+    Used for dynamic grid range calculation in Bollinger Bot.
+
+    Example:
+        >>> calc = ATRCalculator(period=14)
+        >>> calc.initialize(klines)
+        >>> result = calc.update(new_kline)
+        >>> grid_range = result.atr * 5.5  # Use ATR for grid range
+    """
+
+    def __init__(self, period: int = 14):
+        """
+        Initialize ATR Calculator.
+
+        Args:
+            period: ATR period (default 14)
+        """
+        self._period = period
+
+        # State
+        self._atr: Optional[Decimal] = None
+        self._prev_close: Optional[Decimal] = None
+        self._initialized = False
+
+        # Cache for preventing duplicate calculations
+        self._cache_timestamp: Optional[datetime] = None
+        self._cache_result: Optional[ATRResult] = None
+        self._cache_hits: int = 0
+        self._cache_misses: int = 0
+
+    def initialize(self, klines: List[KlineProtocol]) -> Optional[ATRResult]:
+        """
+        Initialize ATR with historical klines.
+
+        Args:
+            klines: Historical klines (need at least period + 1)
+
+        Returns:
+            Initial ATR result or None if insufficient data
+        """
+        if len(klines) < self._period + 1:
+            logger.warning(f"Insufficient klines for ATR init: {len(klines)} < {self._period + 1}")
+            return None
+
+        # Calculate initial ATR as simple average of first 'period' TRs
+        tr_values = []
+        for i in range(1, self._period + 1):
+            high = Decimal(str(klines[i].high))
+            low = Decimal(str(klines[i].low))
+            prev_close = Decimal(str(klines[i - 1].close))
+
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            tr_values.append(tr)
+
+        self._atr = sum(tr_values) / Decimal(self._period)
+
+        # Process remaining klines using Wilder's smoothing
+        for i in range(self._period + 1, len(klines)):
+            high = Decimal(str(klines[i].high))
+            low = Decimal(str(klines[i].low))
+            prev_close = Decimal(str(klines[i - 1].close))
+
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+
+            # Wilder's smoothing
+            self._atr = (self._atr * (self._period - 1) + tr) / self._period
+
+        self._prev_close = Decimal(str(klines[-1].close))
+        self._initialized = True
+
+        logger.info(f"ATR initialized: {self._atr:.2f}, period={self._period}")
+
+        return ATRResult(
+            timestamp=klines[-1].close_time,
+            atr=self._atr,
+            tr=tr_values[-1] if tr_values else self._atr,
+        )
+
+    def update(self, kline: KlineProtocol) -> Optional[ATRResult]:
+        """
+        Update ATR with new kline (with caching).
+
+        Args:
+            kline: New kline data
+
+        Returns:
+            Updated ATR result or None if not initialized
+        """
+        if not self._initialized or self._prev_close is None:
+            return None
+
+        # Check cache - return cached result if same kline
+        if self._cache_timestamp == kline.close_time and self._cache_result is not None:
+            self._cache_hits += 1
+            return self._cache_result
+
+        self._cache_misses += 1
+
+        # Safe conversion with NaN/Inf protection
+        high = safe_decimal(kline.high)
+        low = safe_decimal(kline.low)
+        close = safe_decimal(kline.close)
+
+        # Validate inputs
+        if not all(is_valid_number(v) for v in [high, low, close]):
+            logger.warning("Invalid kline data for ATR calculation, skipping update")
+            return None
+
+        try:
+            tr = max(
+                high - low,
+                abs(high - self._prev_close),
+                abs(low - self._prev_close)
+            )
+
+            if not is_valid_number(tr):
+                logger.warning(f"Invalid TR calculated: {tr}, skipping update")
+                return None
+
+            # Wilder's smoothing
+            new_atr = (self._atr * (self._period - 1) + tr) / self._period
+
+            if not is_valid_number(new_atr):
+                logger.warning(f"Invalid ATR calculated: {new_atr}, keeping previous value")
+                result = ATRResult(
+                    timestamp=kline.close_time,
+                    atr=self._atr,
+                    tr=tr,
+                )
+            else:
+                self._atr = new_atr
+                self._prev_close = close
+                result = ATRResult(
+                    timestamp=kline.close_time,
+                    atr=self._atr,
+                    tr=tr,
+                )
+
+            # Update cache
+            self._cache_timestamp = kline.close_time
+            self._cache_result = result
+
+            return result
+
+        except (InvalidOperation, ZeroDivisionError) as e:
+            logger.warning(f"ATR calculation error: {e}")
+            return None
+
+    @property
+    def atr(self) -> Optional[Decimal]:
+        """Current ATR value."""
+        return self._atr
+
+    def get_state(self) -> dict:
+        """Get current state for persistence."""
+        return {
+            "atr": float(self._atr) if self._atr else None,
+            "prev_close": float(self._prev_close) if self._prev_close else None,
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+        }
+
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0
+        return {
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+            "total": total,
+            "hit_rate_pct": round(hit_rate, 2),
+        }
+
+    def reset(self) -> None:
+        """Reset calculator state."""
+        self._atr = None
+        self._prev_close = None
+        self._initialized = False
+        self._cache_timestamp = None
+        self._cache_result = None
+        self._cache_hits = 0
+        self._cache_misses = 0
 
 

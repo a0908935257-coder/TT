@@ -41,7 +41,7 @@ from src.fund_manager import SignalCoordinator, SignalDirection, CoordinationRes
 from src.master.models import BotState
 from src.notification import NotificationManager
 
-from .indicators import BollingerCalculator
+from .indicators import BollingerCalculator, ATRCalculator
 from .models import (
     BollingerConfig,
     BollingerBotStats,
@@ -101,6 +101,9 @@ class BollingerBot(BaseBot):
             period=config.bb_period,
             std_multiplier=config.bb_std,
         )
+
+        # ATR calculator for dynamic grid range (initialized if use_atr_range enabled)
+        self._atr_calc: Optional[ATRCalculator] = None
 
         # State
         self._grid: Optional[GridSetup] = None
@@ -205,6 +208,15 @@ class BollingerBot(BaseBot):
 
         # 4. Initialize BB calculator
         self._bb_calculator.initialize(self._klines)
+
+        # 4.5 Initialize ATR calculator if use_atr_range is enabled
+        if self._config.use_atr_range:
+            self._atr_calc = ATRCalculator(period=self._config.atr_period)
+            atr_result = self._atr_calc.initialize(self._klines)
+            if atr_result:
+                logger.info(f"ATR initialized: {atr_result.atr:.2f}")
+            else:
+                logger.warning("ATR initialization failed - will use fallback range")
 
         # 5. Initialize grid
         if self._klines and len(self._klines) > 0:
@@ -470,8 +482,28 @@ class BollingerBot(BaseBot):
     # =========================================================================
 
     def _initialize_grid(self, current_price: Decimal) -> None:
-        """Initialize grid around current price."""
-        range_size = current_price * self._config.grid_range_pct
+        """Initialize grid around current price (ATR-based if enabled)."""
+        # Calculate range size based on ATR or fallback
+        if self._config.use_atr_range and self._atr_calc:
+            atr = self._atr_calc.atr
+            if atr and atr > 0:
+                range_size = atr * self._config.atr_multiplier
+                range_pct_actual = (range_size / current_price) * Decimal("100")
+                logger.info(
+                    f"Using ATR-based range: ATR={atr:.2f}, "
+                    f"multiplier={self._config.atr_multiplier}, "
+                    f"range={range_size:.2f} ({range_pct_actual:.2f}%)"
+                )
+            else:
+                # ATR not available, use fallback
+                range_size = current_price * self._config.fallback_range_pct
+                logger.warning(
+                    f"ATR not available, using fallback range: "
+                    f"{self._config.fallback_range_pct * 100:.1f}%"
+                )
+        else:
+            # ATR disabled, use fixed grid_range_pct
+            range_size = current_price * self._config.grid_range_pct
 
         upper_price = current_price + range_size
         lower_price = current_price - range_size
@@ -498,10 +530,11 @@ class BollingerBot(BaseBot):
             version=1 if not self._grid else self._grid.version + 1,
         )
 
-        range_pct = self._config.grid_range_pct * 100
+        # Calculate actual range percentage for logging
+        actual_range_pct = (range_size / current_price) * Decimal("100")
         logger.info(
             f"Grid initialized: center={current_price:.2f}, "
-            f"range=±{range_pct:.1f}%, levels={len(levels)}, v{self._grid.version}"
+            f"range=±{actual_range_pct:.1f}%, levels={len(levels)}, v{self._grid.version}"
         )
 
     def _should_rebuild_grid(self, current_price: Decimal) -> bool:
@@ -601,6 +634,10 @@ class BollingerBot(BaseBot):
 
             # Increment bar counter for timeout tracking
             self._current_bar += 1
+
+            # Update ATR if enabled
+            if self._atr_calc:
+                self._atr_calc.update(kline)
 
             # Process grid trading logic
             await self._process_grid_kline(kline)
