@@ -259,7 +259,7 @@ class BinanceSpotAPI:
                     await asyncio.sleep(delay)
                     continue
                 logger.error(f"Connection error after {self._max_retries + 1} attempts: {e}")
-                raise ConnectionError(f"Failed to connect to Binance: {e}")
+                raise ConnectionError(f"Failed to connect to Binance: {e}") from e
 
         # Should not reach here, but handle it just in case
         if last_exception:
