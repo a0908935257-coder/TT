@@ -166,6 +166,12 @@ class BaseBot(ABC):
         self._last_known_position: Optional[Dict[str, Any]] = None
         self._position_mismatch_count: int = 0
 
+        # Expected position side for Hedge Mode filtering (set by subclass)
+        # When set to "LONG" or "SHORT", position sync/reconciliation will only
+        # consider positions matching this side, ignoring others.
+        # This prevents multi-bot conflicts when trading same symbol in Hedge Mode.
+        self._expected_position_side: Optional[str] = None
+
     # =========================================================================
     # Read-only Properties
     # =========================================================================
@@ -1480,6 +1486,10 @@ class BaseBot(ABC):
 
         Should be called after order execution to ensure consistency.
 
+        In Hedge Mode, if _expected_position_side is set, only returns
+        positions matching that side (LONG or SHORT). This prevents
+        multi-bot conflicts when trading the same symbol.
+
         Returns:
             Exchange position data or None if no position
         """
@@ -1488,10 +1498,21 @@ class BaseBot(ABC):
 
             for pos in positions:
                 if pos.symbol == self.symbol and pos.quantity != Decimal("0"):
+                    pos_side = "LONG" if pos.quantity > 0 else "SHORT"
+
+                    # In Hedge Mode, filter by expected position side
+                    if self._expected_position_side:
+                        if pos_side != self._expected_position_side:
+                            logger.debug(
+                                f"[{self._bot_id}] Skipping {pos_side} position - "
+                                f"expected {self._expected_position_side}"
+                            )
+                            continue
+
                     position_data = {
                         "symbol": pos.symbol,
                         "quantity": abs(pos.quantity),
-                        "side": "LONG" if pos.quantity > 0 else "SHORT",
+                        "side": pos_side,
                         "entry_price": pos.entry_price,
                         "unrealized_pnl": pos.unrealized_pnl,
                     }

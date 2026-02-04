@@ -239,7 +239,16 @@ class RSIGridBot(BaseBot):
         current_price = await self._get_current_price()
         self._initialize_grid(current_price)
 
-        # Check existing position
+        # Calculate initial trend for position sync (Hedge Mode support)
+        if self._sma_calc:
+            self._current_trend = self._sma_calc.get_trend(current_price)
+            if self._current_trend == 1:
+                self._expected_position_side = "LONG"
+            elif self._current_trend == -1:
+                self._expected_position_side = "SHORT"
+            logger.info(f"Initial trend: {'BULLISH' if self._current_trend == 1 else 'BEARISH' if self._current_trend == -1 else 'NEUTRAL'}")
+
+        # Check existing position (with trend-based filtering for Hedge Mode)
         await self._sync_position()
 
         # Subscribe to kline updates (WebSocket, 與回測一致)
@@ -652,15 +661,37 @@ class RSIGridBot(BaseBot):
     # =========================================================================
 
     async def _sync_position(self) -> None:
-        """Sync position from exchange."""
+        """
+        Sync position from exchange (trend-aware for Hedge Mode).
+
+        In Hedge Mode, multiple positions (LONG and SHORT) can exist.
+        This method only syncs the position matching the current trend.
+        """
         try:
             positions = await self._exchange.futures.get_positions(self._config.symbol)
 
+            # Determine expected position side based on current trend
+            expected_side = None
+            if self._current_trend == 1:
+                expected_side = PositionSide.LONG
+            elif self._current_trend == -1:
+                expected_side = PositionSide.SHORT
+
             for pos in positions:
                 if pos.quantity != Decimal("0"):
+                    pos_side = PositionSide(pos.side) if isinstance(pos.side, str) else pos.side
+
+                    # In Hedge Mode, only sync position matching current trend
+                    if expected_side and pos_side != expected_side:
+                        logger.info(
+                            f"Skipping {pos_side.value} position (qty={pos.quantity}) - "
+                            f"current trend expects {expected_side.value}"
+                        )
+                        continue
+
                     self._position = RSIGridPosition(
                         symbol=self._config.symbol,
-                        side=PositionSide(pos.side) if isinstance(pos.side, str) else pos.side,
+                        side=pos_side,
                         entry_price=pos.entry_price,
                         quantity=pos.quantity,
                         leverage=self._config.leverage,
@@ -668,7 +699,7 @@ class RSIGridBot(BaseBot):
                         highest_price=pos.entry_price,
                         lowest_price=pos.entry_price,
                     )
-                    logger.info(f"Synced existing position: {pos.side.value} {pos.quantity}")
+                    logger.info(f"Synced existing position: {pos_side.value} {pos.quantity}")
                     return
 
             self._position = None
@@ -1603,6 +1634,11 @@ class RSIGridBot(BaseBot):
 
         # Update trend
         self._current_trend = self._sma_calc.get_trend(current_price) if self._sma_calc else 0
+        # Update expected position side for Hedge Mode reconciliation
+        if self._current_trend == 1:
+            self._expected_position_side = "LONG"
+        elif self._current_trend == -1:
+            self._expected_position_side = "SHORT"
 
         # Check if grid needs rebuild
         if self._check_rebuild_needed(current_price):

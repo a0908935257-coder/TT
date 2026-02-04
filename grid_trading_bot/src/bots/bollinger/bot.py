@@ -230,8 +230,10 @@ class BollingerBot(BaseBot):
                 current_price = self._klines[-1].close
                 if current_price > bands.middle:
                     self._current_trend = 1  # Bullish - expect LONG
+                    self._expected_position_side = "LONG"  # For BaseBot position reconciliation
                 elif current_price < bands.middle:
                     self._current_trend = -1  # Bearish - expect SHORT
+                    self._expected_position_side = "SHORT"  # For BaseBot position reconciliation
                 else:
                     self._current_trend = 0
                 self._current_sma = bands.middle
@@ -910,8 +912,10 @@ class BollingerBot(BaseBot):
         # Determine trend based on price vs SMA
         if current_price > bands.middle:
             self._current_trend = 1  # Bullish - LONG only
+            self._expected_position_side = "LONG"
         elif current_price < bands.middle:
             self._current_trend = -1  # Bearish - SHORT only
+            self._expected_position_side = "SHORT"
         else:
             self._current_trend = 0
 

@@ -277,6 +277,11 @@ class SupertrendBot(BaseBot):
         self._indicator.initialize_from_klines(klines)
         self._prev_trend = self._indicator.trend
         self._current_trend = self._indicator.trend  # Set initial trend for position sync
+        # Set expected position side for BaseBot position reconciliation (Hedge Mode)
+        if self._current_trend == 1:
+            self._expected_position_side = "LONG"
+        elif self._current_trend == -1:
+            self._expected_position_side = "SHORT"
         logger.info(f"Initial trend: {'BULLISH' if self._current_trend == 1 else 'BEARISH' if self._current_trend == -1 else 'NEUTRAL'}")
 
         # Check existing position (with trend-based filtering for Hedge Mode)
@@ -1326,6 +1331,12 @@ class SupertrendBot(BaseBot):
             self._prev_trend = self._current_trend
             self._current_trend = supertrend.trend
             current_price = kline.close
+
+            # Update expected position side for Hedge Mode reconciliation
+            if self._current_trend == 1:
+                self._expected_position_side = "LONG"
+            elif self._current_trend == -1:
+                self._expected_position_side = "SHORT"
 
             # Track how many bars in current trend
             if self._current_trend == self._prev_trend:

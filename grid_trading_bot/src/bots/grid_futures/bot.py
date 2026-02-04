@@ -209,7 +209,16 @@ class GridFuturesBot(BaseBot):
             current_price = await self._get_current_price()
             self._initialize_grid(current_price)
 
-        # Check existing position
+        # Calculate initial trend for position sync (Hedge Mode support)
+        current_price = await self._get_current_price()
+        self._current_trend = self._determine_trend(current_price)
+        if self._current_trend == 1:
+            self._expected_position_side = "LONG"
+        elif self._current_trend == -1:
+            self._expected_position_side = "SHORT"
+        logger.info(f"Initial trend: {'BULLISH' if self._current_trend == 1 else 'BEARISH' if self._current_trend == -1 else 'NEUTRAL'}")
+
+        # Check existing position (with trend-based filtering for Hedge Mode)
         await self._sync_position()
 
         # Subscribe to kline updates (使用 K 線高低點檢測，與回測一致)
@@ -699,9 +708,21 @@ class GridFuturesBot(BaseBot):
     # =========================================================================
 
     async def _sync_position(self) -> None:
-        """Sync position from exchange."""
+        """
+        Sync position from exchange (trend-aware for Hedge Mode).
+
+        In Hedge Mode, multiple positions (LONG and SHORT) can exist.
+        This method only syncs the position matching the current trend.
+        """
         try:
             positions = await self._exchange.futures.get_positions(self._config.symbol)
+
+            # Determine expected position side based on current trend
+            expected_side = None
+            if self._current_trend == 1:
+                expected_side = PositionSide.LONG
+            elif self._current_trend == -1:
+                expected_side = PositionSide.SHORT
 
             for pos in positions:
                 if pos.quantity != Decimal("0"):
@@ -709,6 +730,14 @@ class GridFuturesBot(BaseBot):
                     # Convert to local PositionSide enum
                     side_str = pos.side if isinstance(pos.side, str) else pos.side.value
                     local_side = PositionSide(side_str)
+
+                    # In Hedge Mode, only sync position matching current trend
+                    if expected_side and local_side != expected_side:
+                        logger.info(
+                            f"Skipping {local_side.value} position (qty={abs(pos.quantity)}) - "
+                            f"current trend expects {expected_side.value}"
+                        )
+                        continue
 
                     self._position = FuturesPosition(
                         symbol=self._config.symbol,
@@ -1241,6 +1270,12 @@ class GridFuturesBot(BaseBot):
             # Update trend
             old_trend = self._current_trend
             self._current_trend = self._determine_trend(current_price)
+
+            # Update expected position side for Hedge Mode reconciliation
+            if self._current_trend == 1:
+                self._expected_position_side = "LONG"
+            elif self._current_trend == -1:
+                self._expected_position_side = "SHORT"
 
             if old_trend != self._current_trend and self._current_trend != 0:
                 trend_str = "BULLISH" if self._current_trend == 1 else "BEARISH"
