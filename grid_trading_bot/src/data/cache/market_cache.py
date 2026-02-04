@@ -153,8 +153,8 @@ class MarketCache:
 
         if data and isinstance(data, dict):
             # Convert string decimals back
-            data["bids"] = [[Decimal(p), Decimal(q)] for p, q in data.get("bids", [])]
-            data["asks"] = [[Decimal(p), Decimal(q)] for p, q in data.get("asks", [])]
+            data["bids"] = [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("bids", [])]
+            data["asks"] = [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("asks", [])]
 
         return data
 

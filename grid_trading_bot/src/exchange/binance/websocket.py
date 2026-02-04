@@ -775,8 +775,8 @@ class BinanceWebSocket:
     def _parse_depth(self, data: dict) -> dict:
         """Parse WebSocket depth message."""
         return {
-            "bids": [[Decimal(p), Decimal(q)] for p, q in data.get("bids", data.get("b", []))],
-            "asks": [[Decimal(p), Decimal(q)] for p, q in data.get("asks", data.get("a", []))],
+            "bids": [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("bids", data.get("b", []))],
+            "asks": [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("asks", data.get("a", []))],
             "timestamp": timestamp_to_datetime(data.get("E", 0)),
         }
 

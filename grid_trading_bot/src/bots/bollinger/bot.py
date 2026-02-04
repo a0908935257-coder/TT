@@ -589,6 +589,7 @@ class BollingerBot(BaseBot):
         # Update data health tracking
         self._update_data_health(kline)
         self._prev_kline = kline
+        self._mark_kline_processed(kline)
 
         try:
             # Update klines list

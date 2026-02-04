@@ -8,6 +8,7 @@ caching, Pub/Sub messaging, and key prefix management.
 import asyncio
 import functools
 import json
+import random
 from typing import Any, Callable, Optional, TypeVar, Union
 
 import redis.asyncio as redis
@@ -21,14 +22,20 @@ logger = get_logger(__name__)
 T = TypeVar("T")
 
 
-def with_retry(max_retries: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
+def with_retry(
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+    max_delay: float = 5.0,
+    jitter_factor: float = 0.25,
+):
     """
-    Decorator for Redis operations with retry logic and exponential backoff.
+    Decorator for Redis operations with retry logic, exponential backoff, and jitter.
 
     Args:
         max_retries: Maximum number of retry attempts
         base_delay: Initial delay between retries (seconds)
         max_delay: Maximum delay between retries (seconds)
+        jitter_factor: Random jitter factor (0-1) to prevent thundering herd
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
@@ -43,10 +50,13 @@ def with_retry(max_retries: int = 3, base_delay: float = 0.5, max_delay: float =
                 except (RedisConnectionError, RedisTimeoutError, ConnectionResetError, BrokenPipeError) as e:
                     last_error = e
                     if attempt < max_retries:
-                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        # O-2: Calculate delay with jitter to prevent thundering herd
+                        base_exp_delay = base_delay * (2 ** attempt)
+                        jitter = base_exp_delay * jitter_factor * random.random()
+                        delay = min(base_exp_delay + jitter, max_delay)
                         logger.warning(
                             f"Redis operation {func.__name__} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
-                            f"Retrying in {delay:.1f}s..."
+                            f"Retrying in {delay:.2f}s..."
                         )
                         # Mark as disconnected and try to reconnect
                         self._connected = False
@@ -580,6 +590,7 @@ class RedisManager:
         """Listen for pubsub messages and dispatch to callbacks."""
         reconnect_delay = 1.0
         max_reconnect_delay = 30.0
+        jitter_factor = 0.25  # O-2: Random jitter to prevent thundering herd
         consecutive_errors = 0
 
         while self._subscriptions:
@@ -588,7 +599,9 @@ class RedisManager:
                 if self._pubsub is None:
                     if not self._client:
                         logger.warning("Redis client not available, waiting to reconnect...")
-                        await asyncio.sleep(reconnect_delay)
+                        # O-2: Add jitter to prevent thundering herd
+                        jitter = reconnect_delay * jitter_factor * random.random()
+                        await asyncio.sleep(reconnect_delay + jitter)
                         reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
                         # Try to reconnect
@@ -660,7 +673,9 @@ class RedisManager:
                         pass
                     self._pubsub = None
 
-                await asyncio.sleep(reconnect_delay)
+                # O-2: Add jitter to prevent thundering herd
+                jitter = reconnect_delay * jitter_factor * random.random()
+                await asyncio.sleep(reconnect_delay + jitter)
                 reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
                 # Alert after many consecutive errors but keep retrying

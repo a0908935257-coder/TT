@@ -583,8 +583,8 @@ class BinanceFuturesAPI:
         data = await self._request("GET", FUTURES_PUBLIC_ENDPOINTS["DEPTH"]["path"], params)
 
         return {
-            "bids": [[Decimal(p), Decimal(q)] for p, q in data.get("bids", [])],
-            "asks": [[Decimal(p), Decimal(q)] for p, q in data.get("asks", [])],
+            "bids": [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("bids", [])],
+            "asks": [[Decimal(str(p)), Decimal(str(q))] for p, q in data.get("asks", [])],
             "lastUpdateId": data.get("lastUpdateId", 0),
         }
 

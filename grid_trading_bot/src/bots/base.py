@@ -37,6 +37,9 @@ MIN_INDICATOR_DATA_POINTS = 5  # Minimum data points before trusting indicators
 MAX_REASONABLE_PRICE = Decimal("10000000")  # $10M max price (sanity check)
 MIN_REASONABLE_PRICE = Decimal("0.00000001")  # Minimum price (8 decimals)
 
+# Kline deduplication
+MAX_PROCESSED_KLINES_HISTORY = 10  # Keep track of last N processed kline close_times
+
 
 class InvalidStateError(Exception):
     """Raised when an operation is invalid for the current bot state."""
@@ -368,6 +371,15 @@ class BaseBot(ABC):
                 f"expected {self.symbol}, got {kline.symbol}"
             )
             return False
+
+        # F-5: Kline deduplication - check if already processed
+        if hasattr(self, '_processed_kline_times'):
+            if kline.close_time in self._processed_kline_times:
+                logger.debug(
+                    f"[{self._bot_id}] Skipping duplicate kline: "
+                    f"close_time={kline.close_time} already processed"
+                )
+                return False
 
         return True
 
@@ -717,6 +729,8 @@ class BaseBot(ABC):
         self._consecutive_stale_count: int = 0
         self._data_healthy: bool = True
         self._data_gap_detected: bool = False
+        # F-5: Kline deduplication
+        self._processed_kline_times: set[datetime] = set()
 
     def _update_data_health(
         self,
@@ -746,6 +760,24 @@ class BaseBot(ABC):
         else:
             self._consecutive_stale_count = 0
             self._data_healthy = True
+
+    def _mark_kline_processed(self, kline: Kline) -> None:
+        """
+        Mark a kline as processed for deduplication.
+
+        Maintains a bounded set of recently processed kline close_times.
+        """
+        if not hasattr(self, '_processed_kline_times'):
+            self._processed_kline_times = set()
+
+        self._processed_kline_times.add(kline.close_time)
+
+        # Limit memory usage - keep only last N entries
+        max_history = MAX_PROCESSED_KLINES_HISTORY
+        if len(self._processed_kline_times) > max_history * 2:
+            sorted_times = sorted(self._processed_kline_times, reverse=True)
+            self._processed_kline_times = set(sorted_times[:max_history])
+            logger.debug(f"[{self._bot_id}] Trimmed processed kline history to {max_history} entries")
 
     def _is_data_connection_healthy(
         self,
