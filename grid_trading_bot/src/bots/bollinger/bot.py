@@ -448,16 +448,20 @@ class BollingerBot(BaseBot):
             raise
 
     async def _update_capital(self) -> None:
-        """Update available capital."""
+        """Update available capital respecting Fund Manager allocation."""
         try:
             balance = await self._exchange.futures.get_balance("USDT")
             available = balance.free if balance else Decimal("0")
 
-            if self._config.max_capital:
+            # 優先順序: allocated_capital > max_capital > full balance
+            if self._config.allocated_capital:
+                self._capital = min(available, self._config.allocated_capital)
+            elif self._config.max_capital:
                 self._capital = min(available, self._config.max_capital)
             else:
                 self._capital = available
 
+            logger.debug(f"Capital updated: {self._capital} (available: {available})")
         except Exception as e:
             logger.error(f"Failed to update capital: {e}")
 

@@ -193,6 +193,18 @@ class SupertrendBot(BaseBot):
         """Return trading symbol."""
         return self._config.symbol
 
+    def _get_effective_capital(self) -> Decimal:
+        """
+        Get effective capital respecting Fund Manager allocation.
+
+        Priority: allocated_capital > max_capital > default (1000)
+        """
+        if self._config.allocated_capital is not None:
+            return self._config.allocated_capital
+        if self._config.max_capital is not None:
+            return self._config.max_capital
+        return Decimal("1000")
+
     # =========================================================================
     # Abstract Lifecycle Methods (Required by BaseBot)
     # =========================================================================
@@ -226,7 +238,7 @@ class SupertrendBot(BaseBot):
         )
 
         # Initialize per-strategy risk tracking (風控相互影響隔離)
-        capital = self._config.max_capital or Decimal("1000")
+        capital = self._get_effective_capital()
         self.set_strategy_initial_capital(capital)
 
         # Register for global risk tracking (多策略風控協調)
@@ -477,7 +489,7 @@ class SupertrendBot(BaseBot):
             try:
                 # Get account balance to track capital
                 account = await self._exchange.futures.get_account()
-                capital = self._config.max_capital or Decimal("1000")
+                capital = self._get_effective_capital()
                 # Mark capital as updated for risk bypass prevention
                 self.mark_capital_updated()
 
@@ -509,7 +521,7 @@ class SupertrendBot(BaseBot):
                         cb_result = await self.trigger_circuit_breaker_safe(
                             reason=f"CRITICAL_RISK: {risk_result.get('action', 'unknown')}",
                             current_price=current_price,
-                            current_capital=self._config.max_capital or Decimal("1000"),
+                            current_capital=self._get_effective_capital(),
                             partial=True,
                         )
                         if cb_result["triggered"]:
@@ -1542,13 +1554,17 @@ class SupertrendBot(BaseBot):
             account = await self._exchange.futures.get_account()
             available = Decimal(str(account.available_balance))
 
-            # Use max_capital if configured, otherwise use available balance
+            # Use allocated_capital (Fund Manager) > max_capital > available balance
             # Read capital under lock to prevent race with update_capital()
             async with self._capital_lock:
-                config_capital = self._config.max_capital
-            if config_capital is not None:
+                allocated = self._config.allocated_capital
+                max_cap = self._config.max_capital
+            if allocated is not None:
+                # 優先使用 Fund Manager 分配的資金，但不能超過實際可用餘額
+                capital = min(allocated, available)
+            elif max_cap is not None:
                 # 使用分配的資金上限，但不能超過實際可用餘額
-                capital = min(config_capital, available)
+                capital = min(max_cap, available)
             else:
                 capital = available
 
@@ -2098,7 +2114,7 @@ class SupertrendBot(BaseBot):
         # Get capital for percentage calculation
         # Note: single-threaded asyncio — write-side is lock-protected,
         # read here is safe without lock (no concurrent mutation possible)
-        capital = self._config.max_capital or Decimal("1000")  # Default if not set
+        capital = self._get_effective_capital()
 
         # Check daily loss limit
         daily_loss_pct = abs(self._daily_pnl) / capital if self._daily_pnl < 0 else Decimal("0")
@@ -2144,31 +2160,31 @@ class SupertrendBot(BaseBot):
     # FundManager Integration
     # =========================================================================
 
-    async def _on_capital_updated(self, new_max_capital: Decimal) -> None:
+    async def _on_capital_updated(self, new_allocated_capital: Decimal) -> None:
         """
         Handle capital update from FundManager.
 
-        Updates the max_capital setting which will be used
+        Updates the allocated_capital setting which will be used
         for position sizing on the next trade. If capital is reduced
         and current position exceeds the new limit, closes the position.
 
         Args:
-            new_max_capital: New maximum capital allocation
+            new_allocated_capital: New capital allocation from Fund Manager
         """
-        previous = self._config.max_capital
+        previous = self._config.allocated_capital
 
-        # Update config with new capital
-        self._config.max_capital = new_max_capital
+        # Update config with new capital (using allocated_capital for Fund Manager)
+        self._config.allocated_capital = new_allocated_capital
 
         logger.info(
             f"[FundManager] Capital updated for {self._bot_id}: "
-            f"{previous} -> {new_max_capital}"
+            f"{previous} -> {new_allocated_capital}"
         )
 
         # Check if existing position exceeds new capital limit
         if self._position and self._position.quantity > 0:
             position_notional = self._position.quantity * self._position.entry_price
-            max_allowed = new_max_capital * self._config.leverage
+            max_allowed = new_allocated_capital * self._config.leverage
             if position_notional > max_allowed:
                 logger.warning(
                     f"Position notional {position_notional} > max allowed "
@@ -2245,6 +2261,7 @@ class SupertrendBot(BaseBot):
                 "atr_period": self._config.atr_period,
                 "atr_multiplier": str(self._config.atr_multiplier),
                 "leverage": self._config.leverage,
+                "allocated_capital": str(self._config.allocated_capital) if self._config.allocated_capital else None,
                 "max_capital": str(self._config.max_capital) if self._config.max_capital else None,
             }
 

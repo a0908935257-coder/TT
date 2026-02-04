@@ -93,6 +93,7 @@ class SupertrendConfig:
     margin_type: str = "ISOLATED"  # ISOLATED or CROSSED
 
     # Capital allocation (資金分配)
+    allocated_capital: Optional[Decimal] = None  # Fund Manager 分配的資金額度 (優先)
     max_capital: Optional[Decimal] = None  # 最大可用資金，None = 使用全部餘額
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.02"))
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # 最大持倉佔資金比例
@@ -173,6 +174,8 @@ class SupertrendConfig:
             self.daily_loss_limit_pct = Decimal(str(self.daily_loss_limit_pct))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if self.allocated_capital is not None and not isinstance(self.allocated_capital, Decimal):
+            self.allocated_capital = Decimal(str(self.allocated_capital))
         if not isinstance(self.hysteresis_pct, Decimal):
             self.hysteresis_pct = Decimal(str(self.hysteresis_pct))
         if not isinstance(self.hybrid_grid_bias_pct, Decimal):

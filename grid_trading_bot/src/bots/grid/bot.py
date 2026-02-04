@@ -47,6 +47,9 @@ class GridBotConfig:
     market_type: MarketType = MarketType.SPOT
     total_investment: Decimal = field(default_factory=lambda: Decimal("1000"))
 
+    # Capital allocation (Fund Manager 分配的資金額度)
+    allocated_capital: Optional[Decimal] = None  # 優先於 total_investment
+
     # Grid calculation
     risk_level: RiskLevel = RiskLevel.MODERATE
     grid_type: GridType = GridType.ARITHMETIC
@@ -80,10 +83,19 @@ class GridBotConfig:
         """Ensure Decimal types."""
         if not isinstance(self.total_investment, Decimal):
             self.total_investment = Decimal(str(self.total_investment))
+        if self.allocated_capital is not None and not isinstance(self.allocated_capital, Decimal):
+            self.allocated_capital = Decimal(str(self.allocated_capital))
         if self.manual_upper and not isinstance(self.manual_upper, Decimal):
             self.manual_upper = Decimal(str(self.manual_upper))
         if self.manual_lower and not isinstance(self.manual_lower, Decimal):
             self.manual_lower = Decimal(str(self.manual_lower))
+
+    @property
+    def effective_investment(self) -> Decimal:
+        """Get effective investment amount (allocated_capital takes priority)."""
+        if self.allocated_capital is not None:
+            return self.allocated_capital
+        return self.total_investment
 
     @property
     def has_manual_range(self) -> bool:
@@ -893,7 +905,7 @@ class GridBot(BaseBot):
         """Create GridConfig from bot config."""
         return GridConfig(
             symbol=self._config.symbol,
-            total_investment=self._config.total_investment,
+            total_investment=self._config.effective_investment,
             risk_level=self._config.risk_level,
             grid_type=self._config.grid_type,
             manual_upper_price=self._config.manual_upper,

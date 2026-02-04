@@ -135,7 +135,8 @@ class BollingerConfig:
     # Position settings (18x leverage)
     leverage: int = 18                                                         # 優化後: 18x
     margin_type: str = "ISOLATED"
-    max_capital: Optional[Decimal] = None
+    allocated_capital: Optional[Decimal] = None  # Fund Manager 分配的資金額度 (優先)
+    max_capital: Optional[Decimal] = None        # 最大可用資金 (備用限制)
     position_size_pct: Decimal = field(default_factory=lambda: Decimal("0.1"))  # 10% per trade
     max_position_pct: Decimal = field(default_factory=lambda: Decimal("0.5"))  # Max 50% exposure
 
@@ -197,6 +198,8 @@ class BollingerConfig:
             self.fee_rate = Decimal(str(self.fee_rate))
         if self.max_capital is not None and not isinstance(self.max_capital, Decimal):
             self.max_capital = Decimal(str(self.max_capital))
+        if self.allocated_capital is not None and not isinstance(self.allocated_capital, Decimal):
+            self.allocated_capital = Decimal(str(self.allocated_capital))
         # ATR range parameters
         if not isinstance(self.atr_multiplier, Decimal):
             self.atr_multiplier = Decimal(str(self.atr_multiplier))
