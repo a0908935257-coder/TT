@@ -165,6 +165,7 @@ class BaseBot(ABC):
         self._reconciliation_task: Optional[asyncio.Task] = None
         self._last_known_position: Optional[Dict[str, Any]] = None
         self._position_mismatch_count: int = 0
+        self._last_reconciliation_warning_time: float = 0
 
         # Expected position side for Hedge Mode filtering (set by subclass)
         # When set to "LONG" or "SHORT", position sync/reconciliation will only
@@ -2196,26 +2197,60 @@ class BaseBot(ABC):
                     )
 
             elif exchange_pos and local_qty == 0:
-                # Exchange has position we don't know about
-                mismatch_detected = True
-                mismatch_reason = "Unexpected position on exchange (manual open)"
-                self._position_mismatch_count += 1
-
+                # Exchange has position we don't know about - try to adopt it
                 logger.warning(
-                    f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason} - "
-                    f"exchange has {exchange_pos['side']} {exchange_pos['quantity']}"
+                    f"[{self._bot_id}] Unexpected position detected: "
+                    f"{exchange_pos['side']} {exchange_pos['quantity']} - attempting adoption"
                 )
 
-                if self._notifier:
-                    await self._notifier.send_warning(
-                        title=f"⚠️ Unexpected Position Detected",
-                        message=(
-                            f"Bot: {self._bot_id}\n"
-                            f"Symbol: {self.symbol}\n"
-                            f"Found position: {exchange_pos['side']} {exchange_pos['quantity']}\n"
-                            f"Action: Bot pausing to avoid conflicts"
-                        ),
-                    )
+                adopted = False
+                if hasattr(self, '_sync_position') and callable(self._sync_position):
+                    try:
+                        await self._sync_position()
+                        # Check if adoption was successful
+                        local_after = getattr(self, "_position", None)
+                        if local_after and getattr(local_after, "quantity", Decimal("0")) > 0:
+                            adopted = True
+                            self._position_mismatch_count = 0
+                            logger.info(
+                                f"[{self._bot_id}] Adopted unexpected position: "
+                                f"{exchange_pos['side']} {exchange_pos['quantity']}"
+                            )
+                            if self._notifier:
+                                await self._notifier.send_info(
+                                    title="Position Adopted",
+                                    message=(
+                                        f"Bot: {self._bot_id}\n"
+                                        f"Symbol: {self.symbol}\n"
+                                        f"Adopted: {exchange_pos['side']} {exchange_pos['quantity']}"
+                                    ),
+                                )
+                    except Exception as e:
+                        logger.warning(f"[{self._bot_id}] Failed to adopt position: {e}")
+
+                if not adopted:
+                    mismatch_detected = True
+                    mismatch_reason = "Unexpected position on exchange (adoption failed)"
+                    self._position_mismatch_count += 1
+
+                    # Rate-limit notifications: max once per 10 minutes
+                    now = time.time()
+                    if now - self._last_reconciliation_warning_time > 600:
+                        self._last_reconciliation_warning_time = now
+                        logger.warning(
+                            f"[{self._bot_id}] POSITION MISMATCH: {mismatch_reason} - "
+                            f"exchange has {exchange_pos['side']} {exchange_pos['quantity']}"
+                        )
+                        if self._notifier:
+                            await self._notifier.send_warning(
+                                title="⚠️ Unexpected Position Detected",
+                                message=(
+                                    f"Bot: {self._bot_id}\n"
+                                    f"Symbol: {self.symbol}\n"
+                                    f"Found position: {exchange_pos['side']} {exchange_pos['quantity']}\n"
+                                    f"Action: Adoption failed, monitoring continues"
+                                ),
+                            )
 
             elif exchange_pos and local_qty > 0:
                 # Both have positions - check for size mismatch
