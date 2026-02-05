@@ -662,32 +662,19 @@ class RSIGridBot(BaseBot):
 
     async def _sync_position(self) -> None:
         """
-        Sync position from exchange (trend-aware for Hedge Mode).
+        Sync position from exchange (single-position mode for backtest alignment).
 
         In Hedge Mode, multiple positions (LONG and SHORT) can exist.
-        This method only syncs the position matching the current trend.
+        This method syncs the FIRST non-zero position found, regardless of
+        trend direction, to ensure the bot is aware of any open position
+        and won't open a conflicting one.
         """
         try:
             positions = await self._exchange.futures.get_positions(self._config.symbol)
 
-            # Determine expected position side based on current trend
-            expected_side = None
-            if self._current_trend == 1:
-                expected_side = PositionSide.LONG
-            elif self._current_trend == -1:
-                expected_side = PositionSide.SHORT
-
             for pos in positions:
                 if pos.quantity != Decimal("0"):
                     pos_side = PositionSide(pos.side) if isinstance(pos.side, str) else pos.side
-
-                    # In Hedge Mode, only sync position matching current trend
-                    if expected_side and pos_side != expected_side:
-                        logger.info(
-                            f"Skipping {pos_side.value} position (qty={pos.quantity}) - "
-                            f"current trend expects {expected_side.value}"
-                        )
-                        continue
 
                     self._position = RSIGridPosition(
                         symbol=self._config.symbol,
@@ -1738,6 +1725,10 @@ class RSIGridBot(BaseBot):
     ) -> None:
         """Check for entry signals using tanh RSI score + grid index (aligned with backtest)."""
         if not self._grid:
+            return
+
+        # Single position only (aligned with backtest - no simultaneous long+short)
+        if self._position is not None:
             return
 
         # Check signal cooldown to prevent signal stacking (if enabled)
