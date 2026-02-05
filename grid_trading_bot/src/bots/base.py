@@ -9830,6 +9830,51 @@ class BaseBot(ABC):
 
         return result
 
+    async def _handle_backup_close(self, close_coro) -> bool:
+        """Handle BACKUP_CLOSE with retry tracking and cooldown.
+
+        Args:
+            close_coro: Awaitable that closes the position
+        Returns:
+            True if close succeeded
+        """
+        MAX_BACKUP_CLOSE_RETRIES = 3
+        BACKUP_CLOSE_COOLDOWN = 300  # 5 minutes
+
+        state = self._sl_protection_state
+        retries = state.get("backup_close_retries", 0)
+        last_attempt = state.get("backup_close_last_attempt", 0)
+        now = time.time()
+
+        # Cooldown check
+        if retries > 0 and (now - last_attempt) < BACKUP_CLOSE_COOLDOWN:
+            return False
+
+        # Max retries → give up, reset state, log critical
+        if retries >= MAX_BACKUP_CLOSE_RETRIES:
+            logger.critical(
+                f"[{self._bot_id}] Backup close failed {retries} times. "
+                f"Giving up - manual intervention required."
+            )
+            self.reset_stop_loss_protection()
+            state["backup_close_retries"] = 0
+            return False
+
+        state["backup_close_last_attempt"] = now
+        state["backup_close_retries"] = retries + 1
+
+        try:
+            await close_coro
+            self.reset_stop_loss_protection()
+            state["backup_close_retries"] = 0
+            return True
+        except Exception as e:
+            logger.error(
+                f"[{self._bot_id}] Backup close attempt {retries + 1}/{MAX_BACKUP_CLOSE_RETRIES} "
+                f"failed: {e}. Retry in {BACKUP_CLOSE_COOLDOWN}s"
+            )
+            return False
+
     def get_stop_loss_protection_stats(self) -> Dict[str, Any]:
         """Get stop loss protection statistics."""
         self._init_stop_loss_protection()

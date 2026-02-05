@@ -1878,9 +1878,9 @@ class GridFuturesBot(BaseBot):
                                 self._position.stop_loss_price = replace_result.get("stop_price")
 
                         elif sl_check["action_type"] == "BACKUP_CLOSE":
-                            # Backup stop loss triggered - close position
-                            await self._close_position(current_price, ExitReason.STOP_LOSS)
-                            self.reset_stop_loss_protection()
+                            await self._handle_backup_close(
+                                self._close_position(current_price, ExitReason.STOP_LOSS)
+                            )
 
                 # Wait 30 seconds between updates
                 await asyncio.sleep(30)

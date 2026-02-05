@@ -960,6 +960,16 @@ class NotificationManager:
         embed = {"title": title, "description": message, "color": 0xE74C3C}
         return await self._send_embed(embed, NotificationLevel.ERROR)
 
+    async def send_alert(self, title: str, message: str, level: str = "error", **kwargs) -> bool:
+        """Send alert notification, routing to appropriate level method."""
+        level_lower = level.lower()
+        if level_lower in ("critical", "error"):
+            return await self.send_error(title=title, message=message)
+        elif level_lower == "warning":
+            return await self.send_warning(title=title, message=message)
+        else:
+            return await self.send_info(title=title, message=message)
+
     # =========================================================================
     # Master Control Console Integration
     # =========================================================================

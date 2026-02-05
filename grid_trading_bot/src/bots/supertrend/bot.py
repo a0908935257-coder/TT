@@ -620,8 +620,9 @@ class SupertrendBot(BaseBot):
                                 self._position.stop_loss_price = replace_result.get("stop_price")
 
                         elif sl_check["action_type"] == "BACKUP_CLOSE":
-                            await self._close_position(ExitReason.STOP_LOSS)
-                            self.reset_stop_loss_protection()
+                            await self._handle_backup_close(
+                                self._close_position(ExitReason.STOP_LOSS)
+                            )
 
                 # Network health monitoring (網路彈性監控)
                 try:

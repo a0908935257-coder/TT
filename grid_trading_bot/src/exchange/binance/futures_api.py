@@ -895,8 +895,8 @@ class BinanceFuturesAPI:
         if type_str == "LIMIT":
             params["timeInForce"] = time_in_force
 
-        # Add reduce_only
-        if reduce_only:
+        # Add reduce_only (not allowed when positionSide is LONG or SHORT in Hedge Mode)
+        if reduce_only and pos_side_str == "BOTH":
             params["reduceOnly"] = "true"
 
         # Add client order ID
@@ -970,8 +970,8 @@ class BinanceFuturesAPI:
         if price is not None:
             params["price"] = str(price)
 
-        # Add reduce_only
-        if reduce_only:
+        # Add reduce_only (not allowed when positionSide is LONG or SHORT in Hedge Mode)
+        if reduce_only and position_side == "BOTH":
             params["reduceOnly"] = "true"
 
         # Add client order ID
